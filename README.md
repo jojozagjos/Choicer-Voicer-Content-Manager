@@ -71,6 +71,29 @@ ffmpeg is bundled inside it, so nothing else needs installing. Make a desktop sh
 > The same goes for `node_modules`: thousands of small files in a synced folder makes for a
 > miserable time. Keeping the repo itself outside your synced folders is the tidier option.
 
+### Updating it after a code change
+
+```bash
+npm run update-app
+```
+
+That rebuilds and replaces the installed app in place. Your shortcut keeps working, and your
+settings, chosen theme and cached previews are all untouched, since those live in your user
+profile rather than in the app folder.
+
+**Close the app first.** Windows will not let the folder be replaced while the exe is running,
+and the script says so rather than leaving you with a half-written app.
+
+By default it installs to a folder named `Choicer Voicer Export` beside this repo. Point it
+somewhere else with `CV_INSTALL_DIR`:
+
+```bash
+CV_INSTALL_DIR=D:\Apps\ChoicerVoicerExport npm run update-app
+```
+
+The build is staged in a temp folder and only swapped in at the end, so a sync client holding a
+lock cannot leave you with a broken install.
+
 ### From source
 
 Requires [Node.js](https://nodejs.org/) 18 or newer.

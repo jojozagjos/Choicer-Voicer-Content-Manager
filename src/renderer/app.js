@@ -79,9 +79,12 @@ const el = {
 
   progressBar: $('#progress-bar'),
   progressTitle: $('#progress-title'),
+  progressName: $('#progress-name'),
   progressDetail: $('#progress-detail'),
+  progressQueue: $('#progress-queue'),
   progressFill: $('#progress-fill'),
   btnProgressCancel: $('#btn-progress-cancel'),
+  btnProgressCancelAll: $('#btn-progress-cancel-all'),
 
   toasts: $('#toasts'),
 };
@@ -95,8 +98,14 @@ const state = {
   durations: {},      // absolute path -> seconds
   selectedLineId: null,
   filter: '',
-  activeExportId: null,
+  runningExportId: null,
   scrubbing: false,
+  outputPathChosen: false,
+  // Guards against two pack loads racing when you click through the list fast.
+  loadTicket: 0,
+  loadAbort: null,
+  loadingVideoPath: null,
+  loading: false,
 };
 
 const player = new DubPlayer(el.video);
@@ -120,8 +129,17 @@ function formatBytes(bytes) {
   return `${value.toFixed(value < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
 }
 
+/**
+ * Turns a pack or line name into a tidy filename token: no characters Windows
+ * refuses, no spaces or punctuation, and no runs of underscores.
+ * "Pizza Commercial: Hold the Sauce?" becomes "Pizza_Commercial_Hold_the_Sauce".
+ */
 function sanitizeFilename(name) {
-  return String(name).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/\s+/g, ' ').trim();
+  return String(name)
+    .replace(/['’]/g, '')            // Caine's -> Caines, rather than Caine_s
+    .replace(/[^A-Za-z0-9]+/g, '_')  // everything else becomes a separator
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
 }
 
 function toast(message, kind = 'info', timeout = 4200) {
@@ -321,16 +339,101 @@ async function selectPack(pack) {
   await loadSession(pack.sessions[0] || null);
 }
 
+/** Resolves once the video element has real picture, or rejects on failure. */
+function videoReady(video) {
+  return new Promise((resolve, reject) => {
+    const done = () => {
+      cleanup();
+      // A file can "load" and still decode to nothing, which is exactly what a
+      // torn transcode looks like.
+      if (video.videoWidth > 0) resolve();
+      else reject(new Error('no picture'));
+    };
+    const fail = () => { cleanup(); reject(new Error('could not decode')); };
+    const cleanup = () => {
+      video.removeEventListener('loadeddata', done);
+      video.removeEventListener('error', fail);
+      clearTimeout(timer);
+    };
+    const timer = setTimeout(fail, 15000);
+    video.addEventListener('loadeddata', done, { once: true });
+    video.addEventListener('error', fail, { once: true });
+  });
+}
+
+/**
+ * Points the player at a pack's preview video, rebuilding the cached transcode
+ * once if it turns out not to play. Guards against a bad cache entry leaving
+ * you with a black screen forever.
+ */
+async function loadPreviewVideo(pack, superseded, { rebuild = false } = {}) {
+  const proxy = await window.api.media.proxy(pack.videoPath, { rebuild });
+  if (superseded() || !proxy.ok) return proxy;
+
+  el.video.src = proxy.url;
+  el.video.load();
+
+  try {
+    await videoReady(el.video);
+    return proxy;
+  } catch {
+    if (superseded()) return proxy;
+    if (rebuild) return { ok: false, error: 'the preview video would not play, even after rebuilding it' };
+
+    console.warn('Preview video failed to decode; rebuilding it.');
+    showLoading(true, 'Preview was damaged, rebuilding…');
+    return loadPreviewVideo(pack, superseded, { rebuild: true });
+  }
+}
+
+/**
+ * Loads a session's audio and video.
+ *
+ * Loading takes several seconds, and clicking another pack part way through
+ * used to leave two loads racing: both wrote to the same player, the video and
+ * the loading overlay flickered between them, and whichever finished last won.
+ *
+ * Every load now takes a ticket. After each await the ticket is checked, and a
+ * load that has been superseded returns without touching anything. The player's
+ * own decode loop is aborted at the same time so it stops fetching.
+ */
 async function loadSession(session) {
+  const ticket = ++state.loadTicket;
+  const superseded = () => ticket !== state.loadTicket;
+
+  const pack = state.pack;
+
+  // Published before the previous load is torn down, so its cancel handler can
+  // tell whether we are moving to a different video or just another session of
+  // the same one.
+  state.loadingVideoPath = pack.videoPath;
+
+  // Tear down whatever the previous selection was still doing. The player is
+  // reset now rather than when its audio arrives, so nothing can read the
+  // outgoing pack's lines while the new one is still loading.
+  if (state.loadAbort) state.loadAbort.abort();
+  const abort = new AbortController();
+  state.loadAbort = abort;
+  player.reset();
+  setLoadingState(true);
+  renderLines();
+  renderMarkers();
+
+  // Stop this pack's transcode if you click away to a different video. Picking
+  // another session of the same pack must leave it running, since the incoming
+  // load needs exactly that transcode.
+  abort.signal.addEventListener('abort', () => {
+    if (state.loadingVideoPath !== pack.videoPath) window.api.media.cancelProxy(pack.videoPath);
+  }, { once: true });
+
   state.session = session;
-  player.stop();
 
   showLoading(true, 'Reading clip lengths…');
 
   // Durations drive caption timing and export placement, and come from
   // ffprobe rather than the decoder so they're known before audio loads.
   const paths = [];
-  for (const line of state.pack.lines) {
+  for (const line of pack.lines) {
     if (line.sourceAudioPath) paths.push(line.sourceAudioPath);
     if (session && session.takes[line.base]) paths.push(session.takes[line.base]);
   }
@@ -341,9 +444,10 @@ async function loadSession(session) {
   } catch (err) {
     console.warn('Probe failed:', err.message);
   }
+  if (superseded()) return;
 
   // Seed line durations so the UI has them even before decoding finishes.
-  for (const line of state.pack.lines) {
+  for (const line of pack.lines) {
     const takePath = session && session.takes[line.base];
     line.duration = state.durations[takePath] || state.durations[line.sourceAudioPath] || 0;
   }
@@ -351,26 +455,26 @@ async function loadSession(session) {
   // The pack video is Ogg Theora, which Chromium can no longer decode, so the
   // preview plays a cached MP4 transcode. Exports still use the original.
   showLoading(true, 'Preparing preview…');
-  const proxy = await window.api.media.proxy(state.pack.videoPath);
-  if (proxy.ok) {
-    el.video.src = proxy.url;
-    el.video.load();
-  } else {
-    toast(`Could not prepare the preview video: ${proxy.error}`, 'error', 9000);
-  }
+  const proxy = await loadPreviewVideo(pack, superseded);
+  if (superseded()) return;
+  if (!proxy.ok) toast(`Could not prepare the preview video: ${proxy.error}`, 'error', 9000);
 
   showLoading(true, 'Loading audio…');
   try {
     await player.load({
-      pack: state.pack,
+      pack,
       session,
+      signal: abort.signal,
       onProgress: (fraction) => {
+        if (superseded()) return;
         el.loadingText.textContent = `Loading audio… ${Math.round(fraction * 100)}%`;
       },
     });
   } catch (err) {
+    if (err.name === 'AbortError' || superseded()) return;
     toast(`Could not load audio: ${err.message}`, 'error', 7000);
   }
+  if (superseded()) return;
   showLoading(false);
 
   player.setBackingVolume(Number(el.volBacking.value) / 100);
@@ -378,11 +482,27 @@ async function loadSession(session) {
 
   renderLines();
   renderMarkers();
+
+  // Only the load that actually finished may re-enable exporting.
+  setLoadingState(false);
 }
 
 function showLoading(visible, text) {
   el.loadingOverlay.hidden = !visible;
   if (text) el.loadingText.textContent = text;
+}
+
+/**
+ * Exporting mid-load used to produce a video with the backing track but no
+ * dubbing, because the job was built from whatever the player still held.
+ * The button is disabled until the pack it would export is fully in place.
+ */
+function setLoadingState(loading) {
+  state.loading = loading;
+  el.btnExport.disabled = loading;
+  el.btnExport.title = loading
+    ? 'Waiting for this pack to finish loading'
+    : 'Export this dub as a video';
 }
 
 // Line list
@@ -392,12 +512,19 @@ function renderLines() {
   const items = player.items;
   el.lineCount.textContent = `(${items.length})`;
 
-  if (state.session && state.session.isFreestyle) {
+  // A freestyle take is one recording over the whole video, so the per-line
+  // source, volume and timing controls have nothing to act on. Neither the
+  // player nor the exporter reads them in this mode, so they are left out
+  // rather than rendered dead.
+  const freestyle = Boolean(state.session && state.session.isFreestyle);
+
+  if (freestyle) {
     el.lineList.innerHTML = `
       <div class="freestyle-note">
         <strong>Freestyle take</strong>
         <p class="muted">This session is one continuous recording over the whole video, so there
-        are no per-line controls. The captions below still show the original script.</p>
+        are no per-line controls. The script below is still the original, and you can click a
+        timestamp to jump there.</p>
       </div>`;
   }
 
@@ -420,6 +547,7 @@ function renderLines() {
         </div>
         <p class="line-caption">${escapeHtml(item.caption || '(no caption)')}</p>
       </div>
+      ${freestyle ? '' : `
       <div class="line-controls">
         <div class="segmented" role="group">
           <button data-src="take" ${hasTake ? '' : 'disabled'}
@@ -429,20 +557,34 @@ function renderLines() {
           <button data-src="none"
                   class="${item.source === 'none' ? 'on' : ''}" title="Silence this line">Off</button>
         </div>
-        <label class="line-vol" title="Line volume">
+        <div class="line-vol" title="Line volume">
           <input type="range" min="0" max="200" value="${Math.round(item.volume * 100)}" />
-        </label>
+          <span class="num-field">
+            <input class="num line-vol-num" type="number" min="0" max="200" step="1"
+                   value="${Math.round(item.volume * 100)}" />
+            <b>%</b>
+          </span>
+        </div>
         <div class="nudge" title="Shift this line's timing">
           <button data-nudge="-0.05">−</button>
-          <span class="nudge-val">${item.offset ? `${item.offset > 0 ? '+' : ''}${(item.offset * 1000).toFixed(0)}ms` : '0'}</span>
+          <span class="num-field">
+            <input class="num nudge-val" type="number" min="-5000" max="5000" step="10"
+                   value="${Math.round(item.offset * 1000)}" />
+            <b>ms</b>
+          </span>
           <button data-nudge="0.05">+</button>
         </div>
-      </div>`;
+      </div>`}`;
 
     row.querySelector('.line-time').addEventListener('click', () => {
       player.seek(item.time);
       selectLine(item.id);
     });
+
+    if (freestyle) {
+      el.lineList.append(row);
+      continue;
+    }
 
     row.addEventListener('click', (event) => {
       if (event.target.closest('button, input')) return;
@@ -456,17 +598,33 @@ function renderLines() {
       });
     }
 
-    row.querySelector('.line-vol input').addEventListener('input', (event) => {
-      player.setLineVolume(item.id, Number(event.target.value) / 100);
-    });
+    // Slider and number box drive each other, so either can be used.
+    const volSlider = row.querySelector('.line-vol input[type="range"]');
+    const volNumber = row.querySelector('.line-vol-num');
+
+    const applyVolume = (percent, echoTo) => {
+      const value = clamp(Math.round(percent), 0, 200);
+      echoTo.value = String(value);
+      player.setLineVolume(item.id, value / 100);
+    };
+
+    volSlider.addEventListener('input', () => applyVolume(Number(volSlider.value), volNumber));
+    volNumber.addEventListener('change', () => applyVolume(Number(volNumber.value), volSlider));
+
+    const offsetInput = row.querySelector('.nudge-val');
+
+    const applyOffset = (ms) => {
+      const value = clamp(Math.round(ms), -5000, 5000);
+      offsetInput.value = String(value);
+      player.setLineOffset(item.id, value / 1000);
+      renderMarkers();
+    };
+
+    offsetInput.addEventListener('change', () => applyOffset(Number(offsetInput.value)));
 
     for (const button of row.querySelectorAll('.nudge button')) {
       button.addEventListener('click', () => {
-        const next = clamp(item.offset + Number(button.dataset.nudge), -5, 5);
-        player.setLineOffset(item.id, next);
-        row.querySelector('.nudge-val').textContent =
-          next ? `${next > 0 ? '+' : ''}${(next * 1000).toFixed(0)}ms` : '0';
-        renderMarkers();
+        applyOffset(item.offset * 1000 + Number(button.dataset.nudge) * 1000);
       });
     }
 
@@ -585,16 +743,35 @@ function buildTracks() {
   return tracks;
 }
 
+/**
+ * Builds a self-describing filename, so a folder of exports stays readable and
+ * sorts sensibly:
+ *
+ *   Caines_Crashout_dub_20260725_2225_1080p.mp4
+ *   Caines_Crashout_line_04_caine_20260725_2225.mp4
+ *   Backrooms_StayInCharacter_dub_original_vertical.mp4
+ */
 function defaultOutputName() {
-  const pack = sanitizeFilename(state.pack.title);
+  const parts = [sanitizeFilename(state.pack.title)];
+
+  const line = el.optScope.value === 'line' && state.selectedLineId;
+  parts.push(line ? `line_${sanitizeFilename(state.selectedLineId)}` : 'dub');
+
   const session = state.session;
-  const stamp = session && session.date
-    ? new Date(session.date).toISOString().slice(0, 16).replace(/[-T:]/g, '_')
-    : 'original';
-  const scope = el.optScope.value === 'line' && state.selectedLineId
-    ? `_${sanitizeFilename(state.selectedLineId)}`
-    : '';
-  return `${pack}_${stamp}${scope}.${el.optFormat.value}`;
+  if (session && session.date) {
+    const d = new Date(session.date);
+    const pad = (n) => String(n).padStart(2, '0');
+    parts.push(`${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`);
+    parts.push(`${pad(d.getHours())}${pad(d.getMinutes())}`);
+  } else {
+    parts.push('original');
+  }
+
+  // Only worth naming when it is not the plain source render.
+  if (el.optPreset.value !== 'source') parts.push(el.optPreset.value);
+  if (el.optBurn.checked) parts.push('captioned');
+
+  return `${parts.join('_')}.${el.optFormat.value}`;
 }
 
 function applyExportDefaults() {
@@ -642,14 +819,34 @@ async function openExportDialog() {
     toast('ffmpeg is not available. Set its location in Settings.', 'error', 7000);
     return;
   }
-  const dir = state.settings.outputDir.replace(/[\\/]+$/, '');
-  el.optOutput.value = `${dir}${pathSep()}${defaultOutputName()}`;
+  if (state.loading) {
+    toast('Still loading this pack. Give it a moment, then export.', 'warn');
+    return;
+  }
+  state.outputPathChosen = false;
+  refreshOutputName();
   updateExportSummary();
   el.exportDialog.showModal();
 }
 
 function pathSep() {
   return state.info.platform === 'win32' ? '\\' : '/';
+}
+
+/** Rewrites the suggested output path, unless you've chosen one yourself. */
+function refreshOutputName() {
+  if (!state.pack) return;
+
+  if (state.outputPathChosen) {
+    // Keep their folder and filename, but the extension has to track the
+    // format: ffmpeg picks the container from the name, so "dub.mp4" with
+    // WebM selected would be handed VP9/Opus in an MP4 and refuse to run.
+    el.optOutput.value = el.optOutput.value.replace(/\.[^.\\/]+$/, `.${el.optFormat.value}`);
+    return;
+  }
+
+  const dir = (state.settings.outputDir || '').replace(/[\\/]+$/, '');
+  el.optOutput.value = `${dir}${pathSep()}${defaultOutputName()}`;
 }
 
 async function startExport() {
@@ -668,10 +865,23 @@ async function startExport() {
     trim = { start, end: Math.min(end, el.video.duration || end) };
   }
 
+  const tracks = buildTracks();
+
+  // Last line of defence against exporting a video with no dubbing in it.
+  // If the session has takes but none of them made it into the job, something
+  // is out of step and a silent export would be worse than no export.
+  const expected = state.session && !state.session.isFreestyle
+    ? player.items.filter((i) => i.takeUrl && i.source !== 'none' && !i.muted).length
+    : 0;
+  if (expected > 0 && tracks.length === 0) {
+    toast('This pack is not ready yet. Wait for it to finish loading, then export.', 'warn', 7000);
+    return;
+  }
+
   const job = {
     videoPath: state.pack.videoPath,
     backingPath: state.pack.backingPath,
-    tracks: buildTracks(),
+    tracks,
     captions: buildCaptions(),
     outputPath: el.optOutput.value,
     options: { ...options, trim },
@@ -681,20 +891,129 @@ async function startExport() {
   await window.api.settings.set({ exportOptions: options });
   state.settings = await window.api.settings.get();
 
-  showProgress(true, 'Exporting…', '');
-  const result = await window.api.exporter.run(job);
-  showProgress(false);
+  // Picking a path by hand means you chose it deliberately, and the save
+  // dialog already asked about overwriting. Suggested names get stepped past
+  // anything on disk or already queued instead of silently replacing it.
+  if (!state.outputPathChosen) {
+    const reserved = exportQueue.items
+      .filter((i) => i.status === 'queued' || i.status === 'running')
+      .map((i) => i.job.outputPath);
+    job.outputPath = await window.api.exporter.resolvePath(job.outputPath, reserved);
+  }
+
+  enqueueExport(job);
+}
+
+/**
+ * Exports run one at a time.
+ *
+ * Running several at once meant every job wrote to the same progress bar and
+ * the first one to finish hid it, leaving the rest running invisibly. Several
+ * concurrent ffmpeg encodes also just fight over the same CPU, so they finish
+ * no sooner than they would in sequence.
+ */
+const exportQueue = {
+  items: [],
+  running: false,
+  nextId: 1,
+};
+
+function enqueueExport(job) {
+  const item = {
+    id: exportQueue.nextId++,
+    job,
+    name: job.outputPath.split(/[\\/]/).pop(),
+    status: 'queued',
+    percent: 0,
+  };
+  exportQueue.items.push(item);
+
+  const waiting = exportQueue.items.filter((i) => i.status === 'queued').length;
+  if (exportQueue.running) {
+    toast(`Queued "${item.name}". ${waiting} waiting.`, 'info');
+  }
+
+  renderQueue();
+  drainQueue();
+}
+
+async function drainQueue() {
+  if (exportQueue.running) return;
+
+  const next = exportQueue.items.find((i) => i.status === 'queued');
+  if (!next) {
+    // Nothing left; clear out the finished jobs and hide the bar.
+    exportQueue.items = [];
+    state.runningExportId = null;
+    showProgress(false);
+    return;
+  }
+
+  exportQueue.running = true;
+  next.status = 'running';
+  next.percent = 0;
+  renderQueue();
+
+  let result;
+  try {
+    result = await window.api.exporter.run(next.job);
+  } catch (err) {
+    // Without this the queue would sit at running:true forever and every
+    // later export would be silently swallowed.
+    result = { ok: false, error: err.message || String(err) };
+  } finally {
+    exportQueue.running = false;
+    state.runningExportId = null;
+  }
+
+  next.status = result.ok ? 'done' : (result.cancelled ? 'cancelled' : 'failed');
 
   if (result.ok) {
-    const done = toast(`Exported ${formatBytes(result.size)}. Click to show the file.`, 'ok', 9000);
+    const done = toast(`Exported "${next.name}" (${formatBytes(result.size)}). Click to show it.`, 'ok', 9000);
     done.style.cursor = 'pointer';
     done.addEventListener('click', () => window.api.shell.reveal(result.outputPath));
   } else if (result.cancelled) {
-    toast('Export cancelled.', 'warn');
+    toast(`Cancelled "${next.name}".`, 'warn');
   } else {
-    toast(`Export failed: ${result.error.split('\n')[0]}`, 'error', 12000);
+    toast(`Export failed for "${next.name}": ${result.error.split('\n')[0]}`, 'error', 12000);
     console.error(result.error);
   }
+
+  renderQueue();
+  drainQueue();
+}
+
+/** Cancels the running job. The rest of the queue carries on. */
+function cancelCurrentExport() {
+  if (state.runningExportId != null) window.api.exporter.cancel(state.runningExportId);
+  else window.api.exporter.cancelAll();
+}
+
+/** Drops everything still waiting, then stops the one in progress. */
+function cancelAllExports() {
+  for (const item of exportQueue.items) {
+    if (item.status === 'queued') item.status = 'cancelled';
+  }
+  renderQueue();
+  cancelCurrentExport();
+}
+
+function renderQueue() {
+  const running = exportQueue.items.find((i) => i.status === 'running');
+  const waiting = exportQueue.items.filter((i) => i.status === 'queued').length;
+
+  if (!running) {
+    showProgress(false);
+    return;
+  }
+
+  const index = exportQueue.items.filter((i) => i.status !== 'queued').length;
+  const total = index + waiting;
+
+  showProgress(true, total > 1 ? `Exporting ${index} of ${total}` : 'Exporting…');
+  el.progressName.textContent = running.name;
+  el.progressQueue.textContent = waiting ? `${waiting} more queued` : '';
+  el.btnProgressCancelAll.hidden = waiting === 0;
 }
 
 function showProgress(visible, title, detail) {
@@ -717,6 +1036,24 @@ function openSettings() {
 }
 
 // Events
+
+/**
+ * Ties a range input to a number input so either can drive the value.
+ * The slider updates live while dragging; the box commits on blur or Enter.
+ */
+function bindMixControl(slider, number, max, apply) {
+  const set = (value, echoTo) => {
+    const clamped = clamp(Math.round(value), 0, max);
+    echoTo.value = String(clamped);
+    apply(clamped);
+  };
+
+  slider.addEventListener('input', () => set(Number(slider.value), number));
+  number.addEventListener('change', () => set(Number(number.value), slider));
+  number.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') number.blur();
+  });
+}
 
 function wireEvents() {
   el.splash.addEventListener('click', dismissSplash);
@@ -765,16 +1102,9 @@ function wireEvents() {
     if (duration) player.seek((Number(el.scrub.value) / 1000) * duration);
   });
 
-  el.volBacking.addEventListener('input', () => {
-    const v = Number(el.volBacking.value) / 100;
-    el.volBackingVal.textContent = `${el.volBacking.value}%`;
-    player.setBackingVolume(v);
-  });
-  el.volDub.addEventListener('input', () => {
-    const v = Number(el.volDub.value) / 100;
-    el.volDubVal.textContent = `${el.volDub.value}%`;
-    player.setDubVolume(v);
-  });
+  // Each mix control is a slider plus a number box that mirror each other.
+  bindMixControl(el.volBacking, el.volBackingVal, 150, (v) => player.setBackingVolume(v / 100));
+  bindMixControl(el.volDub, el.volDubVal, 200, (v) => player.setDubVolume(v / 100));
 
   el.btnAllTake.addEventListener('click', () => setAllSources('take'));
   el.btnAllOriginal.addEventListener('click', () => setAllSources('original'));
@@ -793,18 +1123,24 @@ function wireEvents() {
   el.btnExport.addEventListener('click', openExportDialog);
   el.btnExportCancel.addEventListener('click', () => el.exportDialog.close());
   el.btnExportStart.addEventListener('click', startExport);
-  el.optScope.addEventListener('change', updateExportSummary);
-  el.optBurn.addEventListener('change', updateExportSummary);
-  el.optFormat.addEventListener('change', () => {
-    el.optOutput.value = el.optOutput.value.replace(/\.[^.\\/]+$/, `.${el.optFormat.value}`);
-  });
+  // The suggested filename describes the settings, so it follows them around
+  // until you pick a path yourself.
+  for (const control of [el.optScope, el.optBurn, el.optFormat, el.optPreset]) {
+    control.addEventListener('change', () => {
+      updateExportSummary();
+      refreshOutputName();
+    });
+  }
 
   el.btnPickOutput.addEventListener('click', async () => {
     const picked = await window.api.dialog.pickOutput({
       defaultPath: el.optOutput.value,
       format: el.optFormat.value,
     });
-    if (picked) el.optOutput.value = picked;
+    if (picked) {
+      el.optOutput.value = picked;
+      state.outputPathChosen = true;
+    }
   });
 
   el.btnPickGameDir.addEventListener('click', pickGameDir);
@@ -830,15 +1166,20 @@ function wireEvents() {
   });
   el.btnSettingsClose.addEventListener('click', () => el.settingsDialog.close());
 
-  el.btnProgressCancel.addEventListener('click', () => window.api.exporter.cancelAll());
+  el.btnProgressCancel.addEventListener('click', cancelCurrentExport);
+  el.btnProgressCancelAll.addEventListener('click', cancelAllExports);
 
   // First open of a pack transcodes its video; show how far along that is.
-  window.api.media.onProxyProgress(({ percent }) => {
-    if (percent != null) el.loadingText.textContent = `Preparing preview… ${percent.toFixed(0)}%`;
+  // Ignore progress from a pack you have already clicked away from.
+  window.api.media.onProxyProgress(({ videoPath, percent }) => {
+    if (percent == null || videoPath !== state.loadingVideoPath) return;
+    el.loadingText.textContent = `Preparing preview… ${percent.toFixed(0)}%`;
   });
 
-  window.api.exporter.on('export:started', ({ id }) => { state.activeExportId = id; });
-  window.api.exporter.on('export:progress', ({ percent, seconds, duration }) => {
+  window.api.exporter.on('export:started', ({ id }) => { state.runningExportId = id; });
+  window.api.exporter.on('export:progress', ({ id, percent, seconds, duration }) => {
+    // Only the job the queue is currently running may drive the bar.
+    if (state.runningExportId != null && id !== state.runningExportId) return;
     if (percent != null) {
       el.progressFill.style.width = `${percent.toFixed(1)}%`;
       el.progressDetail.textContent = `${formatTime(seconds)} of ${formatTime(duration)} · ${percent.toFixed(0)}%`;

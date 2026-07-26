@@ -367,6 +367,12 @@ function shapeForPreset(preset, source) {
 /** Runs one export job end to end. */
 async function runExport(job, { onProgress, signal } = {}) {
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cvexport-'));
+
+  // A killed ffmpeg never writes the moov atom, so an interrupted mp4 is
+  // unplayable. Anything we created and did not finish gets cleaned up, but a
+  // file that was already there is left alone.
+  const existedBefore = fs.existsSync(job.outputPath);
+
   try {
     fs.mkdirSync(path.dirname(job.outputPath), { recursive: true });
 
@@ -387,16 +393,26 @@ async function runExport(job, { onProgress, signal } = {}) {
     // Sidecar subtitles, for when you'd rather add captions in your editor.
     if (job.options && job.options.writeSrt && job.captions && job.captions.length) {
       const srtPath = job.outputPath.replace(/\.[^.]+$/, '') + '.srt';
-      const trimStart = job.options.trim ? job.options.trim.start : 0;
-      fs.writeFileSync(
-        srtPath,
-        buildSrt(job.captions.map((c) => ({ ...c, start: c.start - trimStart, end: c.end - trimStart }))),
-        'utf8'
-      );
+      const trim = job.options.trim;
+      const trimStart = trim ? trim.start : 0;
+      const window = trim ? trim.end - trim.start : null;
+
+      // Clipped the same way the burned-in captions are, so a single-line
+      // export doesn't ship subtitles for the whole pack.
+      const captions = job.captions
+        .map((c) => ({ ...c, start: c.start - trimStart, end: c.end - trimStart }))
+        .filter((c) => c.end > 0 && (window == null || c.start < window));
+
+      fs.writeFileSync(srtPath, buildSrt(captions), 'utf8');
     }
 
     const stat = fs.statSync(job.outputPath);
     return { outputPath: job.outputPath, size: stat.size };
+  } catch (err) {
+    if (!existedBefore) {
+      try { fs.unlinkSync(job.outputPath); } catch { /* never got created */ }
+    }
+    throw err;
   } finally {
     fs.rmSync(workDir, { recursive: true, force: true });
   }

@@ -394,7 +394,200 @@ function runSmokeTest(win) {
       errors.push(`probe failed: ${err.message}`);
     }
 
-    console.log('SMOKE ' + JSON.stringify({ report, videoCheck, errors }, null, 2));
+    // Switching between a pack's recording sessions, including a freestyle
+    // one, has to swap the takes over cleanly.
+    let sessionCheck = null;
+    try {
+      sessionCheck = await win.webContents.executeJavaScript(`(async () => {
+        const $ = (s) => document.querySelector(s);
+        const settle = async () => {
+          for (let i = 0; i < 800; i++) {
+            await new Promise((r) => setTimeout(r, 250));
+            if (!$('#btn-export').disabled) return true;
+          }
+          return false;
+        };
+
+        // Find a pack with more than one session.
+        const cards = [...document.querySelectorAll('.pack-card')];
+        let chosen = null;
+        for (const card of cards) {
+          card.click();
+          await settle();
+          if ($('#session-select').options.length > 1) { chosen = card; break; }
+        }
+        if (!chosen) return { skipped: 'no pack has two sessions' };
+
+        const select = $('#session-select');
+        const results = [];
+        for (let i = 0; i < select.options.length; i++) {
+          select.selectedIndex = i;
+          select.dispatchEvent(new Event('change'));
+          const ok = await settle();
+          results.push({
+            label: select.options[i].textContent,
+            settled: ok,
+            rows: document.querySelectorAll('.line-row').length,
+            takesShown: document.querySelectorAll('.segmented button[data-src="take"]:not([disabled])').length,
+            freestyleNote: Boolean(document.querySelector('.freestyle-note')),
+          });
+        }
+        return { pack: $('#pack-title').textContent, sessions: results };
+      })()`);
+
+      if (sessionCheck && sessionCheck.sessions) {
+        for (const s of sessionCheck.sessions) {
+          if (!s.settled) errors.push(`session "${s.label}" never finished loading`);
+          if (!s.rows) errors.push(`session "${s.label}" rendered no lines`);
+        }
+      }
+    } catch (err) {
+      sessionCheck = { error: err.message };
+    }
+
+    // Switching packs must not leave the outgoing pack's lines readable while
+    // the new one loads. Exporting in that window produced a video with the
+    // backing track and no dubbing.
+    let staleCheck = null;
+    try {
+      staleCheck = await win.webContents.executeJavaScript(`(async () => {
+        const $ = (s) => document.querySelector(s);
+        const cards = [...document.querySelectorAll('.pack-card')];
+        if (cards.length < 2) return { skipped: 'need two packs' };
+
+        const settle = async () => {
+          for (let i = 0; i < 800; i++) {
+            await new Promise((r) => setTimeout(r, 250));
+            if (!$('#btn-export').disabled && document.querySelectorAll('.line-row').length) return true;
+          }
+          return false;
+        };
+
+        cards[0].click();
+        const firstSettled = await settle();
+        const firstRows = document.querySelectorAll('.line-row').length;
+
+        // Switch packs, then look straight away.
+        cards[1].click();
+        await new Promise((r) => setTimeout(r, 60));
+        const during = {
+          exportDisabled: $('#btn-export').disabled,
+          rows: document.querySelectorAll('.line-row').length,
+        };
+
+        const secondSettled = await settle();
+        return {
+          firstRows,
+          firstSettled,
+          during,
+          secondSettled,
+          afterRows: document.querySelectorAll('.line-row').length,
+          afterExpected: parseInt(cards[1].querySelector('.small').textContent, 10),
+          afterExportEnabled: !$('#btn-export').disabled,
+        };
+      })()`);
+
+      if (staleCheck && !staleCheck.skipped) {
+        if (!staleCheck.during.exportDisabled) errors.push('export was allowed while a pack was still loading');
+        if (staleCheck.during.rows !== 0) errors.push('stale line rows survived a pack switch');
+        if (staleCheck.afterRows !== staleCheck.afterExpected) errors.push('line rows wrong after switching packs');
+      }
+    } catch (err) {
+      staleCheck = { error: err.message };
+    }
+
+    // Spam-click every pack, then settle on the last one. A superseded load
+    // must not write its results over the pack that actually won.
+    let packCheck = null;
+    try {
+      packCheck = await win.webContents.executeJavaScript(`(async () => {
+        const cards = [...document.querySelectorAll('.pack-card')];
+        if (!cards.length) return { skipped: 'no packs' };
+
+        for (const card of cards) {
+          card.click();
+          await new Promise((r) => setTimeout(r, 120));
+        }
+
+        const target = cards[cards.length - 1];
+        const wantTitle = target.querySelector('strong').textContent;
+        const wantRows = parseInt(target.querySelector('.small').textContent, 10);
+        target.click();
+
+        const overlay = document.getElementById('loading-overlay');
+        for (let i = 0; i < 600; i++) {
+          await new Promise((r) => setTimeout(r, 500));
+          if (overlay.hidden && document.querySelectorAll('.line-row').length) break;
+        }
+
+        const row = document.querySelector('.line-row');
+        const rows = document.querySelectorAll('.line-row').length;
+        return {
+          clickedThrough: cards.length,
+          settledOn: document.getElementById('pack-title').textContent,
+          titleMatches: document.getElementById('pack-title').textContent === wantTitle,
+          rows,
+          expectedRows: wantRows,
+          rowsMatch: rows === wantRows,
+          markersMatch: document.querySelectorAll('.marker').length === wantRows,
+          videoW: document.getElementById('video').videoWidth,
+          lineVolNumber: Boolean(row && row.querySelector('.line-vol-num')),
+          lineOffsetNumber: Boolean(row && row.querySelector('input.nudge-val')),
+          mixNumbers: document.querySelectorAll('.mix .num').length,
+          loadingHidden: overlay.hidden,
+        };
+      })()`);
+      if (packCheck && packCheck.rowsMatch === false) errors.push('line rows do not match the selected pack');
+      if (packCheck && packCheck.titleMatches === false) errors.push('settled on the wrong pack');
+    } catch (err) {
+      packCheck = { error: err.message };
+    }
+
+    // Queue three exports at once. They must run one after another, and the
+    // progress bar must survive the first one finishing.
+    let queueCheck = null;
+    if (process.env.CVE_SMOKE_EXPORT === '1') {
+      try {
+        queueCheck = await win.webContents.executeJavaScript(`(async () => {
+          const $ = (s) => document.querySelector(s);
+          const bar = $('#progress-bar');
+          const seen = [];
+
+          const watcher = setInterval(() => {
+            const label = bar.hidden ? 'hidden' : $('#progress-title').textContent;
+            if (seen[seen.length - 1] !== label) seen.push(label);
+          }, 150);
+
+          // Whole-video exports, so they last long enough to actually pile up.
+          const outputs = [];
+          for (let i = 0; i < 3; i++) {
+            $('#btn-export').click();
+            const scope = $('#opt-scope');
+            scope.value = 'full';
+            scope.dispatchEvent(new Event('change'));
+            const q = $('#opt-quality');
+            q.value = 'small';
+            q.dispatchEvent(new Event('change'));
+            outputs.push($('#opt-output').value);
+            $('#btn-export-start').click();
+            await new Promise((r) => setTimeout(r, 350));
+          }
+
+          let hiddenStreak = 0;
+          for (let i = 0; i < 600; i++) {
+            await new Promise((r) => setTimeout(r, 500));
+            if (bar.hidden) { if (++hiddenStreak >= 3) break; } else hiddenStreak = 0;
+          }
+          clearInterval(watcher);
+          return { timeline: seen, barHiddenAtEnd: bar.hidden, requested: outputs[0] };
+        })()`);
+      } catch (err) {
+        queueCheck = { error: err.message };
+      }
+    }
+
+    console.log('SMOKE ' + JSON.stringify(
+      { report, videoCheck, sessionCheck, staleCheck, packCheck, queueCheck, errors }, null, 2));
     app.exit(errors.length ? 1 : 0);
   });
 }
@@ -447,7 +640,13 @@ function registerIpc() {
 
   // Chromium can't decode the packs' Theora video, so previews play a cached
   // MP4 transcode instead. Exports still read the original .ogv.
-  ipcMain.handle('media:proxy', async (event, videoPath) => {
+  //
+  // Clicking through packs quickly can ask for the same proxy more than once
+  // before the first transcode finishes, so in-flight builds are shared rather
+  // than starting a second ffmpeg over the same file.
+  const proxiesInFlight = new Map();
+
+  ipcMain.handle('media:proxy', async (event, videoPath, options = {}) => {
     const cacheDir = path.join(app.getPath('userData'), 'preview-cache');
     allowedRoots.add(path.resolve(cacheDir));
 
@@ -456,13 +655,44 @@ function registerIpc() {
     };
 
     try {
-      const result = await ensureProxy(videoPath, cacheDir, {
-        onProgress: ({ percent }) => send({ videoPath, percent }),
-      });
+      // A rebuild must not join an in-flight build of the copy being replaced.
+      const key = options.rebuild ? `${videoPath}::rebuild` : videoPath;
+      let entry = proxiesInFlight.get(key);
+      if (!entry) {
+        entry = { controller: new AbortController(), promise: null };
+        proxiesInFlight.set(key, entry);
+        entry.promise = ensureProxy(videoPath, cacheDir, {
+          rebuild: Boolean(options.rebuild),
+          signal: entry.controller.signal,
+          onProgress: ({ percent }) => send({ videoPath, percent }),
+        }).finally(() => {
+          // Only clear our own entry; a cancel may already have replaced it.
+          if (proxiesInFlight.get(key) === entry) proxiesInFlight.delete(key);
+        });
+      }
+
+      const result = await entry.promise;
       return { ok: true, url: mediaUrl(result.path), cached: result.cached };
     } catch (err) {
-      return { ok: false, error: err.message };
+      return { ok: false, error: err.message, cancelled: Boolean(err.cancelled) };
     }
+  });
+
+  // Clicking away from a pack stops its transcode, so rattling through the
+  // list doesn't leave several ffmpeg processes fighting for the CPU.
+  ipcMain.handle('media:cancelProxy', (_e, videoPath) => {
+    let cancelled = 0;
+    for (const key of [videoPath, `${videoPath}::rebuild`]) {
+      const entry = proxiesInFlight.get(key);
+      if (!entry) continue;
+      // Drop it now rather than waiting for ffmpeg to die, so a request that
+      // arrives moments later starts a fresh build instead of awaiting this
+      // doomed one and being told its preview was cancelled.
+      proxiesInFlight.delete(key);
+      entry.controller.abort();
+      cancelled++;
+    }
+    return cancelled > 0;
   });
 
   ipcMain.handle('dialog:pickOutput', async (_e, { defaultPath, format }) => {
@@ -523,6 +753,24 @@ function registerIpc() {
     } finally {
       exportJobs.delete(id);
     }
+  });
+
+  // Finds a filename that collides with neither what's on disk nor what the
+  // renderer already has queued.
+  ipcMain.handle('export:resolvePath', (_e, target, reserved = []) => {
+    const taken = new Set(reserved.map((p) => String(p).toLowerCase()));
+    const clashes = (p) => taken.has(p.toLowerCase()) || fs.existsSync(p);
+    if (!clashes(target)) return target;
+
+    const dot = path.basename(target).lastIndexOf('.');
+    const ext = dot > 0 ? target.slice(target.length - (path.basename(target).length - dot)) : '';
+    const stem = ext ? target.slice(0, target.length - ext.length) : target;
+
+    for (let n = 2; n < 1000; n++) {
+      const candidate = `${stem}_${n}${ext}`;
+      if (!clashes(candidate)) return candidate;
+    }
+    return target;
   });
 
   ipcMain.handle('export:cancel', (_e, id) => {

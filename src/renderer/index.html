@@ -100,16 +100,22 @@
           </div>
 
           <div class="mix">
-            <label class="mix-slider" title="Backing track volume">
+            <div class="mix-slider" title="Backing track volume">
               <span>Music</span>
               <input id="vol-backing" type="range" min="0" max="150" value="100" />
-              <b id="vol-backing-val">100%</b>
-            </label>
-            <label class="mix-slider" title="Your dub volume">
+              <span class="num-field">
+                <input id="vol-backing-val" class="num" type="number" min="0" max="150" step="1" value="100" />
+                <b>%</b>
+              </span>
+            </div>
+            <div class="mix-slider" title="Your dub volume">
               <span>Dub</span>
               <input id="vol-dub" type="range" min="0" max="200" value="100" />
-              <b id="vol-dub-val">100%</b>
-            </label>
+              <span class="num-field">
+                <input id="vol-dub-val" class="num" type="number" min="0" max="200" step="1" value="100" />
+                <b>%</b>
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -129,6 +135,24 @@
     </div>
   </section>
 </main>
+
+<!-- Docked below the layout rather than floated over it, so a long export
+     can never sit on top of the timeline. -->
+<div id="progress-bar" class="progress-bar" hidden>
+  <div class="progress-info">
+    <strong id="progress-title">Exporting…</strong>
+    <span id="progress-name" class="progress-name"></span>
+  </div>
+  <div class="progress-side">
+    <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
+    <span id="progress-detail" class="muted small"></span>
+  </div>
+  <span id="progress-queue" class="muted small"></span>
+  <div class="progress-actions">
+    <button id="btn-progress-cancel" class="btn btn-small" title="Stop this one and move to the next">Skip</button>
+    <button id="btn-progress-cancel-all" class="btn btn-small" hidden>Cancel all</button>
+  </div>
+</div>
 
 <!-- Export dialog -->
 <dialog id="export-dialog" class="dialog">
@@ -282,16 +306,6 @@
     </menu>
   </form>
 </dialog>
-
-<!-- Export progress -->
-<div id="progress-bar" class="progress-bar" hidden>
-  <div class="progress-info">
-    <strong id="progress-title">Exporting…</strong>
-    <span id="progress-detail" class="muted"></span>
-  </div>
-  <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
-  <button id="btn-progress-cancel" class="btn btn-small">Cancel</button>
-</div>
 
 <div id="toasts" class="toasts"></div>
 

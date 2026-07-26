@@ -18,6 +18,8 @@
 const DRIFT_LIMIT = 0.12;   // seconds of audio/video skew before a resync
 const DRIFT_INTERVAL = 300; // ms between drift checks
 
+const abortError = () => new DOMException('Load superseded', 'AbortError');
+
 export class DubPlayer {
   constructor(video) {
     this.video = video;
@@ -68,11 +70,11 @@ export class DubPlayer {
     this.videoSource.connect(this.originalGain);
   }
 
-  async _decode(url) {
+  async _decode(url, signal) {
     if (!url) return null;
     if (this.buffers.has(url)) return this.buffers.get(url);
 
-    const res = await fetch(url);
+    const res = await fetch(url, { signal });
     if (!res.ok) throw new Error(`Could not read audio (${res.status})`);
     const bytes = await res.arrayBuffer();
     const buffer = await this.ctx.decodeAudioData(bytes);
@@ -80,17 +82,51 @@ export class DubPlayer {
     return buffer;
   }
 
+  /** Stops whatever load is in flight, so a new one can take over cleanly. */
+  cancelLoad() {
+    if (this.loadController) this.loadController.abort();
+    this.loadController = null;
+  }
+
   /**
-   * Loads a pack + session. Decodes the backing track and every available take
-   * up front; original dialogue is decoded lazily, since most of the time
-   * you're listening to your own performance.
+   * Drops the current pack's lines and audio.
+   *
+   * Called the moment a new selection starts, because loading is slow and
+   * anything reading `items` in the meantime would otherwise be looking at the
+   * pack you just clicked away from.
    */
-  async load({ pack, session, onProgress }) {
-    this._ensureContext();
+  reset() {
+    this.cancelLoad();
     this.stop();
     this.items = [];
     this.freestyle = null;
     this.backing = null;
+  }
+
+  /**
+   * Loads a pack + session. Decodes the backing track and every available take
+   * up front; original dialogue is decoded lazily, since most of the time
+   * you're listening to your own performance.
+   *
+   * Clicking through packs quickly abandons the previous load part way, so this
+   * bails out the moment its signal is aborted rather than carrying on and
+   * writing its results over whichever pack won.
+   */
+  async load({ pack, session, onProgress, signal }) {
+    this._ensureContext();
+    this.cancelLoad();
+    this.stop();
+    this.items = [];
+    this.freestyle = null;
+    this.backing = null;
+
+    const controller = new AbortController();
+    this.loadController = controller;
+    if (signal) {
+      if (signal.aborted) controller.abort();
+      else signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
+    const { signal: loadSignal } = controller;
 
     const takeUrls = (session && session.takeUrls) || {};
     const jobs = [];
@@ -131,8 +167,9 @@ export class DubPlayer {
     const total = jobs.length || 1;
 
     for (const job of jobs) {
+      if (loadSignal.aborted) throw abortError();
       try {
-        const buffer = await this._decode(job.url);
+        const buffer = await this._decode(job.url, loadSignal);
         if (job.kind === 'backing') this.backing = buffer;
         else if (job.kind === 'freestyle') this.freestyle = buffer;
         else {
@@ -144,12 +181,15 @@ export class DubPlayer {
           }
         }
       } catch (err) {
+        if (err.name === 'AbortError' || loadSignal.aborted) throw abortError();
         console.warn('Could not decode', job.url, err.message);
       }
       done++;
       if (onProgress) onProgress(done / total);
     }
 
+    if (loadSignal.aborted) throw abortError();
+    if (this.loadController === controller) this.loadController = null;
     return this.items;
   }
 
@@ -223,7 +263,13 @@ export class DubPlayer {
   async play() {
     this._ensureContext();
     if (this.ctx.state === 'suspended') await this.ctx.resume();
-    await this.video.play();
+    try {
+      await this.video.play();
+    } catch (err) {
+      // Switching packs pauses the video mid-play(), which rejects the pending
+      // promise. That is the normal outcome of the swap, not a failure.
+      if (err.name !== 'AbortError') throw err;
+    }
   }
 
   pause() {
@@ -231,7 +277,7 @@ export class DubPlayer {
   }
 
   async toggle() {
-    if (this.video.paused) await this.play();
+    if (this.video.paused) await this.play().catch(() => {});
     else this.pause();
   }
 

@@ -45,7 +45,8 @@ contextBridge.exposeInMainWorld('api', {
 
   media: {
     probe: (files) => ipcRenderer.invoke('media:probe', files),
-    proxy: (videoPath) => ipcRenderer.invoke('media:proxy', videoPath),
+    proxy: (videoPath, options) => ipcRenderer.invoke('media:proxy', videoPath, options),
+    cancelProxy: (videoPath) => ipcRenderer.invoke('media:cancelProxy', videoPath),
     onProxyProgress: (fn) => on('proxy:progress', fn),
   },
 
@@ -57,6 +58,7 @@ contextBridge.exposeInMainWorld('api', {
 
   exporter: {
     run: (job) => ipcRenderer.invoke('export:run', job),
+    resolvePath: (target, reserved) => ipcRenderer.invoke('export:resolvePath', target, reserved),
     cancel: (id) => ipcRenderer.invoke('export:cancel', id),
     cancelAll: () => ipcRenderer.invoke('export:cancelAll'),
     on,

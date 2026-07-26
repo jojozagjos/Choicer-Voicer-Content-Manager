@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+build/
+release/
+*.exe
+*.dmg
+*.AppImage
+*.blockmap
+
+# Claude Code
+# settings.local.json is your own machine's permission list, so it stays local.
+# A shared .claude/settings.json (if you ever add one) is fine to commit.
+.claude/settings.local.json
+
+# Logs and caches
+*.log
+npm-debug.log*
+.cache/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Exported videos, in case anyone points the app at the repo folder
+exports/
+*.mp4
+*.mkv
+*.mov
+*.webm
+*.srt

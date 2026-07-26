@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' cvmedia: data:; media-src 'self' cvmedia:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' cvmedia:;" />
+  <title>Choicer Voicer Export</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<div id="splash" class="splash">
+  <div class="splash-mark">CV</div>
+  <h1 class="splash-fade">Choicer Voicer Export</h1>
+  <p class="splash-by splash-fade">by <b>Joseph Slade</b></p>
+  <p class="splash-note splash-fade">Preview and export your dubs as video</p>
+</div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">CV</span>
+    <div class="brand-text">
+      <h1>Choicer Voicer Export</h1>
+      <button id="game-dir" class="game-dir" title="Click to change the game folder">Locating game data…</button>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <span id="ffmpeg-pill" class="pill pill-muted">ffmpeg…</span>
+    <div class="theme-toggle" role="group" aria-label="Colour theme">
+      <button type="button" data-theme-set="light" title="Light mode">☀</button>
+      <button type="button" data-theme-set="system" title="Match my system">◐</button>
+      <button type="button" data-theme-set="dark" title="Dark mode">☾</button>
+    </div>
+    <button id="btn-refresh" class="btn btn-ghost" title="Rescan the game folder (R)">Rescan</button>
+    <button id="btn-settings" class="btn btn-ghost">Settings</button>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- Packs -->
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <input id="pack-search" class="input" type="search" placeholder="Search packs…" autocomplete="off" />
+    </div>
+    <div id="pack-list" class="pack-list"></div>
+    <div class="credit">
+      <strong>Choicer Voicer Export</strong>
+      <span>Made by Joseph Slade</span>
+      <button type="button" id="btn-about">About &amp; credits</button>
+    </div>
+  </aside>
+
+  <!-- Stage -->
+  <section class="stage">
+
+    <div id="empty-state" class="empty-state">
+      <div class="empty-art">🎙️</div>
+      <h2>Pick a pack to get started</h2>
+      <p>Your recorded dubs live in the game's <code>recordings</code> folder. Choose a pack on the
+         left, pick a take, preview it, then export it as a video.</p>
+    </div>
+
+    <div id="workspace" class="workspace" hidden>
+
+      <div class="session-bar">
+        <div class="session-info">
+          <h2 id="pack-title"></h2>
+          <p id="pack-subtitle" class="muted"></p>
+        </div>
+        <div class="session-controls">
+          <label class="field">
+            <span>Take session</span>
+            <select id="session-select" class="select"></select>
+          </label>
+          <button id="btn-export" class="btn btn-primary">Export video…</button>
+        </div>
+      </div>
+
+      <div class="viewer">
+        <div class="video-wrap" id="video-wrap">
+          <video id="video" playsinline preload="auto"></video>
+          <img id="portrait" class="portrait" alt="" hidden />
+          <div id="caption" class="caption" hidden></div>
+          <div id="loading-overlay" class="loading-overlay" hidden>
+            <div class="spinner"></div>
+            <p id="loading-text">Loading audio…</p>
+          </div>
+        </div>
+
+        <div class="transport">
+          <button id="btn-play" class="btn btn-icon" title="Play / pause (Space)">▶</button>
+          <button id="btn-back" class="btn btn-icon" title="Back 5s (←)">⟲</button>
+          <button id="btn-fwd" class="btn btn-icon" title="Forward 5s (→)">⟳</button>
+          <span id="time-display" class="time">0:00 / 0:00</span>
+
+          <div class="scrub-wrap">
+            <div id="markers" class="markers"></div>
+            <input id="scrub" class="scrub" type="range" min="0" max="1000" value="0" step="1" />
+          </div>
+
+          <div class="mix">
+            <label class="mix-slider" title="Backing track volume">
+              <span>Music</span>
+              <input id="vol-backing" type="range" min="0" max="150" value="100" />
+              <b id="vol-backing-val">100%</b>
+            </label>
+            <label class="mix-slider" title="Your dub volume">
+              <span>Dub</span>
+              <input id="vol-dub" type="range" min="0" max="200" value="100" />
+              <b id="vol-dub-val">100%</b>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="lines">
+        <div class="lines-head">
+          <h3>Lines <span id="line-count" class="muted"></span></h3>
+          <div class="lines-tools">
+            <button id="btn-all-take" class="btn btn-small">All: your take</button>
+            <button id="btn-all-original" class="btn btn-small">All: original</button>
+            <button id="btn-reset-mix" class="btn btn-small">Reset mix</button>
+          </div>
+        </div>
+        <div id="line-list" class="line-list"></div>
+      </div>
+
+    </div>
+  </section>
+</main>
+
+<!-- Export dialog -->
+<dialog id="export-dialog" class="dialog">
+  <form method="dialog" class="dialog-body">
+    <h2>Export video</h2>
+
+    <div class="grid-2">
+      <label class="field">
+        <span>Format</span>
+        <select id="opt-format" class="select">
+          <option value="mp4">MP4 (H.264 + AAC), most compatible</option>
+          <option value="mkv">MKV (H.264 + AAC)</option>
+          <option value="mov">MOV (H.264 + AAC)</option>
+          <option value="webm">WebM (VP9 + Opus)</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span>Size</span>
+        <select id="opt-preset" class="select">
+          <option value="source">Source (1920×1080)</option>
+          <option value="1080p">1080p</option>
+          <option value="720p">720p</option>
+          <option value="480p">480p</option>
+          <option value="vertical">Vertical 9:16 for Shorts, TikTok and Reels</option>
+          <option value="square">Square 1:1</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span>Quality</span>
+        <select id="opt-quality" class="select">
+          <option value="high">High (bigger file)</option>
+          <option value="balanced" selected>Balanced</option>
+          <option value="small">Small (faster, lower quality)</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span>Scope</span>
+        <select id="opt-scope" class="select">
+          <option value="full">Whole video</option>
+          <option value="line">Selected line only</option>
+        </select>
+      </label>
+    </div>
+
+    <fieldset class="checks">
+      <legend>Extras</legend>
+      <label class="check"><input type="checkbox" id="opt-burn" /> <span>Burn captions into the video</span></label>
+      <label class="check"><input type="checkbox" id="opt-srt" /> <span>Also write a <code>.srt</code> subtitle file</span></label>
+      <label class="check"><input type="checkbox" id="opt-normalize" /> <span>Normalise dub loudness (evens out quiet/loud takes)</span></label>
+      <label class="check"><input type="checkbox" id="opt-original" /> <span>Include the original video audio underneath</span></label>
+    </fieldset>
+
+    <label class="field">
+      <span>Save to</span>
+      <div class="path-row">
+        <input id="opt-output" class="input" type="text" readonly />
+        <button type="button" id="btn-pick-output" class="btn btn-small">Change…</button>
+      </div>
+    </label>
+
+    <p class="muted small" id="export-summary"></p>
+
+    <menu class="dialog-actions">
+      <button type="button" id="btn-export-cancel" class="btn btn-ghost">Cancel</button>
+      <button type="button" id="btn-export-start" class="btn btn-primary">Start export</button>
+    </menu>
+  </form>
+</dialog>
+
+<!-- Settings dialog -->
+<dialog id="settings-dialog" class="dialog">
+  <form method="dialog" class="dialog-body">
+    <h2>Settings</h2>
+
+    <label class="field">
+      <span>Appearance</span>
+      <select id="set-theme" class="select">
+        <option value="system">Match my system</option>
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+      </select>
+    </label>
+
+    <label class="check">
+      <input type="checkbox" id="set-splash" /> <span>Show the splash screen at startup</span>
+    </label>
+
+    <label class="field">
+      <span>Game folder</span>
+      <div class="path-row">
+        <input id="set-gamedir" class="input" type="text" readonly />
+        <button type="button" id="btn-pick-gamedir" class="btn btn-small">Change…</button>
+      </div>
+    </label>
+
+    <label class="field">
+      <span>Default export folder</span>
+      <div class="path-row">
+        <input id="set-outdir" class="input" type="text" readonly />
+        <button type="button" id="btn-pick-outdir" class="btn btn-small">Change…</button>
+      </div>
+    </label>
+
+    <label class="field">
+      <span>ffmpeg (leave blank to use the bundled or system copy)</span>
+      <div class="path-row">
+        <input id="set-ffmpeg" class="input" type="text" readonly placeholder="auto" />
+        <button type="button" id="btn-pick-ffmpeg" class="btn btn-small">Locate…</button>
+        <button type="button" id="btn-clear-ffmpeg" class="btn btn-small">Auto</button>
+      </div>
+    </label>
+
+    <p id="settings-ffmpeg-status" class="muted small"></p>
+
+    <menu class="dialog-actions">
+      <button type="button" id="btn-settings-close" class="btn btn-primary">Done</button>
+    </menu>
+  </form>
+</dialog>
+
+<!-- About -->
+<dialog id="about-dialog" class="dialog">
+  <form method="dialog" class="dialog-body">
+    <div class="about-head">
+      <span class="brand-mark">CV</span>
+      <div class="about-lines">
+        <h2>Choicer Voicer Export</h2>
+        <span class="muted small">Version <b id="about-version">1.0.0</b></span>
+      </div>
+    </div>
+
+    <p>A companion tool for <b>The Choicer Voicer</b> that rebuilds the dubs you record in the
+       game: your takes laid over the backing track and the original video, then exports them
+       as a shareable video file.</p>
+
+    <p class="muted small">
+      Built by <b>Joseph Slade</b>.<br />
+      <em>The Choicer Voicer</em> is made by YeahMaybe; voice packs belong to their respective
+      authors. This tool only reads the files the game has already written to your own computer.
+      It is not affiliated with or endorsed by the game's developers.
+    </p>
+
+    <p class="muted small">Video encoding is handled by <b>ffmpeg</b> (LGPL/GPL).</p>
+
+    <menu class="dialog-actions">
+      <button type="button" id="btn-about-page" class="btn btn-ghost">Game on itch.io</button>
+      <button type="button" id="btn-about-close" class="btn btn-primary">Close</button>
+    </menu>
+  </form>
+</dialog>
+
+<!-- Export progress -->
+<div id="progress-bar" class="progress-bar" hidden>
+  <div class="progress-info">
+    <strong id="progress-title">Exporting…</strong>
+    <span id="progress-detail" class="muted"></span>
+  </div>
+  <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
+  <button id="btn-progress-cancel" class="btn btn-small">Cancel</button>
+</div>
+
+<div id="toasts" class="toasts"></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

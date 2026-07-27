@@ -829,6 +829,9 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
   line-height: 1.3;
 }
 .caption b { margin-right: 8px; }
+/* One line per speaker when two characters talk at the same moment. */
+.caption-line { display: block; }
+.caption-line + .caption-line { margin-top: 2px; }
 
 .loading-overlay {
   position: absolute;

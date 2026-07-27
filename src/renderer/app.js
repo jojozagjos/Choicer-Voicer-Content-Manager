@@ -449,6 +449,10 @@ async function switchTab(tab) {
   // Leaving a tab always closes the editor, so it cannot linger over another view.
   if (!el.editorView.hidden) editor.close();
 
+  // Hiding the export view does not stop the video, so without this the dub
+  // keeps playing out of sight while you are on another tab.
+  if (tab !== 'export') player.pause();
+
   el.homeView.hidden = tab !== 'home';
   el.sidebar.hidden = tab !== 'export';
   el.stage.hidden = tab !== 'export';
@@ -1673,15 +1677,20 @@ function tick() {
   }
   el.timeDisplay.textContent = `${formatTime(time)} / ${formatTime(duration)}`;
 
-  const active = player.activeItem(time);
+  const window = activeCaption(time);
+  const active = window ? window.items[0] : null;
   const wantCaptions = state.settings.showPreviewCaptions !== false;
-  if (wantCaptions && active && active.caption) {
+
+  if (wantCaptions && window) {
     const showSpeaker = captionStyle().showSpeaker !== false;
-    const speaker = showSpeaker && active.character
-      ? `<b style="color:${characterColor(active.character)}">${escapeHtml(active.character)}</b>`
-      : '';
+    // Simultaneous speakers get a line each rather than overlapping.
+    el.caption.innerHTML = window.lines.map(({ text, character }) => {
+      const speaker = showSpeaker && character
+        ? `<b style="color:${characterColor(character)}">${escapeHtml(character)}</b>`
+        : '';
+      return `<span class="caption-line">${speaker}${escapeHtml(text)}</span>`;
+    }).join('');
     el.caption.hidden = false;
-    el.caption.innerHTML = `${speaker}${escapeHtml(active.caption)}`;
   } else {
     el.caption.hidden = true;
   }
@@ -1698,21 +1707,97 @@ function tick() {
 
 // Export
 
-/** Caption windows, clipped so a long line never overruns the next speaker. */
-function buildCaptions() {
-  const items = [...player.items].sort((a, b) => a.time - b.time);
+/**
+ * Caption windows, clipped so a long line never overruns the next speaker.
+ *
+ * Takes routinely run past where the next line starts, so without the clip a
+ * caption swallows the one after it and that line never appears. Eight of the
+ * twenty six Backrooms captions were being lost this way.
+ */
+function captionWindows() {
+  const items = [...player.items].sort((a, b) => (a.time + a.offset) - (b.time + b.offset));
   return items.map((item, i) => {
     const start = item.time + item.offset;
     const next = items[i + 1];
     const natural = start + Math.max(item.duration || 0, 0.9);
-    const limit = next ? (next.time + next.offset) - 0.04 : Infinity;
+    // Clips sharing a timestamp are grouped later, so only a genuinely later
+    // line limits this one.
+    const following = items.slice(i + 1).find((n) => (n.time + n.offset) > start);
+    const limit = following ? (following.time + following.offset) : Infinity;
     return {
+      item,
       start,
-      end: Math.max(start + 0.5, Math.min(natural, limit)),
+      end: Math.min(natural, limit),
       text: item.caption || '',
       character: item.character || '',
     };
-  }).filter((c) => c.text);
+  });
+}
+
+/**
+ * Caption events for the export, built the same way the preview builds them so
+ * the two cannot disagree. Clips sharing a timestamp become one event with a
+ * line each, rather than two events drawn on top of each other.
+ */
+function buildCaptions() {
+  const byStart = new Map();
+  for (const w of captionWindows()) {
+    if (!w.text) continue;
+    const key = w.start.toFixed(3);
+    if (!byStart.has(key)) byStart.set(key, { start: w.start, end: w.end, lines: [] });
+    const group = byStart.get(key);
+    group.end = Math.max(group.end, w.end);
+    group.lines.push({ text: w.text, character: w.character });
+  }
+
+  return [...byStart.values()]
+    .sort((a, b) => a.start - b.start)
+    .map((g) => ({ start: g.start, end: g.end, lines: g.lines }));
+}
+
+/**
+ * The caption due at `time`, or null between lines.
+ *
+ * Computed live rather than from a cache: durations arrive as audio decodes
+ * and offsets change as you nudge lines, so a cached copy is stale exactly
+ * when it matters. Twenty six items scanned once a frame costs nothing.
+ */
+function activeCaption(time) {
+  const items = player.items;
+
+  // The line on screen is the latest one to have started.
+  let bestStart = -Infinity;
+  for (const item of items) {
+    if (!item.caption) continue;
+    const start = item.time + item.offset;
+    if (start <= time && start > bestStart) bestStart = start;
+  }
+  if (bestStart === -Infinity) return null;
+
+  // Packs really do put two clips at the same timestamp when two characters
+  // talk over each other. Jax's Crashout has three such pairs, and showing
+  // only one of them means the other caption is never seen at all.
+  const together = items.filter((i) => i.caption && (i.time + i.offset) === bestStart);
+
+  let nextStart = Infinity;
+  for (const item of items) {
+    const start = item.time + item.offset;
+    if (item.caption && start > bestStart && start < nextStart) nextStart = start;
+  }
+
+  // Cut off when the next line begins, so a long take cannot run over it.
+  // No minimum is applied: a floor would claim time this caption cannot
+  // actually hold, because the next line supersedes it the moment it starts.
+  const longest = Math.max(...together.map((i) => i.duration || 0), 0.9);
+  const end = Math.min(bestStart + longest, nextStart);
+  if (time >= end) return null;
+
+  return {
+    start: bestStart,
+    end,
+    items: together,
+    lines: together.map((i) => ({ text: i.caption, character: i.character || '' })),
+  };
 }
 
 function buildTracks() {

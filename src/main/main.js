@@ -504,6 +504,79 @@ function runSmokeTest(win) {
       contentCheck = { error: err.message };
     }
 
+    // Captions have to appear for every clip, and playback must stop when the
+    // export view is hidden rather than carrying on unseen.
+    let captionCheck = null;
+    try {
+      captionCheck = await win.webContents.executeJavaScript(`(async () => {
+        const $ = (s) => document.querySelector(s);
+        $('[data-tab="export"]').click();
+        await new Promise((r) => setTimeout(r, 300));
+
+        const card = [...document.querySelectorAll('.pack-card')]
+          .find((c) => c.textContent.includes('Backrooms'));
+        if (!card) return { skipped: 'no Backrooms pack' };
+        card.click();
+
+        for (let i = 0; i < 400; i++) {
+          await new Promise((r) => setTimeout(r, 250));
+          if (!$('#btn-export').disabled && document.querySelectorAll('.line-row').length) break;
+        }
+
+        const video = $('#video');
+        const rows = [...document.querySelectorAll('.line-row')];
+        const times = rows.map((r) => r.querySelector('.line-time').textContent);
+
+        // The bug only showed during playback, where a long take swallowed the
+        // caption after it. Seeking clip to clip could not reproduce it, so
+        // this plays the whole video and records every caption that appears.
+        const wanted = rows.map((r) => r.querySelector('.line-caption').textContent.trim());
+        const seen = new Set();
+
+        video.playbackRate = 1.5;
+        video.currentTime = 0;
+        await video.play().catch(() => {});
+
+        const watcher = setInterval(() => {
+          const cap = $('#caption');
+          if (!cap.hidden && cap.textContent.trim()) seen.add(cap.textContent.trim());
+        }, 20);
+
+        for (let i = 0; i < 600; i++) {
+          await new Promise((r) => setTimeout(r, 100));
+          if (video.ended || video.currentTime >= (video.duration || 0) - 0.2) break;
+        }
+        clearInterval(watcher);
+        video.pause();
+        video.playbackRate = 1;
+
+        const shown = [...seen];
+        const missing = wanted
+          .filter((w) => w && !shown.some((s) => s.includes(w.slice(0, 18))))
+          .map((w) => ({ want: w.slice(0, 34) }));
+        const checked = wanted.length;
+
+        // Now confirm leaving the tab actually stops playback.
+        await video.play().catch(() => {});
+        await new Promise((r) => setTimeout(r, 250));
+        const playingOnExport = !video.paused;
+        $('[data-tab="home"]').click();
+        await new Promise((r) => setTimeout(r, 350));
+        const playingOffTab = !video.paused;
+        $('[data-tab="export"]').click();
+        await new Promise((r) => setTimeout(r, 200));
+
+        return { checked, missingCount: missing.length, missing: missing.slice(0, 6),
+          playingOnExport, playingOffTab };
+      })()`);
+
+      if (captionCheck && captionCheck.playingOffTab) {
+        errors.push('video kept playing after leaving the export tab');
+      }
+    } catch (err) {
+      captionCheck = { error: err.message };
+    }
+
     // The dub editor has to cut a real clip out of a real video, write its
     // metadata, and grab a frame for its picture.
     let editorCheck = null;
@@ -752,9 +825,10 @@ function runSmokeTest(win) {
         const firstSettled = await settle();
         const firstRows = document.querySelectorAll('.line-row').length;
 
-        // Switch packs, then look straight away.
+        // Switch packs and look in the same tick. Anything decoded earlier in
+        // the run is cached, so a reload can finish inside a few frames and a
+        // delay here would miss the window entirely.
         cards[1].click();
-        await new Promise((r) => setTimeout(r, 60));
         const during = {
           exportDisabled: $('#btn-export').disabled,
           rows: document.querySelectorAll('.line-row').length,
@@ -884,7 +958,7 @@ function runSmokeTest(win) {
     }
 
     console.log('SMOKE ' + JSON.stringify(
-      { report, videoCheck, editorCheck, homeCheck, contentCheck, createCheck, sessionCheck,
+      { report, videoCheck, captionCheck, editorCheck, homeCheck, contentCheck, createCheck, sessionCheck,
         staleCheck, packCheck, queueCheck, errors },
       null, 2));
     app.exit(errors.length ? 1 : 0);

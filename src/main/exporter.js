@@ -91,27 +91,41 @@ function buildAss(captions, { width, height, style = {} }) {
   // the shared speaker colour.
   const perCharacter = style.characterColors || {};
 
+  // A caption is one or more lines; two characters talking at the same moment
+  // share an event and get a line each rather than being drawn on top of one
+  // another. Older single-line captions still work.
+  const linesOf = (c) => (c.lines && c.lines.length ? c.lines : [{ text: c.text, character: c.character }]);
+
   const events = captions
-    .filter((c) => c.text && c.end > c.start)
+    .filter((c) => c.end > c.start && linesOf(c).some((l) => l.text))
     .map((c) => {
-      const colour = perCharacter[c.character]
-        ? assColour(perCharacter[c.character])
-        : speakerColour;
-      const speaker = style.showSpeaker !== false && c.character
-        ? `{\\c${colour}}${assEscape(c.character)}:{\\c${primary}} `
-        : '';
-      return `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Default,,0,0,0,,${speaker}${assEscape(c.text)}`;
+      const body = linesOf(c)
+        .filter((l) => l.text)
+        .map((l) => {
+          const colour = perCharacter[l.character] ? assColour(perCharacter[l.character]) : speakerColour;
+          const speaker = style.showSpeaker !== false && l.character
+            ? `{\\c${colour}}${assEscape(l.character)}:{\\c${primary}} `
+            : '';
+          return `${speaker}${assEscape(l.text)}`;
+        })
+        .join('\\N');
+      return `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Default,,0,0,0,,${body}`;
     });
 
   return `${header.join('\n')}\n${events.join('\n')}\n`;
 }
 
 function buildSrt(captions) {
+  const linesOf = (c) => (c.lines && c.lines.length ? c.lines : [{ text: c.text, character: c.character }]);
+
   return captions
-    .filter((c) => c.text && c.end > c.start)
+    .filter((c) => c.end > c.start && linesOf(c).some((l) => l.text))
     .map((c, i) => {
-      const speaker = c.character ? `${c.character}: ` : '';
-      return `${i + 1}\n${srtTime(c.start)} --> ${srtTime(c.end)}\n${speaker}${c.text}\n`;
+      const body = linesOf(c)
+        .filter((l) => l.text)
+        .map((l) => `${l.character ? `${l.character}: ` : ''}${l.text}`)
+        .join('\n');
+      return `${i + 1}\n${srtTime(c.start)} --> ${srtTime(c.end)}\n${body}\n`;
     })
     .join('\n');
 }

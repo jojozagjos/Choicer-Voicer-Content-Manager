@@ -618,15 +618,29 @@ function runSmokeTest(win) {
         }
 
         const clipsBefore = document.querySelectorAll('.clip-row').length;
+        const canvas = document.querySelector('canvas.timeline');
+        if (!canvas) return { skipped: 'no timeline canvas' };
 
-        // Mark a two second range and add it.
-        video.currentTime = 5;
-        await new Promise((r) => setTimeout(r, 300));
-        document.querySelector('[data-act="mark-in"]').click();
-        video.currentTime = 7;
-        await new Promise((r) => setTimeout(r, 300));
-        document.querySelector('[data-act="mark-out"]').click();
-        document.querySelector('[data-act="add"]').click();
+        // Wait for the timeline to know the duration before working in pixels.
+        for (let i = 0; i < 40; i++) {
+          await new Promise((r) => setTimeout(r, 250));
+          if (video.duration) break;
+        }
+
+        const box = canvas.getBoundingClientRect();
+        const drag = (fromX, toX, y) => {
+          const opts = (x) => ({
+            bubbles: true, clientX: box.left + x, clientY: box.top + y, pointerId: 1,
+          });
+          canvas.dispatchEvent(new PointerEvent('pointerdown', opts(fromX)));
+          canvas.dispatchEvent(new PointerEvent('pointermove', opts(toX)));
+          canvas.dispatchEvent(new PointerEvent('pointerup', opts(toX)));
+        };
+
+        // Drag across empty space low in the lane to mark out a new clip.
+        // 6% of the width of a 100 second video is a few seconds.
+        const y = box.height - 20;
+        drag(box.width * 0.60, box.width * 0.66, y);
 
         for (let i = 0; i < 80; i++) {
           await new Promise((r) => setTimeout(r, 250));
@@ -636,6 +650,7 @@ function runSmokeTest(win) {
         return {
           videoReady: video.readyState >= 2,
           videoW: video.videoWidth,
+          timelineWidth: Math.round(box.width),
           clipsBefore,
           clipsAfter: document.querySelectorAll('.clip-row').length,
           detailIssues: before,
@@ -1177,10 +1192,13 @@ function registerIpc() {
   });
 
   /** Cuts a clip out of a pack's video and writes its metadata alongside. */
-  ipcMain.handle('content:extractClip', async (_e, { source, destDir, baseName, start, duration, meta }) => {
+  ipcMain.handle('content:extractClip', async (_e, { source, destDir, baseName, start, duration, meta, overwrite }) => {
     if (!isAllowed(destDir)) return { ok: false, error: 'That folder is outside the game folder' };
     try {
-      const clip = await convert.extractAudioRange(source, destDir, baseName, start, duration);
+      // Retiming an existing clip replaces it; a new clip gets its own name.
+      const clip = await convert.extractAudioRange(source, destDir, baseName, start, duration, {
+        overwrite: Boolean(overwrite),
+      });
       const base = path.basename(clip.path, path.extname(clip.path));
       const metaFile = writeClipMeta(destDir, base, { ...(meta || {}), timestamp: start });
       return { ok: true, path: clip.path, base, metaFile };

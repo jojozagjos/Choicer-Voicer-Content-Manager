@@ -528,7 +528,20 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
 .editor-controls { display: flex; flex-direction: column; gap: 10px; }
 .editor-transport { display: flex; align-items: center; gap: 8px; }
 .editor-transport .scrub { flex: 1; }
+.editor-transport [data-role="hint"] { flex: 1; min-width: 0; }
 .mark-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.timeline {
+  width: 100%;
+  height: 132px;
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+  touch-action: none;
+}
+
+.clip-row.on { border-color: var(--accent); background: var(--glow); }
 
 .editor-side {
   display: flex;

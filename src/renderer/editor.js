@@ -10,6 +10,7 @@
  */
 
 import { attachRecorder } from './recorder.js';
+import { Timeline, computePeaks } from './timeline.js';
 
 const el = (tag, className, html) => {
   const node = document.createElement(tag);
@@ -129,21 +130,13 @@ export class PackEditor {
         <button type="button" class="btn btn-icon" data-act="back">⟲</button>
         <button type="button" class="btn btn-icon" data-act="fwd">⟳</button>
         <span class="time" data-role="time">0:00.00</span>
-        <input type="range" class="scrub" min="0" max="1000" value="0" data-role="scrub" />
+        <span class="muted small" data-role="hint">
+          Drag across the timeline to make a clip. Drag a block to move it, or its edge to retime
+          it. Scroll to zoom, double click to fit.
+        </span>
+        <button type="button" class="btn btn-small" data-act="zoom-fit">Fit</button>
       </div>
-      <div class="mark-row">
-        <button type="button" class="btn btn-small" data-act="mark-in">Set start</button>
-        <span class="chip" data-role="in">start —</span>
-        <button type="button" class="btn btn-small" data-act="mark-out">Set end</button>
-        <span class="chip" data-role="out">end —</span>
-        <span class="muted small" data-role="len"></span>
-        <button type="button" class="btn btn-primary btn-small" data-act="add">+ Add clip</button>
-      </div>
-      <p class="muted small">
-        Play until a line starts, press <b>Set start</b>, let it finish, press <b>Set end</b>, then
-        <b>Add clip</b>. The audio is cut from the video and the timestamp is filled in for you.
-        Clips are capped at 6 seconds, which is the game's limit.
-      </p>`;
+      <canvas class="timeline" data-role="timeline"></canvas>`;
     stage.append(controls);
     body.append(stage);
 
@@ -156,17 +149,27 @@ export class PackEditor {
 
   wireDubControls(controls, clipPanel, video) {
     const q = (role) => controls.querySelector(`[data-role="${role}"]`);
-    const mark = { in: null, out: null };
     const clipList = clipPanel.querySelector('[data-role="clips"]');
 
-    const refreshMarks = () => {
-      q('in').textContent = mark.in == null ? 'start —' : `start ${fmt(mark.in)}`;
-      q('out').textContent = mark.out == null ? 'end —' : `end ${fmt(mark.out)}`;
-      const length = (mark.in != null && mark.out != null) ? mark.out - mark.in : null;
-      q('len').textContent = length == null ? ''
-        : length > 6 ? `${length.toFixed(2)}s, will be trimmed to 6s`
-          : `${length.toFixed(2)}s`;
+    const timeline = new Timeline(q('timeline'), { maxClip: 6 });
+    this.timeline = timeline;
+    timeline.setClips(this.pack.clips || []);
+
+    timeline.onSeek = (time) => { video.currentTime = time; };
+    timeline.onSelect = (clip) => {
+      this.renderClipList(clipList);
+      const row = clipList.querySelector(`[data-base="${CSS.escape(clip.base)}"]`);
+      if (row) row.scrollIntoView({ block: 'nearest' });
     };
+    timeline.onCreate = (start, duration) => this.addClip(start, duration, video, clipList);
+    timeline.onCommit = (clip, change) => this.commitClipChange(clip, change, clipList);
+
+    const sizeToBox = () => {
+      const box = q('timeline');
+      box.style.width = '100%';
+      timeline.draw();
+    };
+    new ResizeObserver(sizeToBox).observe(q('timeline'));
 
     controls.addEventListener('click', async (event) => {
       const act = event.target.dataset.act;
@@ -177,29 +180,88 @@ export class PackEditor {
         else { video.pause(); event.target.textContent = '▶'; }
       } else if (act === 'back') video.currentTime = Math.max(0, video.currentTime - 2);
       else if (act === 'fwd') video.currentTime += 2;
-      else if (act === 'mark-in') { mark.in = video.currentTime; refreshMarks(); }
-      else if (act === 'mark-out') { mark.out = video.currentTime; refreshMarks(); }
-      else if (act === 'add') {
-        if (mark.in == null || mark.out == null || mark.out <= mark.in) {
-          this.toast('Set a start and an end first.', 'warn');
-          return;
-        }
-        await this.addClip(mark.in, Math.min(mark.out - mark.in, 6), video, clipList);
-        mark.in = null;
-        mark.out = null;
-        refreshMarks();
+      else if (act === 'zoom-fit') {
+        timeline.viewStart = 0;
+        timeline.viewEnd = timeline.duration;
+        timeline.draw();
       }
     });
 
-    const scrub = q('scrub');
-    scrub.addEventListener('input', () => {
-      if (video.duration) video.currentTime = (Number(scrub.value) / 1000) * video.duration;
-    });
+    const ready = () => {
+      timeline.setDuration(video.duration || 0);
+      this.loadWaveform(timeline);
+    };
+    if (video.readyState >= 1) ready();
+    else video.addEventListener('loadedmetadata', ready, { once: true });
+
     video.addEventListener('timeupdate', () => {
       q('time').textContent = fmt(video.currentTime);
-      if (video.duration) scrub.value = String((video.currentTime / video.duration) * 1000);
+      timeline.setPlayhead(video.currentTime);
     });
 
+    this.renderClipList(clipList);
+  }
+
+  /** Decodes the preview audio once and hands the timeline its peaks. */
+  async loadWaveform(timeline) {
+    if (!this.pack.videoUrl) return;
+    try {
+      const res = await fetch(this.pack.videoUrl);
+      const bytes = await res.arrayBuffer();
+      const ctx = new AudioContext();
+      const buffer = await ctx.decodeAudioData(bytes);
+      timeline.setPeaks(computePeaks(buffer));
+      ctx.close();
+    } catch {
+      // A timeline without a waveform still works; it is only a guide.
+    }
+  }
+
+  /**
+   * Applies a drag. Moving a clip only rewrites its timestamp, but changing
+   * where it starts or ends means the audio itself has to be cut again.
+   */
+  async commitClipChange(clip, change, clipList) {
+    const pack = this.pack;
+
+    if (!change.resized) {
+      const result = await this.api.content.writeClipMeta({
+        destDir: pack.dir,
+        base: clip.base,
+        meta: {
+          caption: clip.caption || '',
+          character: clip.character || '',
+          image: clip.image || `${clip.base}.png`,
+          timestamp: change.start,
+        },
+      });
+      if (!result.ok) this.toast(`Could not save it: ${result.error}`, 'error', 7000);
+      else this.toast(`Moved to ${fmt(change.start)}.`, 'ok', 1600);
+      this.renderClipList(clipList);
+      return;
+    }
+
+    this.toast('Recutting the clip…');
+    const result = await this.api.content.extractClip({
+      source: pack.videoPath,
+      destDir: pack.dir,
+      baseName: clip.base,
+      start: change.start,
+      duration: change.duration,
+      meta: {
+        caption: clip.caption || '',
+        character: clip.character || '',
+        image: clip.image || `${clip.base}.png`,
+      },
+      overwrite: true,
+    });
+
+    if (!result.ok) {
+      this.toast(`Could not recut it: ${result.error}`, 'error', 8000);
+      return;
+    }
+    this.toast(`Retimed to ${fmt(change.start)}, ${change.duration.toFixed(2)}s.`, 'ok', 2000);
+    if (this.onChanged) await this.onChanged(pack.id, { keepEditor: true });
     this.renderClipList(clipList);
   }
 
@@ -237,6 +299,12 @@ export class PackEditor {
     pack.clipCount = index;
     this.toast(`Added ${result.base}.`, 'ok');
     if (this.onChanged) await this.onChanged(pack.id, { keepEditor: true });
+
+    // The rescan replaced the pack object, so the timeline needs the new list.
+    if (this.timeline) {
+      this.timeline.setClips(this.pack.clips || []);
+      this.timeline.select(result.base);
+    }
     this.renderClipList(clipList);
   }
 
@@ -261,6 +329,8 @@ export class PackEditor {
 
     for (const clip of clips) {
       const row = el('div', 'clip-row');
+      row.dataset.base = clip.base;
+      row.classList.toggle('on', this.timeline && this.timeline.selected === clip.base);
       row.innerHTML = `
         <button type="button" class="line-time">${fmt(clip.time)}</button>
         <div class="clip-fields">
@@ -272,6 +342,8 @@ export class PackEditor {
 
       row.querySelector('.line-time').addEventListener('click', () => {
         if (this.video) this.video.currentTime = clip.time;
+        if (this.timeline) this.timeline.select(clip.base);
+        this.renderClipList(container);
       });
 
       // Saving on blur keeps typing responsive and avoids a write per keypress.

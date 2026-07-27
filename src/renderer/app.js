@@ -118,9 +118,8 @@ const el = {
   cardExport: $('#card-export'),
   cardCreate: $('#card-create'),
   cardManage: $('#card-manage'),
-  homeHelp: $('#home-help'),
-  homeFolder: $('#home-folder'),
-  homeDonate: $('#home-donate'),
+  creditHelp: $('#credit-help'),
+  creditDonate: $('#credit-donate'),
 
   btnContentNew: $('#btn-content-new'),
   createDialog: $('#create-dialog'),
@@ -712,10 +711,93 @@ function renderContentDetail(pack) {
       <h4 class="muted small">Checks</h4>
       ${issues}
     </div>
-    <button type="button" class="btn btn-small" id="btn-detail-open">Open this folder</button>`;
+
+    <div class="dropzone dropzone-slim" id="detail-drop">
+      <p class="muted small"><b>Drop files here to add them</b></p>
+      <p class="muted small">Anything in the wrong format is converted.</p>
+      <button type="button" class="btn btn-small" id="btn-detail-add">Add files…</button>
+    </div>
+
+    <div class="detail-actions">
+      <button type="button" class="btn btn-small" id="btn-detail-open">Open folder</button>
+      <button type="button" class="btn btn-small btn-danger" id="btn-detail-delete">Delete</button>
+    </div>`;
 
   el.contentDetail.querySelector('#btn-detail-open')
     .addEventListener('click', () => window.api.shell.openPath(pack.dir));
+
+  el.contentDetail.querySelector('#btn-detail-delete')
+    .addEventListener('click', () => removePack(pack));
+
+  const drop = el.contentDetail.querySelector('#detail-drop');
+  el.contentDetail.querySelector('#btn-detail-add').addEventListener('click', async () => {
+    const picked = await window.api.dialog.pickFiles({ title: `Add files to ${pack.title}` });
+    importIntoPack(pack, picked);
+  });
+
+  for (const event of ['dragenter', 'dragover']) {
+    drop.addEventListener(event, (e) => { e.preventDefault(); drop.classList.add('over'); });
+  }
+  for (const event of ['dragleave', 'drop']) {
+    drop.addEventListener(event, () => drop.classList.remove('over'));
+  }
+  drop.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const paths = [...(e.dataTransfer.files || [])]
+      .map((f) => window.api.pathForFile(f))
+      .filter(Boolean);
+    importIntoPack(pack, paths);
+  });
+}
+
+/** Copies or converts files into an existing pack, then rescans. */
+async function importIntoPack(pack, paths) {
+  if (!paths || !paths.length) return;
+
+  const described = await window.api.content.describe(paths);
+  const usable = described.filter((f) => f.kind);
+  if (!usable.length) {
+    toast('None of those are audio, video or images.', 'warn');
+    return;
+  }
+
+  toast(`Adding ${usable.length} file${usable.length > 1 ? 's' : ''}…`);
+  let added = 0;
+  let failed = 0;
+
+  for (const file of usable) {
+    const target = importTargetName(pack.type, file, usable);
+    const result = await window.api.content.import(pack.dir, [file.path], {
+      baseName: target.base,
+      kind: file.kind,
+      audioFormat: target.audioFormat,
+      maxSeconds: target.maxSeconds,
+    });
+    if (result.ok && result.results.every((r) => r.ok)) added++;
+    else failed++;
+  }
+
+  if (failed) toast(`Added ${added}, but ${failed} failed.`, 'warn', 7000);
+  else toast(`Added ${added} file${added > 1 ? 's' : ''} to "${pack.title}".`, 'ok');
+
+  await refreshContent();
+  const fresh = (currentContentType() || { packs: [] }).packs.find((p) => p.id === pack.id);
+  if (fresh) renderContentDetail(fresh);
+}
+
+async function removePack(pack) {
+  const result = await window.api.content.remove(pack.dir);
+  if (result.cancelled) return;
+  if (!result.ok) {
+    toast(`Could not delete it: ${result.error}`, 'error', 8000);
+    return;
+  }
+
+  toast(`Deleted "${pack.title}".`, 'ok');
+  state.contentPackId = null;
+  el.contentDetail.hidden = true;
+  await refreshContent();
+  await rescan(state.settings.gameDir);
 }
 
 // Creating packs
@@ -2054,13 +2136,10 @@ function wireEvents() {
   el.cardExport.addEventListener('click', () => switchTab('export'));
   el.cardManage.addEventListener('click', () => switchTab('content'));
   el.cardCreate.addEventListener('click', () => openCreateDialog());
-  el.homeHelp.addEventListener('click', () => el.aboutDialog.showModal());
-  el.homeFolder.addEventListener('click', () => {
-    if (state.model) window.api.shell.openPath(state.model.gameDir);
-  });
+  el.creditHelp.addEventListener('click', () => el.aboutDialog.showModal());
   if (links.donate) {
-    el.homeDonate.hidden = false;
-    el.homeDonate.addEventListener('click', () => window.api.shell.openExternal(links.donate));
+    el.creditDonate.hidden = false;
+    el.creditDonate.addEventListener('click', () => window.api.shell.openExternal(links.donate));
   }
 
   // Creating

@@ -13,7 +13,7 @@ const ffmpeg = require('./ffmpeg');
 const { runExport } = require('./exporter');
 const { ensureProxy } = require('./proxy');
 const { scanContent } = require('./content');
-const { createPack } = require('./create');
+const { createPack, deletePack, writeClipMeta, saveImage } = require('./create');
 const convert = require('./convert');
 
 const execFileAsync = promisify(execFile);
@@ -408,7 +408,6 @@ function runSmokeTest(win) {
         theme: document.documentElement.dataset.theme,
         splashVisible: !document.getElementById('splash').hidden,
         packs: document.querySelectorAll('.pack-card').length,
-        credit: document.querySelector('.credit span')?.textContent ?? null,
         themeButtons: document.querySelectorAll('[data-theme-set]').length,
         activeThemeBtn: document.querySelector('[data-theme-set].on')?.dataset.themeSet ?? null,
         workspaceHidden: document.getElementById('workspace').hidden,
@@ -423,6 +422,8 @@ function runSmokeTest(win) {
         footIsSunken: getComputedStyle(document.querySelector('#export-dialog .dialog-foot')).backgroundColor,
         discordButtonGone: !document.getElementById('btn-discord'),
         donateVisible: !document.getElementById('btn-about-donate').hidden,
+        creditStrip: document.querySelector('.app-credit span') ? document.querySelector('.app-credit span').textContent.trim() : null,
+        tabOrder: [...document.querySelectorAll('[data-tab]')].map((b) => b.textContent.trim()).join(' > '),
         donateBlurbVisible: !document.getElementById('donate-blurb').hidden,
         palettes: (() => {
           const root = document.documentElement;
@@ -988,6 +989,59 @@ function registerIpc() {
         onFile: (result, done, total) => send({ done, total, name: path.basename(result.source) }),
       });
       return { ok: true, results };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('content:delete', async (_e, packDir) => {
+    const gameDir = gamedata.resolveGameDir(settings.gameDir || gamedata.defaultGameDir());
+    if (!gameDir) return { ok: false, error: 'No game folder found' };
+
+    const answer = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      buttons: ['Delete', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      message: `Delete "${path.basename(packDir)}"?`,
+      detail: 'The whole folder and everything in it is removed. This cannot be undone.',
+    });
+    if (answer.response !== 0) return { ok: false, cancelled: true };
+
+    try {
+      return { ok: true, ...deletePack(gameDir, packDir) };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  /** Cuts a clip out of a pack's video and writes its metadata alongside. */
+  ipcMain.handle('content:extractClip', async (_e, { source, destDir, baseName, start, duration, meta }) => {
+    if (!isAllowed(destDir)) return { ok: false, error: 'That folder is outside the game folder' };
+    try {
+      const clip = await convert.extractAudioRange(source, destDir, baseName, start, duration);
+      const base = path.basename(clip.path, path.extname(clip.path));
+      const metaFile = writeClipMeta(destDir, base, { ...(meta || {}), timestamp: start });
+      return { ok: true, path: clip.path, base, metaFile };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('content:writeClipMeta', (_e, { destDir, base, meta }) => {
+    if (!isAllowed(destDir)) return { ok: false, error: 'That folder is outside the game folder' };
+    try {
+      return { ok: true, file: writeClipMeta(destDir, base, meta || {}) };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  /** Stores a frame grabbed from the video as a clip's picture. */
+  ipcMain.handle('content:saveImage', (_e, { destDir, base, dataUrl }) => {
+    if (!isAllowed(destDir)) return { ok: false, error: 'That folder is outside the game folder' };
+    try {
+      return { ok: true, file: saveImage(destDir, base, dataUrl) };
     } catch (err) {
       return { ok: false, error: err.message };
     }

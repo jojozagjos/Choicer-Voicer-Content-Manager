@@ -379,15 +379,22 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
 .recent-row strong { font-size: 13px; }
 .recent-row .muted { margin-left: auto; font-size: 12px; }
 
-.home-foot {
+/* A slim strip along the bottom of the window, so every tab carries the
+   credit rather than it living on one screen. */
+.app-credit {
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding-top: 14px;
+  padding: 5px 16px;
   border-top: 1px solid var(--line);
+  background: var(--bg-raised);
+  font-size: 11.5px;
+  color: var(--muted);
 }
-.home-foot-links { display: flex; gap: 14px; }
+.app-credit b { color: var(--text); }
+.app-credit-links { display: flex; gap: 14px; }
 
 /* First-run setup */
 
@@ -441,6 +448,17 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
   text-align: center;
 }
 .dropzone.over { border-color: var(--accent); background: var(--glow); }
+
+.dropzone-slim { padding: 12px; gap: 5px; }
+
+.detail-actions { display: flex; gap: 6px; margin-top: auto; }
+.detail-actions .btn { flex: 1; }
+
+.btn-danger { color: var(--bad); border-color: rgba(248, 113, 113, 0.4); }
+.btn-danger:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.12);
+  border-color: var(--bad);
+}
 
 .create-files { display: flex; flex-direction: column; gap: 4px; width: 100%; margin-top: 6px; }
 .create-file {

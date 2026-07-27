@@ -167,6 +167,38 @@ async function convertMany(sources, destDir, options = {}) {
   return results;
 }
 
+/**
+ * Pulls a slice of audio out of a video (or another audio file) and writes it
+ * as a clip. This is what makes a dub pack buildable without ever opening an
+ * audio editor: mark a range against the video and the clip falls out of it.
+ */
+async function extractAudioRange(source, destDir, baseName, start, duration, options = {}) {
+  const { audioFormat = 'wav', overwrite = false, signal } = options;
+
+  fs.mkdirSync(destDir, { recursive: true });
+  let target = path.join(destDir, `${baseName}.${audioFormat}`);
+  if (!overwrite) target = uniquePath(target);
+
+  const partial = `${target}.${process.pid}.part.${audioFormat}`;
+
+  // -ss before -i seeks quickly; -t after it bounds the copy.
+  const args = ['-ss', String(Math.max(0, start)), '-i', source, '-t', String(Math.max(0.05, duration)), '-vn'];
+  if (audioFormat === 'wav') args.push('-c:a', 'pcm_s16le', '-ar', '48000', '-f', 'wav');
+  else if (audioFormat === 'mp3') args.push('-c:a', 'libmp3lame', '-q:a', '2', '-f', 'mp3');
+  else args.push('-c:a', 'libvorbis', '-q:a', '5', '-f', 'ogg');
+  args.push('-y', partial);
+
+  try {
+    await runFfmpeg(args, { signal });
+    fs.renameSync(partial, target);
+  } catch (err) {
+    try { fs.unlinkSync(partial); } catch { /* never created */ }
+    throw err;
+  }
+
+  return { path: target, start, duration };
+}
+
 /** Details useful for showing what will happen before committing to it. */
 function describe(source) {
   const kind = kindOf(source);
@@ -189,6 +221,7 @@ function describe(source) {
 module.exports = {
   convertInto,
   convertMany,
+  extractAudioRange,
   describe,
   kindOf,
   isAcceptable,

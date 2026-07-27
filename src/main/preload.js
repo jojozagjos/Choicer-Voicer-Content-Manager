@@ -55,6 +55,10 @@ contextBridge.exposeInMainWorld('api', {
   content: {
     scan: (dir) => ipcRenderer.invoke('content:scan', dir),
     create: (type, options) => ipcRenderer.invoke('content:create', { type, options }),
+    remove: (packDir) => ipcRenderer.invoke('content:delete', packDir),
+    extractClip: (payload) => ipcRenderer.invoke('content:extractClip', payload),
+    writeClipMeta: (payload) => ipcRenderer.invoke('content:writeClipMeta', payload),
+    saveImage: (payload) => ipcRenderer.invoke('content:saveImage', payload),
     describe: (files) => ipcRenderer.invoke('content:describe', files),
     import: (destDir, files, options) =>
       ipcRenderer.invoke('content:import', { destDir, files, options }),

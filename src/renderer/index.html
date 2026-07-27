@@ -19,8 +19,8 @@
 <header class="topbar">
   <nav class="tabs" role="tablist">
     <button class="tab on" role="tab" data-tab="home">Home</button>
-    <button class="tab" role="tab" data-tab="export">Export</button>
     <button class="tab" role="tab" data-tab="content">Content</button>
+    <button class="tab" role="tab" data-tab="export">Export</button>
   </nav>
 
   <p class="tagline" id="tagline">Preview a dub you recorded, then export it as a video.</p>
@@ -90,15 +90,6 @@
         <div id="home-recent" class="home-recent"></div>
       </section>
 
-      <footer class="home-foot">
-        <span class="muted small">Made by <b>@jojozagjos</b></span>
-        <span class="home-foot-links">
-          <button type="button" class="link-btn" id="home-help">Help</button>
-          <button type="button" class="link-btn" id="home-folder">Open game folder</button>
-          <button type="button" class="link-btn" id="home-donate" hidden>Donate</button>
-        </span>
-      </footer>
-
     </div>
   </section>
 
@@ -108,10 +99,6 @@
       <input id="pack-search" class="input" type="search" placeholder="Search packs…" autocomplete="off" />
     </div>
     <div id="pack-list" class="pack-list"></div>
-    <div class="credit">
-      <strong>Choicer Voicer Content Manager</strong>
-      <span>Made by <b>@jojozagjos</b></span>
-    </div>
   </aside>
 
   <!-- Stage -->
@@ -224,6 +211,15 @@
     <aside class="content-detail" id="content-detail" hidden></aside>
   </section>
 </main>
+
+<!-- Shown on every tab, so the credit is never only on one screen. -->
+<footer class="app-credit">
+  <span>The Choicer Voicer Content Manager, made by <b>@jojozagjos</b></span>
+  <span class="app-credit-links">
+    <button type="button" class="link-btn" id="credit-help">Help</button>
+    <button type="button" class="link-btn" id="credit-donate" hidden>Donate</button>
+  </span>
+</footer>
 
 <!-- Docked below the layout rather than floated over it, so a long export
      can never sit on top of the timeline. -->

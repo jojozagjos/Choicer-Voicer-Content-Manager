@@ -282,4 +282,63 @@ function createPack(gameDir, type, options = {}) {
   }
 }
 
-module.exports = { createPack, TYPE_DIRS, writeIni, safeFolderName };
+/**
+ * Writes a clip's metadata beside its audio. This is the file the game reads
+ * to know when a clip belongs on the video timeline, so a dub pack is only
+ * functional once every clip has one.
+ */
+function writeClipMeta(packDir, base, meta = {}) {
+  const data = {
+    caption: meta.caption || '',
+    image: meta.image || '',
+    dub_timestamps: Array.isArray(meta.timestamps) ? meta.timestamps : [Number(meta.timestamp) || 0],
+    dub_characters: Array.isArray(meta.characters)
+      ? meta.characters
+      : (meta.character ? [meta.character] : []),
+  };
+  const file = path.join(packDir, `${base}.ini`);
+  writeIni(file, data);
+  return file;
+}
+
+/** Saves a PNG captured from the video as a clip's image. */
+function saveImage(packDir, base, dataUrl) {
+  const match = /^data:image\/\w+;base64,(.+)$/.exec(String(dataUrl));
+  if (!match) throw new Error('That is not an image');
+  const file = path.join(packDir, `${base}.png`);
+  fs.writeFileSync(file, Buffer.from(match[1], 'base64'));
+  return file;
+}
+
+/**
+ * Removes a pack. Refuses anything outside the game folder, since this deletes
+ * recursively and a wrong path would be unrecoverable.
+ */
+function deletePack(gameDir, packDir) {
+  const root = path.resolve(gameDir);
+  const target = path.resolve(packDir);
+
+  const rel = path.relative(root, target);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error('That folder is not inside the game folder');
+  }
+  // Must be exactly <gameDir>/packs_*/<name>, never a packs_ root itself.
+  const parts = rel.split(/[\\/]/);
+  if (parts.length !== 2 || !parts[0].startsWith('packs_')) {
+    throw new Error('That does not look like a pack folder');
+  }
+  if (!fs.existsSync(target)) throw new Error('It is already gone');
+
+  fs.rmSync(target, { recursive: true, force: true });
+  return { removed: target };
+}
+
+module.exports = {
+  createPack,
+  deletePack,
+  writeClipMeta,
+  saveImage,
+  TYPE_DIRS,
+  writeIni,
+  safeFolderName,
+};

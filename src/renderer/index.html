@@ -19,9 +19,10 @@
 <header class="topbar">
   <nav class="tabs" role="tablist">
     <button class="tab on" role="tab" data-tab="dubs">Dubs</button>
+    <button class="tab" role="tab" data-tab="content">Content</button>
   </nav>
 
-  <p class="tagline">Preview a dub you recorded, then export it as a video.</p>
+  <p class="tagline" id="tagline">Preview a dub you recorded, then export it as a video.</p>
 
   <div class="topbar-actions">
     <div class="theme-toggle" role="group" aria-label="Colour theme">
@@ -139,6 +140,28 @@
       </div>
 
     </div>
+  </section>
+
+  <!-- Content manager. Spans the whole width, so the dub sidebar steps aside. -->
+  <section class="content-view" id="content-view" hidden>
+    <aside class="content-types" id="content-types"></aside>
+
+    <div class="content-main">
+      <header class="content-head">
+        <div>
+          <h2 id="content-title">Content</h2>
+          <p class="muted small" id="content-subtitle"></p>
+        </div>
+        <div class="content-head-actions">
+          <button id="btn-content-folder" class="btn btn-small">Open folder</button>
+          <button id="btn-content-guide" class="btn btn-small">Format guide</button>
+        </div>
+      </header>
+
+      <div id="content-grid" class="content-grid"></div>
+    </div>
+
+    <aside class="content-detail" id="content-detail" hidden></aside>
   </section>
 </main>
 

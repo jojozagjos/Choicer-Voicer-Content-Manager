@@ -12,6 +12,7 @@ const gamedata = require('./gamedata');
 const ffmpeg = require('./ffmpeg');
 const { runExport } = require('./exporter');
 const { ensureProxy } = require('./proxy');
+const { scanContent } = require('./content');
 
 const execFileAsync = promisify(execFile);
 
@@ -437,6 +438,68 @@ function runSmokeTest(win) {
       errors.push(`probe failed: ${err.message}`);
     }
 
+    // The Content tab has to list every pack type and surface what is wrong.
+    let contentCheck = null;
+    try {
+      contentCheck = await win.webContents.executeJavaScript(`(async () => {
+        const $ = (s) => document.querySelector(s);
+        $('[data-tab="content"]').click();
+
+        for (let i = 0; i < 60; i++) {
+          await new Promise((r) => setTimeout(r, 250));
+          if (document.querySelectorAll('.type-btn').length) break;
+        }
+
+        const types = [...document.querySelectorAll('.type-btn')].map((b) => b.textContent.trim());
+
+        // Walk every type, counting the tiles each one renders.
+        const perType = {};
+        for (const button of document.querySelectorAll('.type-btn')) {
+          button.click();
+          await new Promise((r) => setTimeout(r, 120));
+          perType[$('#content-title').textContent] = document.querySelectorAll('.pack-tile').length;
+        }
+
+        // Open a pack that has tiles and check the detail panel fills in.
+        let detail = null;
+        for (const button of document.querySelectorAll('.type-btn')) {
+          button.click();
+          await new Promise((r) => setTimeout(r, 120));
+          const tile = document.querySelector('.pack-tile');
+          if (!tile) continue;
+          tile.click();
+          await new Promise((r) => setTimeout(r, 120));
+          detail = {
+            open: !$('#content-detail').hidden,
+            heading: $('#content-detail h3') ? $('#content-detail h3').textContent : null,
+            rows: document.querySelectorAll('#content-detail .detail-row').length,
+          };
+          break;
+        }
+
+        const sidebarHidden = document.querySelector('.sidebar').hidden;
+        $('[data-tab="dubs"]').click();
+        await new Promise((r) => setTimeout(r, 150));
+
+        return {
+          types,
+          perType,
+          detail,
+          sidebarHiddenOnContent: sidebarHidden,
+          backToDubs: !document.querySelector('.stage').hidden,
+        };
+      })()`);
+
+      if (contentCheck && contentCheck.types && contentCheck.types.length !== 7) {
+        errors.push(`content tab listed ${contentCheck.types.length} pack types, expected 7`);
+      }
+      if (contentCheck && contentCheck.detail && !contentCheck.detail.open) {
+        errors.push('content detail panel did not open');
+      }
+    } catch (err) {
+      contentCheck = { error: err.message };
+    }
+
     // Switching between a pack's recording sessions, including a freestyle
     // one, has to swap the takes over cleanly.
     let sessionCheck = null;
@@ -640,7 +703,8 @@ function runSmokeTest(win) {
     }
 
     console.log('SMOKE ' + JSON.stringify(
-      { report, videoCheck, sessionCheck, staleCheck, packCheck, queueCheck, errors }, null, 2));
+      { report, videoCheck, contentCheck, sessionCheck, staleCheck, packCheck, queueCheck, errors },
+      null, 2));
     app.exit(errors.length ? 1 : 0);
   });
 }
@@ -727,6 +791,27 @@ function registerIpc() {
   });
 
   ipcMain.handle('media:probe', (_e, files) => probeMany(files || []));
+
+  /** Every pack of every type, with whatever is wrong with each one. */
+  ipcMain.handle('content:scan', (_e, dir) => {
+    const target = gamedata.resolveGameDir(dir || settings.gameDir || gamedata.defaultGameDir());
+    if (!target) return { ok: false, error: 'No game folder found' };
+
+    allowedRoots.add(path.resolve(target));
+    const model = scanContent(target, {
+      parseIni: gamedata.parseIni,
+      parseIniSections: gamedata.parseIniSections,
+      findAudioSibling: gamedata.findAudioSibling,
+    });
+
+    // Icons are served through the media protocol like everything else.
+    for (const type of model.types) {
+      for (const pack of type.packs) {
+        pack.iconUrl = pack.iconPath ? mediaUrl(pack.iconPath) : null;
+      }
+    }
+    return { ok: true, ...model };
+  });
 
   // Chromium can't decode the packs' Theora video, so previews play a cached
   // MP4 transcode instead. Exports still read the original .ogv.

@@ -295,6 +295,143 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
 .chip-ok { color: var(--ok); border-color: rgba(74, 222, 128, 0.3); }
 .chip-warn { color: var(--warn); border-color: rgba(251, 191, 36, 0.3); }
 
+/* Content manager */
+
+.content-view {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  min-height: 0;
+}
+.content-view:has(.content-detail:not([hidden])) {
+  grid-template-columns: 210px minmax(0, 1fr) 320px;
+}
+
+.content-types {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px;
+  overflow-y: auto;
+  background: var(--bg-raised);
+  border-right: 1px solid var(--line);
+}
+
+.type-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.type-btn:hover { background: var(--panel); color: var(--text); }
+.type-btn.on { background: var(--panel); border-color: var(--accent-dim); color: var(--text); }
+.type-btn .count { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 11.5px; opacity: 0.8; }
+
+.content-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+.content-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-raised);
+}
+.content-head h2 { font-size: 16px; }
+.content-head-actions { display: flex; gap: 6px; flex: none; }
+
+.content-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 10px;
+  align-content: start;
+}
+
+.pack-tile {
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  min-width: 0;
+}
+.pack-tile:hover { border-color: var(--hover-line); }
+.pack-tile.on { border-color: var(--accent); background: var(--glow); }
+
+.tile-icon {
+  width: 46px; height: 46px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--bg-sunken);
+  flex: none;
+}
+.tile-icon-blank { display: grid; place-items: center; font-size: 19px; }
+.tile-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.tile-body strong { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+.badge {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid;
+}
+.badge-error { color: var(--bad); border-color: rgba(248, 113, 113, 0.4); background: rgba(248, 113, 113, 0.1); }
+.badge-warn { color: var(--warn); border-color: rgba(251, 191, 36, 0.4); background: rgba(251, 191, 36, 0.1); }
+.badge-ok { color: var(--ok); border-color: rgba(74, 222, 128, 0.35); background: rgba(74, 222, 128, 0.09); }
+
+.content-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  overflow-y: auto;
+  background: var(--bg-raised);
+  border-left: 1px solid var(--line);
+}
+.detail-head { display: flex; gap: 10px; align-items: flex-start; }
+.detail-head img { width: 56px; height: 56px; border-radius: 8px; object-fit: cover; background: var(--bg-sunken); flex: none; }
+.detail-head h3 { font-size: 14px; overflow-wrap: anywhere; }
+
+.issue-list { display: flex; flex-direction: column; gap: 6px; }
+.issue {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border-left: 3px solid var(--muted);
+  background: var(--bg-sunken);
+  font-size: 12.5px;
+}
+.issue-error { border-left-color: var(--bad); }
+.issue-warn { border-left-color: var(--warn); }
+.issue-info { border-left-color: var(--accent-dim); }
+
+.detail-rows { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
+.detail-row { display: flex; justify-content: space-between; gap: 10px; }
+.detail-row span:first-child { color: var(--muted); }
+.detail-row span:last-child { text-align: right; overflow-wrap: anywhere; }
+
 /* Stage */
 
 .stage { min-width: 0; min-height: 0; display: flex; flex-direction: column; }

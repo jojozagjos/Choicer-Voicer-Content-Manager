@@ -108,6 +108,19 @@ const el = {
   btnProgressCancel: $('#btn-progress-cancel'),
   btnProgressCancelAll: $('#btn-progress-cancel-all'),
 
+  tabButtons: document.querySelectorAll('[data-tab]'),
+  tagline: $('#tagline'),
+  sidebar: document.querySelector('.sidebar'),
+  stage: document.querySelector('.stage'),
+  contentView: $('#content-view'),
+  contentTypes: $('#content-types'),
+  contentTitle: $('#content-title'),
+  contentSubtitle: $('#content-subtitle'),
+  contentGrid: $('#content-grid'),
+  contentDetail: $('#content-detail'),
+  btnContentFolder: $('#btn-content-folder'),
+  btnContentGuide: $('#btn-content-guide'),
+
   toasts: $('#toasts'),
 };
 
@@ -128,6 +141,11 @@ const state = {
   loadAbort: null,
   loadingVideoPath: null,
   loading: false,
+  // Content manager
+  tab: 'dubs',
+  content: null,
+  contentType: 'voice',
+  contentPackId: null,
 };
 
 const player = new DubPlayer(el.video);
@@ -375,6 +393,161 @@ function syncCaptionControls() {
   el.capPerCharacter.checked = s.perCharacterColors !== false;
   renderCharacterColors();
   renderCaptionPreview();
+}
+
+// Content manager
+
+const TAGLINES = {
+  dubs: 'Preview a dub you recorded, then export it as a video.',
+  content: 'Everything installed in your game folder, and anything wrong with it.',
+};
+
+const TYPE_ICONS = {
+  voice: '🎬', player: '🧍', host: '🎤', judges: '⚖️',
+  studio: '🏛️', menu: '🖼️', chatter: '💬',
+};
+
+async function switchTab(tab) {
+  state.tab = tab;
+  for (const button of el.tabButtons) button.classList.toggle('on', button.dataset.tab === tab);
+  el.tagline.textContent = TAGLINES[tab] || '';
+
+  const onContent = tab === 'content';
+  el.sidebar.hidden = onContent;
+  el.stage.hidden = onContent;
+  el.contentView.hidden = !onContent;
+
+  if (onContent) await refreshContent();
+}
+
+async function refreshContent() {
+  const result = await window.api.content.scan(state.settings.gameDir);
+  if (!result.ok) {
+    el.contentGrid.innerHTML = `<p class="muted pad">${escapeHtml(result.error)}</p>`;
+    return;
+  }
+  state.content = result;
+  renderContentTypes();
+  renderContentGrid();
+}
+
+function renderContentTypes() {
+  el.contentTypes.innerHTML = '';
+  if (!state.content) return;
+
+  for (const type of state.content.types) {
+    const errors = type.packs.reduce((n, p) => n + p.counts.error, 0);
+    const button = document.createElement('button');
+    button.className = 'type-btn';
+    button.classList.toggle('on', type.id === state.contentType);
+    button.innerHTML = `
+      <span>${TYPE_ICONS[type.id] || '📦'}</span>
+      <span>${escapeHtml(type.label)}</span>
+      <span class="count">${errors ? `<b class="badge badge-error">${errors}</b> ` : ''}${type.packs.length}</span>`;
+    button.addEventListener('click', () => {
+      state.contentType = type.id;
+      state.contentPackId = null;
+      el.contentDetail.hidden = true;
+      renderContentTypes();
+      renderContentGrid();
+    });
+    el.contentTypes.append(button);
+  }
+}
+
+function currentContentType() {
+  return state.content && state.content.types.find((t) => t.id === state.contentType);
+}
+
+function renderContentGrid() {
+  const type = currentContentType();
+  el.contentGrid.innerHTML = '';
+  if (!type) return;
+
+  el.contentTitle.textContent = type.label;
+  const errors = type.packs.reduce((n, p) => n + p.counts.error, 0);
+  const warnings = type.packs.reduce((n, p) => n + p.counts.warn, 0);
+  el.contentSubtitle.textContent = type.packs.length
+    ? `${type.packs.length} installed${errors ? `, ${errors} with problems` : ''}${warnings ? `, ${warnings} warnings` : ''}`
+    : 'Nothing installed yet';
+
+  if (!type.packs.length) {
+    el.contentGrid.innerHTML = `
+      <p class="muted pad">No ${escapeHtml(type.singular)}s yet. Drop a folder into
+      <code>${escapeHtml(type.dir.split(/[\\/]/).pop())}</code>, or make one in the game's
+      Customize menu, then press Rescan.</p>`;
+    return;
+  }
+
+  for (const pack of type.packs) {
+    const tile = document.createElement('button');
+    tile.className = 'pack-tile';
+    tile.classList.toggle('on', pack.id === state.contentPackId);
+
+    const icon = pack.iconUrl
+      ? `<img class="tile-icon" src="${pack.iconUrl}" alt="" loading="lazy" />`
+      : `<div class="tile-icon tile-icon-blank">${TYPE_ICONS[type.id] || '📦'}</div>`;
+
+    const badge = pack.counts.error
+      ? `<span class="badge badge-error">${pack.counts.error} problem${pack.counts.error > 1 ? 's' : ''}</span>`
+      : pack.counts.warn
+        ? `<span class="badge badge-warn">${pack.counts.warn} warning${pack.counts.warn > 1 ? 's' : ''}</span>`
+        : '<span class="badge badge-ok">ok</span>';
+
+    tile.innerHTML = `
+      ${icon}
+      <span class="tile-body">
+        <strong>${escapeHtml(pack.title)}</strong>
+        <span class="muted small">${escapeHtml(pack.summary || '')}</span>
+        <span class="tile-meta">${badge}</span>
+      </span>`;
+
+    tile.addEventListener('click', () => {
+      state.contentPackId = pack.id;
+      renderContentGrid();
+      renderContentDetail(pack);
+    });
+    el.contentGrid.append(tile);
+  }
+}
+
+function renderContentDetail(pack) {
+  el.contentDetail.hidden = false;
+
+  const icon = pack.iconUrl ? `<img src="${pack.iconUrl}" alt="" />` : '';
+  const issues = (pack.issues || []).length
+    ? `<div class="issue-list">${pack.issues.map((i) => `
+        <div class="issue issue-${i.level}">${escapeHtml(i.message)}</div>`).join('')}</div>`
+    : '<p class="muted small">Nothing wrong with this one.</p>';
+
+  const rows = [
+    ['Folder', pack.name],
+    ['Kind', pack.kind],
+    ['Files', String(pack.fileCount)],
+    pack.subtitle && ['Subtitle', pack.subtitle],
+    pack.authors && pack.authors.length && ['Authors', pack.authors.join(', ')],
+    pack.characters && pack.characters.length && ['Characters', pack.characters.join(', ')],
+  ].filter(Boolean);
+
+  el.contentDetail.innerHTML = `
+    <div class="detail-head">
+      ${icon}
+      <div>
+        <h3>${escapeHtml(pack.title)}</h3>
+        <p class="muted small">${escapeHtml(pack.summary || '')}</p>
+      </div>
+    </div>
+    <div class="detail-rows">
+      ${rows.map(([k, v]) => `<div class="detail-row"><span>${escapeHtml(k)}</span><span>${escapeHtml(v)}</span></div>`).join('')}
+    </div>
+    <div>
+      <h4 class="muted small">Checks</h4>
+      ${issues}
+    </div>
+    <button type="button" class="btn btn-small" id="btn-detail-open">Open this folder</button>`;
+
+  el.contentDetail.querySelector('#btn-detail-open')
+    .addEventListener('click', () => window.api.shell.openPath(pack.dir));
 }
 
 // Donations
@@ -1465,8 +1638,23 @@ function wireEvents() {
     renderPacks();
   });
 
-  el.btnRefresh.addEventListener('click', () => rescan(state.settings.gameDir));
+  el.btnRefresh.addEventListener('click', () => {
+    rescan(state.settings.gameDir);
+    if (state.tab === 'content') refreshContent();
+  });
   el.btnSettings.addEventListener('click', openSettings);
+
+  for (const button of el.tabButtons) {
+    button.addEventListener('click', () => switchTab(button.dataset.tab));
+  }
+
+  el.btnContentFolder.addEventListener('click', () => {
+    const type = currentContentType();
+    if (type) window.api.shell.openPath(type.dir);
+  });
+  el.btnContentGuide.addEventListener('click', () => {
+    window.api.shell.openExternal('https://thechoicervoicer.neocities.org/v2/content_guide');
+  });
 
   el.sessionSelect.addEventListener('change', () => {
     const session = state.pack.sessions.find((s) => s.id === el.sessionSelect.value);

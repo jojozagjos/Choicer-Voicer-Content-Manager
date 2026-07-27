@@ -44,6 +44,10 @@ contextBridge.exposeInMainWorld('api', {
     pickFolder: () => ipcRenderer.invoke('game:pickFolder'),
   },
 
+  content: {
+    scan: (dir) => ipcRenderer.invoke('content:scan', dir),
+  },
+
   media: {
     probe: (files) => ipcRenderer.invoke('media:probe', files),
     proxy: (videoPath, options) => ipcRenderer.invoke('media:proxy', videoPath, options),

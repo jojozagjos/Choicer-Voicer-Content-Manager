@@ -26,6 +26,7 @@ const el = {
 
   captionDialog: $('#caption-dialog'),
   btnCaptionStyle: $('#btn-caption-style'),
+  btnSettingsCaptions: $('#btn-settings-captions'),
   btnCaptionClose: $('#btn-caption-close'),
   btnCaptionReset: $('#btn-caption-reset'),
   captionPreview: $('#caption-preview'),
@@ -1404,6 +1405,13 @@ function wireEvents() {
   // Caption appearance
   el.btnCaptionStyle.addEventListener('click', openCaptionDialog);
   el.btnCaptionClose.addEventListener('click', () => el.captionDialog.close());
+
+  // Also reachable from Settings: the Lines panel button only exists once a
+  // pack is open, which made the whole feature easy to miss.
+  el.btnSettingsCaptions.addEventListener('click', () => {
+    el.settingsDialog.close();
+    openCaptionDialog();
+  });
 
   const captionInputs = [
     [el.capFont, 'font', (v) => v],

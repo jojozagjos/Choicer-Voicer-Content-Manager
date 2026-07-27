@@ -137,6 +137,50 @@ function parseIni(file) {
 }
 
 /**
+ * Like parseIni, but keeps the section headers. Chatter packs need this:
+ * their `[broad_keywords]` and `[exact_keywords]` sections mean different
+ * things, so flattening them would lose the distinction.
+ */
+function parseIniSections(file) {
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    return {};
+  }
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+
+  const sections = {};
+  let current = '';
+  sections[current] = {};
+
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith(';') || trimmed.startsWith('#')) continue;
+
+    const header = /^\[(.+)\]$/.exec(trimmed);
+    if (header) {
+      current = header[1].trim();
+      sections[current] = sections[current] || {};
+      continue;
+    }
+
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    try {
+      sections[current][key] = parseValue(trimmed.slice(eq + 1));
+    } catch {
+      sections[current][key] = trimmed.slice(eq + 1).trim();
+    }
+  }
+
+  // Drop the unnamed section when nothing sat above the first header.
+  if (!Object.keys(sections['']).length) delete sections[''];
+  return sections;
+}
+
+/**
  * Timestamps are normally plain seconds (`[12.966]`), but at least one pack
  * writes a timecode instead (`[00:00]`), so accept `MM:SS` and `HH:MM:SS` too.
  */
@@ -400,6 +444,8 @@ module.exports = {
   defaultGameDir,
   isGameDir,
   parseIni,
+  parseIniSections,
   parseValue,
   toSeconds,
+  findAudioSibling,
 };

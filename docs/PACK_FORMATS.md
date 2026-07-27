@@ -225,8 +225,67 @@ files share a keyword the game picks one at random.
 
 ## packs_menu — menu packs (undocumented)
 
-No public specification and no example on this machine. Needs a real pack to inspect before the
-app can safely manage these.
+No public specification. Reconstructed from the `frutigeraero` pack.
+
+```
+packs_menu/<Name>/
+  config_menu.json
+  Background.png              note the capital B
+  music_menu.{mp3,wav,ogg}
+  button_sfx_back.wav
+  button_sfx_decrease.wav
+  button_sfx_hover.wav
+  button_sfx_select.wav
+  no_image.png                placeholder for a clip with no image
+  unseen_image.png            placeholder for a clip you have not heard yet
+```
+
+```json
+{
+  "audio": {
+    "music_menu_loop_start": 0.0,
+    "use_video": true
+  },
+  "background": {
+    "image":          { "use_type": 1, "scroll": { "x": 0.3, "y": 0.5 } },
+    "circles":        { "on": true,  "color": "8add88ff" },
+    "waves":          { "on": true,  "color": "0032db7a" },
+    "top_gradient":   { "on": false, "color": "ffffffff" },
+    "bottom_gradient":{ "on": true,  "color": "ffffff72" },
+    "letterbox":      { "on": false, "color": "909090", "accent": "6abcd4" },
+    "overlay":        { "on": false },
+    "clip_disc":      { "state": 0, "color": "4651dbff" }
+  },
+  "ui": {
+    "button": { "color1": "91c5deff", "color2": "98c297ff", "invert": false }
+  }
+}
+```
+
+Colours here are **RGBA** hex (8 characters) apart from `letterbox`, which uses 6. Like
+`music_studio_loop_start`, `music_menu_loop_start` is a sample count for WAV and seconds for
+MP3 or OGG; the real file carries a `music_menu_loop_start_README` key saying exactly that.
+
+---
+
+## Contestant editor, as the game presents it
+
+Useful when building a contestant, because the in-game labels differ from the JSON keys:
+
+| In-game label | `audio_assignment` key |
+| --- | --- |
+| Introductory greeting | `intro_greet` |
+| Getting a score of 0 … 5 | `score_0` … `score_5` |
+| Game winner | `game_winner` |
+| Game loser | `game_loser` |
+
+Nine slots in total. The game says: *"To assign pack audio, type the name of the file in the
+desired text box. Boxes can be left blank to play nothing."* Names are written **without** the
+extension, and one file can be reused across several slots. Real packs mix `.wav` and `.mp3`
+freely, so the lookup has to ignore the extension.
+
+`introduction` is shown followed by the contestant's name, so *"The best voicer in the land:"*
+with the name Tommy reads as *"The best voicer in the land: Tommy!"*.
 
 ---
 

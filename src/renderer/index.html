@@ -18,7 +18,8 @@
 
 <header class="topbar">
   <nav class="tabs" role="tablist">
-    <button class="tab on" role="tab" data-tab="dubs">Dubs</button>
+    <button class="tab on" role="tab" data-tab="home">Home</button>
+    <button class="tab" role="tab" data-tab="export">Export</button>
     <button class="tab" role="tab" data-tab="content">Content</button>
   </nav>
 
@@ -42,6 +43,64 @@
 </div>
 
 <main class="layout">
+
+  <!-- Home -->
+  <section class="home-view" id="home-view">
+    <div class="home-inner">
+
+      <header class="home-hero">
+        <h1>Choicer Voicer Content Manager</h1>
+        <p class="muted">Turn the dubs you record into videos, and build the packs you record them
+           with. Nothing here changes the game; it only reads and writes the files beside it.</p>
+      </header>
+
+      <div id="home-setup" class="setup" hidden></div>
+
+      <div class="home-cards">
+        <button class="home-card" id="card-export">
+          <span class="home-card-icon">🎬</span>
+          <span class="home-card-body">
+            <strong>Export a dub</strong>
+            <em id="home-export-note">Pick a recording and turn it into a video.</em>
+          </span>
+        </button>
+        <button class="home-card" id="card-create">
+          <span class="home-card-icon">✨</span>
+          <span class="home-card-body">
+            <strong>Make something new</strong>
+            <em>Start a voice pack, contestant, host, judge panel and more.</em>
+          </span>
+        </button>
+        <button class="home-card" id="card-manage">
+          <span class="home-card-icon">📦</span>
+          <span class="home-card-body">
+            <strong>Manage your content</strong>
+            <em id="home-manage-note">See everything installed and what needs fixing.</em>
+          </span>
+        </button>
+      </div>
+
+      <section class="home-section">
+        <h2>What you have</h2>
+        <div id="home-stats" class="home-stats"></div>
+      </section>
+
+      <section class="home-section">
+        <h2>Recent recordings</h2>
+        <div id="home-recent" class="home-recent"></div>
+      </section>
+
+      <footer class="home-foot">
+        <span class="muted small">Made by <b>@jojozagjos</b></span>
+        <span class="home-foot-links">
+          <button type="button" class="link-btn" id="home-help">Help</button>
+          <button type="button" class="link-btn" id="home-folder">Open game folder</button>
+          <button type="button" class="link-btn" id="home-donate" hidden>Donate</button>
+        </span>
+      </footer>
+
+    </div>
+  </section>
 
   <!-- Packs -->
   <aside class="sidebar">
@@ -153,6 +212,7 @@
           <p class="muted small" id="content-subtitle"></p>
         </div>
         <div class="content-head-actions">
+          <button id="btn-content-new" class="btn btn-primary btn-small">+ Create new</button>
           <button id="btn-content-folder" class="btn btn-small">Open folder</button>
           <button id="btn-content-guide" class="btn btn-small">Format guide</button>
         </div>
@@ -439,6 +499,46 @@
     <footer class="dialog-foot">
       <menu class="dialog-actions">
         <button type="button" id="btn-settings-close" class="btn btn-primary">Done</button>
+      </menu>
+    </footer>
+  </form>
+</dialog>
+
+<!-- Create a new pack -->
+<dialog id="create-dialog" class="dialog dialog-wide">
+  <form method="dialog" class="dialog-body dialog-body-tabbed">
+    <header class="dialog-head">
+      <h2 id="create-title">Create something new</h2>
+      <p class="muted small" id="create-hint">Pick what you want to make.</p>
+    </header>
+
+    <div class="dialog-scroll">
+      <div id="create-types" class="create-types"></div>
+
+      <div id="create-form" class="create-form" hidden>
+        <label class="field">
+          <span>Name</span>
+          <input id="create-name" class="input" type="text" placeholder="My pack" />
+        </label>
+
+        <div id="create-extra"></div>
+
+        <div class="dropzone" id="create-drop">
+          <p><b>Drop files here</b></p>
+          <p class="muted small" id="create-drop-hint">
+            Anything in the wrong format is converted automatically.
+          </p>
+          <button type="button" id="create-browse" class="btn btn-small">Choose files…</button>
+          <div id="create-files" class="create-files"></div>
+        </div>
+      </div>
+    </div>
+
+    <footer class="dialog-foot">
+      <menu class="dialog-actions">
+        <button type="button" id="btn-create-back" class="btn btn-ghost" hidden>Back</button>
+        <button type="button" id="btn-create-cancel" class="btn btn-ghost">Cancel</button>
+        <button type="button" id="btn-create-go" class="btn btn-primary" hidden>Create</button>
       </menu>
     </footer>
   </form>

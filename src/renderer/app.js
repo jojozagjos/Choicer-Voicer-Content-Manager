@@ -109,6 +109,35 @@ const el = {
   btnProgressCancelAll: $('#btn-progress-cancel-all'),
 
   tabButtons: document.querySelectorAll('[data-tab]'),
+  homeView: $('#home-view'),
+  homeSetup: $('#home-setup'),
+  homeStats: $('#home-stats'),
+  homeRecent: $('#home-recent'),
+  homeExportNote: $('#home-export-note'),
+  homeManageNote: $('#home-manage-note'),
+  cardExport: $('#card-export'),
+  cardCreate: $('#card-create'),
+  cardManage: $('#card-manage'),
+  homeHelp: $('#home-help'),
+  homeFolder: $('#home-folder'),
+  homeDonate: $('#home-donate'),
+
+  btnContentNew: $('#btn-content-new'),
+  createDialog: $('#create-dialog'),
+  createTitle: $('#create-title'),
+  createHint: $('#create-hint'),
+  createTypes: $('#create-types'),
+  createForm: $('#create-form'),
+  createName: $('#create-name'),
+  createExtra: $('#create-extra'),
+  createDrop: $('#create-drop'),
+  createDropHint: $('#create-drop-hint'),
+  createBrowse: $('#create-browse'),
+  createFiles: $('#create-files'),
+  btnCreateBack: $('#btn-create-back'),
+  btnCreateCancel: $('#btn-create-cancel'),
+  btnCreateGo: $('#btn-create-go'),
+
   tagline: $('#tagline'),
   sidebar: document.querySelector('.sidebar'),
   stage: document.querySelector('.stage'),
@@ -398,7 +427,8 @@ function syncCaptionControls() {
 // Content manager
 
 const TAGLINES = {
-  dubs: 'Preview a dub you recorded, then export it as a video.',
+  home: '',
+  export: 'Preview a dub you recorded, then export it as a video.',
   content: 'Everything installed in your game folder, and anything wrong with it.',
 };
 
@@ -412,12 +442,150 @@ async function switchTab(tab) {
   for (const button of el.tabButtons) button.classList.toggle('on', button.dataset.tab === tab);
   el.tagline.textContent = TAGLINES[tab] || '';
 
-  const onContent = tab === 'content';
-  el.sidebar.hidden = onContent;
-  el.stage.hidden = onContent;
-  el.contentView.hidden = !onContent;
+  // Each view owns the whole width except the export one, which keeps the
+  // pack sidebar beside it.
+  el.homeView.hidden = tab !== 'home';
+  el.sidebar.hidden = tab !== 'export';
+  el.stage.hidden = tab !== 'export';
+  el.contentView.hidden = tab !== 'content';
 
-  if (onContent) await refreshContent();
+  if (tab === 'content') await refreshContent();
+  if (tab === 'home') await renderHome();
+}
+
+// Home
+
+async function renderHome() {
+  const result = await window.api.content.scan(state.settings.gameDir).catch(() => null);
+  state.content = result && result.ok ? result : null;
+  renderSetup();
+  renderHomeStats();
+  renderHomeRecent();
+}
+
+/**
+ * A fresh install has an empty game folder and nothing recorded, so the first
+ * thing anyone sees would otherwise be three empty lists. This walks them
+ * through it instead, and disappears once there is nothing left to do.
+ */
+function renderSetup() {
+  const foundGame = Boolean(state.model && state.model.packs);
+  const hasContent = Boolean(state.content && state.content.totals.packs);
+  const hasRecordings = Boolean(state.model && state.model.packs.some((p) => p.sessions.length));
+
+  if (foundGame && hasContent && hasRecordings) {
+    el.homeSetup.hidden = true;
+    return;
+  }
+
+  const step = (done, title, detail, action, onClick) => `
+    <div class="setup-step">
+      <span class="tick">${done ? '✅' : '⬜'}</span>
+      <span class="setup-step-body">
+        <b>${escapeHtml(title)}</b>
+        <em>${detail}</em>
+        ${!done && action ? `<button type="button" class="btn btn-small setup-action"
+          data-action="${onClick}">${escapeHtml(action)}</button>` : ''}
+      </span>
+    </div>`;
+
+  el.homeSetup.hidden = false;
+  el.homeSetup.innerHTML = `
+    <h2>Let's get you set up</h2>
+    ${step(foundGame, 'Find your game files',
+    foundGame
+      ? 'Found them. You can change this in Settings.'
+      : 'Point the app at the folder containing <code>packs_voice</code>.',
+    'Choose folder', 'pick-game')}
+    ${step(hasContent, 'Get some content',
+    hasContent
+      ? `${state.content.totals.packs} packs installed.`
+      : 'The game ships almost empty. Make a pack here, or download one from the community.',
+    'Make one', 'create')}
+    ${step(hasRecordings, 'Record a dub in the game',
+    hasRecordings
+      ? 'You have recordings ready to export.'
+      : 'Play a voice pack in The Choicer Voicer and record your lines. They show up here automatically.',
+    'How it works', 'help')}`;
+
+  for (const button of el.homeSetup.querySelectorAll('.setup-action')) {
+    button.addEventListener('click', () => {
+      const action = button.dataset.action;
+      if (action === 'pick-game') pickGameDir();
+      else if (action === 'create') openCreateDialog();
+      else el.aboutDialog.showModal();
+    });
+  }
+}
+
+function renderHomeStats() {
+  el.homeStats.innerHTML = '';
+  if (!state.content) {
+    el.homeStats.innerHTML = '<p class="muted small">No game folder yet.</p>';
+    return;
+  }
+
+  for (const type of state.content.types) {
+    const errors = type.packs.reduce((n, p) => n + p.counts.error, 0);
+    const stat = document.createElement('button');
+    stat.className = 'stat';
+    stat.innerHTML = `
+      <b>${type.packs.length}</b>
+      <span>${escapeHtml(type.label)}</span>
+      ${errors ? `<span class="badge badge-error">${errors} to fix</span>` : ''}`;
+    stat.addEventListener('click', () => {
+      state.contentType = type.id;
+      switchTab('content');
+    });
+    el.homeStats.append(stat);
+  }
+
+  el.homeManageNote.textContent = state.content.totals.errors
+    ? `${state.content.totals.errors} thing${state.content.totals.errors > 1 ? 's' : ''} need attention.`
+    : 'See everything installed and what needs fixing.';
+}
+
+/** The newest recording sessions, so the common job is one click from here. */
+function renderHomeRecent() {
+  el.homeRecent.innerHTML = '';
+  if (!state.model) return;
+
+  const sessions = [];
+  for (const pack of state.model.packs) {
+    for (const session of pack.sessions) sessions.push({ pack, session });
+  }
+  sessions.sort((a, b) => String(b.session.date || '').localeCompare(String(a.session.date || '')));
+
+  const recent = sessions.slice(0, 5);
+  el.homeExportNote.textContent = sessions.length
+    ? `${sessions.length} recording${sessions.length > 1 ? 's' : ''} ready to export.`
+    : 'Record a dub in the game first.';
+
+  if (!recent.length) {
+    el.homeRecent.innerHTML = '<p class="muted small">Nothing recorded yet.</p>';
+    return;
+  }
+
+  for (const { pack, session } of recent) {
+    const row = document.createElement('button');
+    row.className = 'recent-row';
+    row.innerHTML = `
+      <strong>${escapeHtml(pack.title)}</strong>
+      <span class="muted">${escapeHtml(friendlySessionName(session))}</span>`;
+    row.addEventListener('click', async () => {
+      await switchTab('export');
+      const target = state.model.packs.find((p) => p.id === pack.id);
+      if (target) {
+        await selectPack(target);
+        const index = target.sessions.findIndex((s) => s.id === session.id);
+        if (index > 0) {
+          el.sessionSelect.selectedIndex = index;
+          el.sessionSelect.dispatchEvent(new Event('change'));
+        }
+      }
+    });
+    el.homeRecent.append(row);
+  }
 }
 
 async function refreshContent() {
@@ -550,6 +718,239 @@ function renderContentDetail(pack) {
     .addEventListener('click', () => window.api.shell.openPath(pack.dir));
 }
 
+// Creating packs
+
+/**
+ * What each type is, in plain terms, plus the extra fields and the media it
+ * expects. `accepts` drives the file picker and the wording on the drop zone.
+ */
+const CREATE_TYPES = [
+  {
+    id: 'voice', icon: '🎬', label: 'Dub or voice pack',
+    blurb: 'Clips to dub over. Add a video to make it a dub pack.',
+    accepts: 'all',
+    dropHint: 'Drop a video, a backing track, and your clips. A video in any format is converted to .ogv.',
+    fields: [
+      { key: 'title', label: 'Title shown in game', placeholder: 'My Dub Pack' },
+      { key: 'subtitle', label: 'Subtitle', placeholder: 'Optional' },
+      { key: 'authorsText', label: 'Authors, comma separated', placeholder: 'you, a friend' },
+    ],
+  },
+  {
+    id: 'player', icon: '🧍', label: 'Contestant',
+    blurb: 'A character who plays the game, with reaction sounds.',
+    accepts: 'all',
+    dropHint: 'Drop a picture (becomes player.png) and any reaction sounds.',
+    fields: [
+      { key: 'introduction', label: 'How the host introduces them', placeholder: 'Our next contestant:' },
+      { key: 'color1', label: 'Main colour', type: 'color', value: '#accbd1' },
+      { key: 'color2', label: 'Second colour', type: 'color', value: '#ffffff' },
+    ],
+  },
+  {
+    id: 'host', icon: '🎤', label: 'Host',
+    blurb: 'Presents the show. Starts with a full script you can rewrite.',
+    accepts: 'image',
+    dropHint: 'Drop a picture for the host. It becomes host.png.',
+    fields: [],
+  },
+  {
+    id: 'judges', icon: '⚖️', label: 'Judge panel',
+    blurb: 'Five judges who score each round.',
+    accepts: 'all',
+    dropHint: 'Drop five pictures, plus voices and score blips if you have them.',
+    fields: [],
+  },
+  {
+    id: 'studio', icon: '🏛️', label: 'Studio',
+    blurb: 'The set the show is filmed on.',
+    accepts: 'all',
+    dropHint: 'Drop music, a screen video, or a .glb model.',
+    fields: [],
+  },
+  {
+    id: 'menu', icon: '🖼️', label: 'Menu theme',
+    blurb: 'Background, music and button sounds for the menus.',
+    accepts: 'all',
+    dropHint: 'Drop a background image, music, and button sounds.',
+    fields: [],
+  },
+  {
+    id: 'chatter', icon: '💬', label: 'Chatter pack',
+    blurb: 'Crowd sounds triggered by keywords in Twitch chat.',
+    accepts: 'audio',
+    dropHint: 'Drop sounds. They are converted to .ogg, which chatter packs need.',
+    fields: [],
+  },
+];
+
+const createState = { type: null, files: [] };
+
+function openCreateDialog(typeId) {
+  createState.type = null;
+  createState.files = [];
+  el.createTypes.hidden = false;
+  el.createForm.hidden = true;
+  el.btnCreateGo.hidden = true;
+  el.btnCreateBack.hidden = true;
+  el.createTitle.textContent = 'Create something new';
+  el.createHint.textContent = 'Pick what you want to make.';
+
+  el.createTypes.innerHTML = '';
+  for (const type of CREATE_TYPES) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'create-type';
+    button.innerHTML = `
+      <span>${type.icon}</span>
+      <span><b>${escapeHtml(type.label)}</b><em>${escapeHtml(type.blurb)}</em></span>`;
+    button.addEventListener('click', () => chooseCreateType(type));
+    el.createTypes.append(button);
+  }
+
+  if (!el.createDialog.open) el.createDialog.showModal();
+  if (typeId) {
+    const preset = CREATE_TYPES.find((t) => t.id === typeId);
+    if (preset) chooseCreateType(preset);
+  }
+}
+
+function chooseCreateType(type) {
+  createState.type = type;
+  createState.files = [];
+
+  el.createTypes.hidden = true;
+  el.createForm.hidden = false;
+  el.btnCreateGo.hidden = false;
+  el.btnCreateBack.hidden = false;
+  el.createTitle.textContent = `New ${type.label.toLowerCase()}`;
+  el.createHint.textContent = type.blurb;
+  el.createDropHint.textContent = type.dropHint;
+  el.createName.value = '';
+  el.createName.placeholder = type.id === 'player' ? 'Their name' : 'My pack';
+
+  el.createExtra.innerHTML = type.fields.map((f) => `
+    <label class="field">
+      <span>${escapeHtml(f.label)}</span>
+      ${f.type === 'color'
+    ? `<input class="color" type="color" data-field="${f.key}" value="${f.value}" />`
+    : `<input class="input" type="text" data-field="${f.key}" placeholder="${escapeHtml(f.placeholder || '')}" />`}
+    </label>`).join('');
+
+  renderCreateFiles();
+  el.createName.focus();
+}
+
+async function addCreateFiles(paths) {
+  if (!paths || !paths.length) return;
+  const described = await window.api.content.describe(paths);
+  for (const file of described) {
+    if (!file.kind) {
+      toast(`${file.name || 'That file'} is not audio, video or an image.`, 'warn');
+      continue;
+    }
+    if (!createState.files.some((f) => f.path === file.path)) createState.files.push(file);
+  }
+  renderCreateFiles();
+}
+
+function renderCreateFiles() {
+  el.createFiles.innerHTML = '';
+  for (const file of createState.files) {
+    const row = document.createElement('div');
+    row.className = 'create-file';
+    const tag = file.acceptable
+      ? '<span class="badge badge-ok tag">ready</span>'
+      : '<span class="badge badge-warn tag">will convert</span>';
+    row.innerHTML = `<span class="name">${escapeHtml(file.name)}</span>${tag}`;
+    el.createFiles.append(row);
+  }
+}
+
+async function runCreate() {
+  const type = createState.type;
+  if (!type) return;
+
+  const name = el.createName.value.trim();
+  if (!name) {
+    toast('Give it a name first.', 'warn');
+    el.createName.focus();
+    return;
+  }
+
+  const options = { name, title: name };
+  for (const input of el.createExtra.querySelectorAll('[data-field]')) {
+    options[input.dataset.field] = input.value;
+  }
+  if (options.authorsText) {
+    options.authors = options.authorsText.split(',').map((s) => s.trim()).filter(Boolean);
+  }
+  if (type.id === 'voice') {
+    options.isDub = createState.files.some((f) => f.kind === 'video');
+  }
+
+  const created = await window.api.content.create(type.id, options);
+  if (!created.ok) {
+    toast(`Could not create it: ${created.error}`, 'error', 8000);
+    return;
+  }
+
+  // Media gets converted into the new folder under the names the game expects.
+  if (createState.files.length) {
+    toast(`Importing ${createState.files.length} file${createState.files.length > 1 ? 's' : ''}…`);
+    for (const file of createState.files) {
+      const target = importTargetName(type.id, file, createState.files);
+      await window.api.content.import(created.dir, [file.path], {
+        baseName: target.base,
+        kind: file.kind,
+        audioFormat: target.audioFormat,
+        maxSeconds: target.maxSeconds,
+      });
+    }
+  }
+
+  el.createDialog.close();
+  toast(`Made "${created.name}". ${created.next || ''}`, 'ok', 9000);
+
+  await refreshContent();
+  state.contentType = type.id;
+  await switchTab('content');
+}
+
+/**
+ * Works out what an imported file should be called inside the pack. Some names
+ * are fixed by the game (dub_video, player.png, host.png); everything else
+ * keeps its own name.
+ */
+function importTargetName(typeId, file, all) {
+  if (file.kind === 'video') {
+    if (typeId === 'voice') return { base: 'dub_video' };
+    if (typeId === 'studio') return { base: 'screen' };
+  }
+  if (file.kind === 'image') {
+    if (typeId === 'player') return { base: 'player' };
+    if (typeId === 'host') return { base: 'host' };
+    if (typeId === 'menu') return { base: 'Background' };
+    if (typeId === 'judges') {
+      // judge1..judge5, in the order they were added.
+      const images = all.filter((f) => f.kind === 'image');
+      const index = images.indexOf(file);
+      if (index >= 0 && index < 5) return { base: `judge${index + 1}` };
+    }
+  }
+  if (file.kind === 'audio') {
+    if (typeId === 'chatter') return { base: baseName(file.name), audioFormat: 'ogg' };
+    if (typeId === 'studio') return { base: 'music_studio' };
+    if (typeId === 'menu') return { base: 'music_menu' };
+    // Dub clips are capped at six seconds by the game.
+    if (typeId === 'voice') return { base: baseName(file.name), audioFormat: 'wav', maxSeconds: 6 };
+    return { base: baseName(file.name), audioFormat: 'wav' };
+  }
+  return { base: baseName(file.name) };
+}
+
+const baseName = (name) => String(name).replace(/\.[^.]+$/, '');
+
 // Donations
 
 // Only ask once the app has genuinely earned it, and rarely. A free tool that
@@ -639,6 +1040,7 @@ async function boot() {
   applyCaptionStyle();
   await rescan(state.settings.gameDir || state.info.defaultGameDir);
   wireEvents();
+  await switchTab('home');
   requestAnimationFrame(tick);
 
   if (wantSplash) setTimeout(dismissSplash, Math.max(0, splashUntil - Date.now()));
@@ -1647,6 +2049,50 @@ function wireEvents() {
   for (const button of el.tabButtons) {
     button.addEventListener('click', () => switchTab(button.dataset.tab));
   }
+
+  // Home
+  el.cardExport.addEventListener('click', () => switchTab('export'));
+  el.cardManage.addEventListener('click', () => switchTab('content'));
+  el.cardCreate.addEventListener('click', () => openCreateDialog());
+  el.homeHelp.addEventListener('click', () => el.aboutDialog.showModal());
+  el.homeFolder.addEventListener('click', () => {
+    if (state.model) window.api.shell.openPath(state.model.gameDir);
+  });
+  if (links.donate) {
+    el.homeDonate.hidden = false;
+    el.homeDonate.addEventListener('click', () => window.api.shell.openExternal(links.donate));
+  }
+
+  // Creating
+  el.btnContentNew.addEventListener('click', () => openCreateDialog(state.contentType));
+  el.btnCreateCancel.addEventListener('click', () => el.createDialog.close());
+  el.btnCreateBack.addEventListener('click', () => openCreateDialog());
+  el.btnCreateGo.addEventListener('click', runCreate);
+  el.createBrowse.addEventListener('click', async () => {
+    const picked = await window.api.dialog.pickFiles({
+      title: 'Choose files to add',
+      kind: createState.type ? createState.type.accepts : 'all',
+    });
+    addCreateFiles(picked);
+  });
+
+  // Drag and drop onto the create dialog.
+  for (const event of ['dragenter', 'dragover']) {
+    el.createDrop.addEventListener(event, (e) => {
+      e.preventDefault();
+      el.createDrop.classList.add('over');
+    });
+  }
+  for (const event of ['dragleave', 'drop']) {
+    el.createDrop.addEventListener(event, () => el.createDrop.classList.remove('over'));
+  }
+  el.createDrop.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const paths = [...(e.dataTransfer.files || [])]
+      .map((f) => window.api.pathForFile(f))
+      .filter(Boolean);
+    addCreateFiles(paths);
+  });
 
   el.btnContentFolder.addEventListener('click', () => {
     const type = currentContentType();

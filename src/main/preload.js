@@ -1,6 +1,6 @@
 'use strict';
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 /** Fans an export event out to subscribers, keyed by channel. */
 function makeEmitter(channels) {
@@ -28,10 +28,18 @@ const on = makeEmitter([
   'export:done',
   'export:failed',
   'proxy:progress',
+  'import:progress',
 ]);
 
 contextBridge.exposeInMainWorld('api', {
   appInfo: () => ipcRenderer.invoke('app:info'),
+
+  // Electron removed File.path, so a dropped file's real location has to come
+  // from webUtils in the preload.
+  pathForFile: (file) => {
+    try { return webUtils.getPathForFile(file); } catch { return null; }
+  },
+
   checkUpdate: () => ipcRenderer.invoke('app:checkUpdate'),
 
   settings: {
@@ -46,6 +54,11 @@ contextBridge.exposeInMainWorld('api', {
 
   content: {
     scan: (dir) => ipcRenderer.invoke('content:scan', dir),
+    create: (type, options) => ipcRenderer.invoke('content:create', { type, options }),
+    describe: (files) => ipcRenderer.invoke('content:describe', files),
+    import: (destDir, files, options) =>
+      ipcRenderer.invoke('content:import', { destDir, files, options }),
+    onImportProgress: (fn) => on('import:progress', fn),
   },
 
   media: {
@@ -59,6 +72,7 @@ contextBridge.exposeInMainWorld('api', {
     pickOutput: (opts) => ipcRenderer.invoke('dialog:pickOutput', opts),
     pickDirectory: (defaultPath) => ipcRenderer.invoke('dialog:pickDirectory', defaultPath),
     pickBinary: (which) => ipcRenderer.invoke('dialog:pickBinary', which),
+    pickFiles: (opts) => ipcRenderer.invoke('dialog:pickFiles', opts || {}),
   },
 
   exporter: {

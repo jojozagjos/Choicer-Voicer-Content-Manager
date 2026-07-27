@@ -13,6 +13,8 @@ const ffmpeg = require('./ffmpeg');
 const { runExport } = require('./exporter');
 const { ensureProxy } = require('./proxy');
 const { scanContent } = require('./content');
+const { createPack } = require('./create');
+const convert = require('./convert');
 
 const execFileAsync = promisify(execFile);
 
@@ -478,7 +480,7 @@ function runSmokeTest(win) {
         }
 
         const sidebarHidden = document.querySelector('.sidebar').hidden;
-        $('[data-tab="dubs"]').click();
+        $('[data-tab="export"]').click();
         await new Promise((r) => setTimeout(r, 150));
 
         return {
@@ -500,12 +502,99 @@ function runSmokeTest(win) {
       contentCheck = { error: err.message };
     }
 
+    // Home is the landing view, and the setup panel should be gone on a
+    // machine that already has content and recordings.
+    let homeCheck = null;
+    try {
+      homeCheck = await win.webContents.executeJavaScript(`(async () => {
+        const $ = (s) => document.querySelector(s);
+        $('[data-tab="home"]').click();
+        for (let i = 0; i < 40; i++) {
+          await new Promise((r) => setTimeout(r, 250));
+          if (document.querySelectorAll('.stat').length) break;
+        }
+        return {
+          visible: !$('#home-view').hidden,
+          statTiles: document.querySelectorAll('.stat').length,
+          setupShown: !$('#home-setup').hidden,
+          recentRows: document.querySelectorAll('.recent-row').length,
+          exportNote: $('#home-export-note').textContent.trim(),
+          tabs: [...document.querySelectorAll('[data-tab]')].map((b) => b.textContent.trim()),
+        };
+      })()`);
+      if (homeCheck && homeCheck.statTiles !== 7) {
+        errors.push(`home showed ${homeCheck.statTiles} stat tiles, expected 7`);
+      }
+    } catch (err) {
+      homeCheck = { error: err.message };
+    }
+
+    // The create flow must produce a pack the scanner then accepts.
+    let createCheck = null;
+    try {
+      createCheck = await win.webContents.executeJavaScript(`(async () => {
+        const $ = (s) => document.querySelector(s);
+        $('[data-tab="content"]').click();
+        await new Promise((r) => setTimeout(r, 400));
+
+        $('#btn-content-new').click();
+        await new Promise((r) => setTimeout(r, 200));
+        const typeCount = document.querySelectorAll('.create-type').length;
+
+        // Pick "Contestant", which has extra fields worth exercising.
+        const buttons = [...document.querySelectorAll('.create-type')];
+        const contestant = buttons.find((b) => b.textContent.includes('Contestant'));
+        contestant.click();
+        await new Promise((r) => setTimeout(r, 150));
+
+        const fields = document.querySelectorAll('#create-extra [data-field]').length;
+        $('#create-name').value = 'Smoke Test Contestant';
+        $('#btn-create-go').click();
+
+        for (let i = 0; i < 60; i++) {
+          await new Promise((r) => setTimeout(r, 250));
+          if (!$('#create-dialog').open) break;
+        }
+        await new Promise((r) => setTimeout(r, 800));
+
+        const tiles = [...document.querySelectorAll('.pack-tile')].map((t) => t.textContent);
+        return {
+          typeCount,
+          extraFields: fields,
+          dialogClosed: !$('#create-dialog').open,
+          landedOn: $('#content-title').textContent,
+          madeIt: tiles.some((t) => t.includes('Smoke Test Contestant')),
+        };
+      })()`);
+      if (createCheck && createCheck.typeCount !== 7) {
+        errors.push(`create offered ${createCheck.typeCount} types, expected 7`);
+      }
+      if (createCheck && !createCheck.madeIt) errors.push('created pack did not appear in the list');
+
+      // The test writes into the real game folder, so it has to tidy up or it
+      // would leave a new pack behind on every run.
+      const gameDir = gamedata.resolveGameDir(settings.gameDir || gamedata.defaultGameDir());
+      if (gameDir) {
+        const players = path.join(gameDir, 'packs_player');
+        for (const name of fs.readdirSync(players)) {
+          if (name.startsWith('Smoke Test Contestant')) {
+            fs.rmSync(path.join(players, name), { recursive: true, force: true });
+            createCheck.cleanedUp = true;
+          }
+        }
+      }
+    } catch (err) {
+      createCheck = { error: err.message };
+    }
+
     // Switching between a pack's recording sessions, including a freestyle
     // one, has to swap the takes over cleanly.
     let sessionCheck = null;
     try {
       sessionCheck = await win.webContents.executeJavaScript(`(async () => {
         const $ = (s) => document.querySelector(s);
+        $('[data-tab="export"]').click();
+        await new Promise((r) => setTimeout(r, 200));
         const settle = async () => {
           for (let i = 0; i < 800; i++) {
             await new Promise((r) => setTimeout(r, 250));
@@ -558,6 +647,8 @@ function runSmokeTest(win) {
     try {
       staleCheck = await win.webContents.executeJavaScript(`(async () => {
         const $ = (s) => document.querySelector(s);
+        $('[data-tab="export"]').click();
+        await new Promise((r) => setTimeout(r, 200));
         const cards = [...document.querySelectorAll('.pack-card')];
         if (cards.length < 2) return { skipped: 'need two packs' };
 
@@ -607,6 +698,8 @@ function runSmokeTest(win) {
     let packCheck = null;
     try {
       packCheck = await win.webContents.executeJavaScript(`(async () => {
+        document.querySelector('[data-tab="export"]').click();
+        await new Promise((r) => setTimeout(r, 200));
         const cards = [...document.querySelectorAll('.pack-card')];
         if (!cards.length) return { skipped: 'no packs' };
 
@@ -703,7 +796,8 @@ function runSmokeTest(win) {
     }
 
     console.log('SMOKE ' + JSON.stringify(
-      { report, videoCheck, contentCheck, sessionCheck, staleCheck, packCheck, queueCheck, errors },
+      { report, videoCheck, homeCheck, contentCheck, createCheck, sessionCheck, staleCheck,
+        packCheck, queueCheck, errors },
       null, 2));
     app.exit(errors.length ? 1 : 0);
   });
@@ -868,6 +962,56 @@ function registerIpc() {
       cancelled++;
     }
     return cancelled > 0;
+  });
+
+  ipcMain.handle('content:create', (_e, { type, options }) => {
+    try {
+      const target = gamedata.resolveGameDir(settings.gameDir || gamedata.defaultGameDir());
+      if (!target) return { ok: false, error: 'No game folder found' };
+      return { ok: true, ...createPack(target, type, options || {}) };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  /** Copies or converts dropped files into a pack folder. */
+  ipcMain.handle('content:import', async (event, { destDir, files, options }) => {
+    if (!isAllowed(destDir)) return { ok: false, error: 'That folder is outside the game folder' };
+
+    const send = (payload) => {
+      if (!event.sender.isDestroyed()) event.sender.send('import:progress', payload);
+    };
+
+    try {
+      const results = await convert.convertMany(files || [], destDir, {
+        ...(options || {}),
+        onFile: (result, done, total) => send({ done, total, name: path.basename(result.source) }),
+      });
+      return { ok: true, results };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  /** What a file is and whether it needs converting, before committing to it. */
+  ipcMain.handle('content:describe', (_e, files) =>
+    (files || []).map((f) => ({ path: f, ...convert.describe(f) })));
+
+  ipcMain.handle('dialog:pickFiles', async (_e, { title, kind }) => {
+    const filters = kind === 'video'
+      ? [{ name: 'Video', extensions: ['ogv', 'mp4', 'webm', 'mov', 'avi', 'mkv', 'm4v'] }]
+      : kind === 'audio'
+        ? [{ name: 'Audio', extensions: ['wav', 'mp3', 'ogg', 'm4a', 'aac', 'flac', 'opus'] }]
+        : kind === 'image'
+          ? [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'] }]
+          : [{ name: 'Media', extensions: ['png', 'jpg', 'jpeg', 'webp', 'wav', 'mp3', 'ogg', 'm4a', 'ogv', 'mp4', 'mov', 'webm'] }];
+
+    const res = await dialog.showOpenDialog(mainWindow, {
+      title: title || 'Choose files',
+      properties: ['openFile', 'multiSelections'],
+      filters,
+    });
+    return res.canceled ? [] : res.filePaths;
   });
 
   ipcMain.handle('dialog:pickOutput', async (_e, { defaultPath, format }) => {

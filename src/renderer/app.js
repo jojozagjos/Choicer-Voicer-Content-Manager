@@ -382,6 +382,20 @@ function donateUrl() {
 }
 
 /**
+ * Whether the donation note is due. Kept separate from the DOM so the rules
+ * can be checked directly: getting this wrong means pestering people.
+ */
+export function shouldAskForDonation(settings, now = Date.now()) {
+  if (!settings) return false;
+  if (settings.donateDismissed) return false;
+  if ((settings.exportsCompleted || 0) < DONATE_AFTER_EXPORTS) return false;
+
+  const last = settings.donatePromptedAt ? Date.parse(settings.donatePromptedAt) : 0;
+  if (!Number.isFinite(last)) return true;
+  return now - last >= DONATE_COOLDOWN_DAYS * 86400000;
+}
+
+/**
  * Called after a successful export. Shows a dismissible note if the user has
  * exported a few times, has not opted out, and has not been asked recently.
  */
@@ -392,11 +406,7 @@ async function maybeAskForDonation() {
   const done = (state.settings.exportsCompleted || 0) + 1;
   state.settings = await window.api.settings.set({ exportsCompleted: done });
 
-  if (state.settings.donateDismissed) return;
-  if (done < DONATE_AFTER_EXPORTS) return;
-
-  const last = state.settings.donatePromptedAt ? Date.parse(state.settings.donatePromptedAt) : 0;
-  if (Date.now() - last < DONATE_COOLDOWN_DAYS * 86400000) return;
+  if (!shouldAskForDonation(state.settings)) return;
 
   state.settings = await window.api.settings.set({ donatePromptedAt: new Date().toISOString() });
 

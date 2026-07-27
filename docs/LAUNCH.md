@@ -342,8 +342,8 @@ changing format are far more likely to hurt than any lawyer.
 ## 10. Launch checklist
 
 ### Before launch
-- [ ] Make the repo **public** (update checking and "source is available" both depend on it)
-- [ ] Set up Ko-fi, put the URL in `DONATE_URL` in `src/main/main.js`
+- [x] ~~Make the repo public~~ (done)
+- [x] ~~Set up Ko-fi and wire `DONATE_URL`~~ (done: https://ko-fi.com/jojozagjos)
 - [ ] Search USPTO for "The Choicer Voicer"
 - [ ] Look for any EULA in the game folder or on itch.io
 - [ ] Message the developer, then wait about a week
@@ -368,19 +368,16 @@ changing format are far more likely to hurt than any lawyer.
 
 ## Next steps, in order
 
-1. **Ko-fi + repo public.** Ten minutes, and everything else depends on both.
-2. **Message the developer.** Draft is in section 3.
-3. **While you wait: test on a clean machine and record the demo.**
-4. **Launch.**
-5. **Content manager** as the v1.2 headline feature.
+1. **Message the developer.** Draft is in section 3.
+2. **While you wait: test on a clean machine and record the demo.**
+3. **Launch.**
+4. **Content manager** as the v1.2 headline feature.
 
 ---
 
 ## Questions that still need answers
 
-1. **What is your Ko-fi (or preferred donation) URL?** One-line change and the prompts turn on.
-2. **Is the repo going public?** Update checks silently fail while it is private.
-3. **Did you find any EULA** in the game folder or on itch.io?
-4. **Do you want to be listed on itch.io** as well as GitHub?
-5. **What name do you want if the developer asks you to change it?** Worth deciding in advance so
+1. **Did you find any EULA** in the game folder or on itch.io?
+3. **Do you want to be listed on itch.io** as well as GitHub?
+4. **What name do you want if the developer asks you to change it?** Worth deciding in advance so
    you can answer immediately.

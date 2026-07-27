@@ -20,9 +20,9 @@ const MEDIA_SCHEME = 'cvmedia';
 const GITHUB_REPO = 'jojozagjos/Choicer-Voicer-Content-Manager';
 const DISCORD_URL = 'https://discord.com/users/jojozagjos';
 
-// Set this to your Ko-fi / GitHub Sponsors / PayPal page. While it is null the
-// app hides every donation prompt rather than showing a dead link.
-const DONATE_URL = null;
+// While this is null the app hides every donation prompt rather than showing
+// a dead link.
+const DONATE_URL = 'https://ko-fi.com/jojozagjos';
 
 /** Compares "1.2.10" style versions. Returns >0 when `a` is newer than `b`. */
 function compareVersions(a, b) {
@@ -414,6 +414,8 @@ function runSmokeTest(win) {
         alertVisible: !document.getElementById('alert-bar').hidden,
         tabs: document.querySelectorAll('.tab').length,
         captionButton: Boolean(document.getElementById('btn-caption-style')),
+        donateVisible: !document.getElementById('btn-about-donate').hidden,
+        donateBlurbVisible: !document.getElementById('donate-blurb').hidden,
         palettes: (() => {
           const root = document.documentElement;
           const was = root.dataset.theme;

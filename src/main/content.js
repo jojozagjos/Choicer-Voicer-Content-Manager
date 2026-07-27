@@ -112,6 +112,7 @@ function inspectVoice(dir, files, { parseIni, findAudioSibling }) {
 
   const info = findFile(files, '_pack_info', ['.ini', '.txt']);
   const meta = info ? parseIni(path.join(dir, info)) : {};
+  const backingName = findFile(files, '_backing_track', AUDIO_EXTS);
 
   // Clips are metadata files that actually declare a timestamp.
   const clips = [];
@@ -122,10 +123,13 @@ function inspectVoice(dir, files, { parseIni, findAudioSibling }) {
     if (!('dub_timestamps' in data)) continue;
 
     const base = baseOf(file);
+    const times = Array.isArray(data.dub_timestamps) ? data.dub_timestamps : [];
     clips.push({
       base,
+      time: typeof times[0] === 'number' ? times[0] : parseFloat(times[0]) || 0,
       caption: typeof data.caption === 'string' ? data.caption : '',
       character: Array.isArray(data.dub_characters) ? data.dub_characters[0] || '' : '',
+      image: typeof data.image === 'string' ? data.image : '',
       audio: findAudioSibling(dir, base, files),
     });
   }
@@ -138,7 +142,7 @@ function inspectVoice(dir, files, { parseIni, findAudioSibling }) {
   checkForeignMedia(files, issues);
 
   if (isDub) {
-    if (!findFile(files, '_backing_track', AUDIO_EXTS)) {
+    if (!backingName) {
       issues.push(issue(WARN, 'No backing track, so the video will be silent behind your dub'));
     }
   } else if (files.some((f) => FOREIGN_VIDEO.includes(extOf(f)))) {
@@ -166,6 +170,11 @@ function inspectVoice(dir, files, { parseIni, findAudioSibling }) {
     authors: Array.isArray(meta.authors) ? meta.authors : [],
     icon: findFile(files, meta.icon || '_icon', IMAGE_EXTS) || findFile(files, 'icon', IMAGE_EXTS),
     video,
+    // The editor needs the real file to cut clips out of.
+    videoPath: video ? path.join(dir, video) : null,
+    backingPath: backingName ? path.join(dir, backingName) : null,
+    // Sorted, so the editor lists them in the order they play.
+    clips: clips.sort((a, b) => a.time - b.time),
     clipCount: clips.length,
     characters: [...new Set(clips.map((c) => c.character).filter(Boolean))],
     summary: isDub ? `${clips.length} lines` : `${clips.length} clips`,
@@ -212,6 +221,8 @@ function inspectPlayer(dir, files) {
     kind: 'player',
     title: data.name || null,
     subtitle: data.introduction || '',
+    // The editor reads this to show what each reaction slot points at.
+    config: data,
     icon: image,
     summary: `${assigned} of 9 sounds`,
     colors: [data.color1, data.color2].filter(Boolean),

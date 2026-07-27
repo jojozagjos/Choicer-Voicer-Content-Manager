@@ -1,4 +1,5 @@
 import { DubPlayer } from './player.js';
+import { PackEditor } from './editor.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -121,6 +122,7 @@ const el = {
   creditHelp: $('#credit-help'),
   creditDonate: $('#credit-donate'),
 
+  editorView: $('#editor-view'),
   btnContentNew: $('#btn-content-new'),
   createDialog: $('#create-dialog'),
   createTitle: $('#create-title'),
@@ -177,6 +179,7 @@ const state = {
 };
 
 const player = new DubPlayer(el.video);
+const editor = new PackEditor(el.editorView, window.api, toast);
 
 // Utilities
 
@@ -443,6 +446,9 @@ async function switchTab(tab) {
 
   // Each view owns the whole width except the export one, which keeps the
   // pack sidebar beside it.
+  // Leaving a tab always closes the editor, so it cannot linger over another view.
+  if (!el.editorView.hidden) editor.close();
+
   el.homeView.hidden = tab !== 'home';
   el.sidebar.hidden = tab !== 'export';
   el.stage.hidden = tab !== 'export';
@@ -719,9 +725,13 @@ function renderContentDetail(pack) {
     </div>
 
     <div class="detail-actions">
+      <button type="button" class="btn btn-primary btn-small" id="btn-detail-edit">Edit</button>
       <button type="button" class="btn btn-small" id="btn-detail-open">Open folder</button>
       <button type="button" class="btn btn-small btn-danger" id="btn-detail-delete">Delete</button>
     </div>`;
+
+  el.contentDetail.querySelector('#btn-detail-edit')
+    .addEventListener('click', () => openEditorFor(pack));
 
   el.contentDetail.querySelector('#btn-detail-open')
     .addEventListener('click', () => window.api.shell.openPath(pack.dir));
@@ -748,6 +758,40 @@ function renderContentDetail(pack) {
       .filter(Boolean);
     importIntoPack(pack, paths);
   });
+}
+
+/**
+ * Opens the full screen editor for a pack. The content view stays in the DOM
+ * behind it so closing the editor puts you back where you were.
+ */
+async function openEditorFor(pack) {
+  el.contentView.hidden = true;
+
+  // The pack's own video is Ogg Theora, which Chromium cannot decode, so the
+  // editor shows the same cached MP4 proxy the preview uses. Clips are still
+  // cut from the original file.
+  if (pack.type === 'voice' && pack.videoPath && !pack.videoUrl) {
+    toast('Preparing the video…');
+    const proxy = await window.api.media.proxy(pack.videoPath);
+    if (proxy.ok) pack.videoUrl = proxy.url;
+    else toast(`Could not prepare the video: ${proxy.error}`, 'error', 8000);
+  }
+
+  editor.open(pack);
+
+  editor.onClose = () => {
+    el.contentView.hidden = state.tab !== 'content';
+  };
+
+  // Re-scan after a change so the editor sees its own edits.
+  editor.onChanged = async (packId, options = {}) => {
+    await refreshContent();
+    const fresh = state.content
+      && state.content.types.flatMap((t) => t.packs).find((p) => p.id === packId);
+    if (!fresh) return;
+    if (options.keepEditor) editor.pack = fresh;
+    else openEditorFor(fresh);
+  };
 }
 
 /** Copies or converts files into an existing pack, then rescans. */

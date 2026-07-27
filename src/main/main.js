@@ -3,6 +3,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, protocol, nativeTheme } = require('electron');
 const fs = require('fs');
 const fsp = require('fs/promises');
+const os = require('os');
 const path = require('path');
 const { Readable } = require('stream');
 const { execFile } = require('child_process');
@@ -503,6 +504,92 @@ function runSmokeTest(win) {
       contentCheck = { error: err.message };
     }
 
+    // The dub editor has to cut a real clip out of a real video, write its
+    // metadata, and grab a frame for its picture.
+    let editorCheck = null;
+    try {
+      editorCheck = await win.webContents.executeJavaScript(`(async () => {
+        const $ = (s) => document.querySelector(s);
+        $('[data-tab="content"]').click();
+        for (let i = 0; i < 60; i++) {
+          await new Promise((r) => setTimeout(r, 250));
+          if (document.querySelectorAll('.pack-tile').length) break;
+        }
+
+        // Voice packs are selected by default, so the first tile is a dub pack.
+        document.querySelector('.pack-tile').click();
+        await new Promise((r) => setTimeout(r, 300));
+        const before = document.querySelectorAll('#content-detail .issue').length;
+
+        const editBtn = $('#btn-detail-edit');
+        if (!editBtn) return { skipped: 'no edit button', detailOpen: !$('#content-detail').hidden };
+        editBtn.click();
+
+        // Building the video proxy can take a while on a cold cache.
+        for (let i = 0; i < 200; i++) {
+          await new Promise((r) => setTimeout(r, 250));
+          if (document.querySelector('.editor-video video')) break;
+        }
+
+        const video = document.querySelector('.editor-video video');
+        if (!video) {
+          return {
+            skipped: 'no video element',
+            editorVisible: !$('#editor-view').hidden,
+            editorHtml: $('#editor-view').textContent.slice(0, 200),
+          };
+        }
+        for (let i = 0; i < 40; i++) {
+          await new Promise((r) => setTimeout(r, 250));
+          if (video.readyState >= 2) break;
+        }
+
+        const clipsBefore = document.querySelectorAll('.clip-row').length;
+
+        // Mark a two second range and add it.
+        video.currentTime = 5;
+        await new Promise((r) => setTimeout(r, 300));
+        document.querySelector('[data-act="mark-in"]').click();
+        video.currentTime = 7;
+        await new Promise((r) => setTimeout(r, 300));
+        document.querySelector('[data-act="mark-out"]').click();
+        document.querySelector('[data-act="add"]').click();
+
+        for (let i = 0; i < 80; i++) {
+          await new Promise((r) => setTimeout(r, 250));
+          if (document.querySelectorAll('.clip-row').length > clipsBefore) break;
+        }
+
+        return {
+          videoReady: video.readyState >= 2,
+          videoW: video.videoWidth,
+          clipsBefore,
+          clipsAfter: document.querySelectorAll('.clip-row').length,
+          detailIssues: before,
+        };
+      })()`);
+      // The clip is cut into a real pack, so it has to be removed or every run
+      // would leave another one behind.
+      const gameDir = gamedata.resolveGameDir(settings.gameDir || gamedata.defaultGameDir());
+      if (gameDir && editorCheck && editorCheck.clipsAfter > editorCheck.clipsBefore) {
+        const voiceRoot = path.join(gameDir, 'packs_voice');
+        let removed = 0;
+        for (const pack of fs.readdirSync(voiceRoot)) {
+          const packDir = path.join(voiceRoot, pack);
+          if (!fs.statSync(packDir).isDirectory()) continue;
+          for (const file of fs.readdirSync(packDir)) {
+            if (/_clip_\d+\.(wav|ini|png)$/i.test(file)) {
+              fs.unlinkSync(path.join(packDir, file));
+              removed++;
+            }
+          }
+        }
+        editorCheck.cleanedUpFiles = removed;
+      }
+    } catch (err) {
+      editorCheck = { error: err.message };
+    }
+
     // Home is the landing view, and the setup panel should be gone on a
     // machine that already has content and recordings.
     let homeCheck = null;
@@ -797,8 +884,8 @@ function runSmokeTest(win) {
     }
 
     console.log('SMOKE ' + JSON.stringify(
-      { report, videoCheck, homeCheck, contentCheck, createCheck, sessionCheck, staleCheck,
-        packCheck, queueCheck, errors },
+      { report, videoCheck, editorCheck, homeCheck, contentCheck, createCheck, sessionCheck,
+        staleCheck, packCheck, queueCheck, errors },
       null, 2));
     app.exit(errors.length ? 1 : 0);
   });
@@ -1032,6 +1119,59 @@ function registerIpc() {
     if (!isAllowed(destDir)) return { ok: false, error: 'That folder is outside the game folder' };
     try {
       return { ok: true, file: writeClipMeta(destDir, base, meta || {}) };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  /**
+   * Saves audio recorded in the app. MediaRecorder gives us WebM/Opus, which
+   * the game cannot read, so it is converted on the way in.
+   */
+  ipcMain.handle('content:saveRecording', async (_e, { destDir, base, bytes, audioFormat, maxSeconds }) => {
+    if (!isAllowed(destDir)) return { ok: false, error: 'That folder is outside the game folder' };
+
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'cvrec-'));
+    const raw = path.join(scratch, 'take.webm');
+    try {
+      fs.writeFileSync(raw, Buffer.from(bytes));
+      const result = await convert.convertInto(raw, destDir, base, {
+        kind: 'audio',
+        audioFormat: audioFormat || 'wav',
+        maxSeconds: maxSeconds || null,
+      });
+      return { ok: true, path: result.path, base: path.basename(result.path, path.extname(result.path)) };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    } finally {
+      fs.rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * Merges a patch into a pack's JSON config. Read-modify-write rather than
+   * overwrite, so editing one contestant slot cannot wipe the other eight.
+   */
+  ipcMain.handle('content:writeConfig', (_e, { dir, file, patch }) => {
+    if (!isAllowed(dir)) return { ok: false, error: 'That folder is outside the game folder' };
+
+    const target = path.join(dir, file);
+    let current = {};
+    try {
+      if (fs.existsSync(target)) current = JSON.parse(fs.readFileSync(target, 'utf8'));
+    } catch (err) {
+      return { ok: false, error: `Existing ${file} is not valid JSON: ${err.message}` };
+    }
+
+    try {
+      const merged = { ...current };
+      for (const [key, value] of Object.entries(patch || {})) {
+        merged[key] = (value && typeof value === 'object' && !Array.isArray(value))
+          ? { ...(current[key] || {}), ...value }
+          : value;
+      }
+      fs.writeFileSync(target, JSON.stringify(merged, null, '\t'), 'utf8');
+      return { ok: true, config: merged };
     } catch (err) {
       return { ok: false, error: err.message };
     }

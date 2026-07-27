@@ -20,6 +20,10 @@ const MEDIA_SCHEME = 'cvmedia';
 const GITHUB_REPO = 'jojozagjos/Choicer-Voicer-Content-Manager';
 const DISCORD_URL = 'https://discord.com/users/jojozagjos';
 
+// Set this to your Ko-fi / GitHub Sponsors / PayPal page. While it is null the
+// app hides every donation prompt rather than showing a dead link.
+const DONATE_URL = null;
+
 /** Compares "1.2.10" style versions. Returns >0 when `a` is newer than `b`. */
 function compareVersions(a, b) {
   const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
@@ -52,6 +56,11 @@ const DEFAULT_SETTINGS = {
   showSplash: true,
   captionStyle: {},
   characterColors: {},
+  // Donation prompt state. It only appears after the app has actually been
+  // useful a few times, and never more than once a fortnight.
+  exportsCompleted: 0,
+  donatePromptedAt: null,
+  donateDismissed: false,
   exportOptions: {
     format: 'mp4',
     preset: 'source',
@@ -634,6 +643,7 @@ function registerIpc() {
       discord: DISCORD_URL,
       releases: `https://github.com/${GITHUB_REPO}/releases`,
       game: 'https://yeahmaybe.itch.io/the-choicer-voicer',
+      donate: DONATE_URL,
     },
   }));
 

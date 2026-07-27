@@ -16,6 +16,8 @@ const el = {
   btnAboutPage: $('#btn-about-page'),
   btnAboutDiscord: $('#btn-about-discord'),
   btnAboutRepo: $('#btn-about-repo'),
+  btnAboutDonate: $('#btn-about-donate'),
+  donateBlurb: $('#donate-blurb'),
   helpTabs: document.querySelectorAll('.help-tab'),
 
   alertBar: $('#alert-bar'),
@@ -368,6 +370,56 @@ function openCaptionDialog() {
   el.captionDialog.showModal();
 }
 
+// Donations
+
+// Only ask once the app has genuinely earned it, and rarely. A free tool that
+// nags is worse than one that never asks.
+const DONATE_AFTER_EXPORTS = 3;
+const DONATE_COOLDOWN_DAYS = 14;
+
+function donateUrl() {
+  return (state.info && state.info.links && state.info.links.donate) || null;
+}
+
+/**
+ * Called after a successful export. Shows a dismissible note if the user has
+ * exported a few times, has not opted out, and has not been asked recently.
+ */
+async function maybeAskForDonation() {
+  const url = donateUrl();
+  if (!url) return;
+
+  const done = (state.settings.exportsCompleted || 0) + 1;
+  state.settings = await window.api.settings.set({ exportsCompleted: done });
+
+  if (state.settings.donateDismissed) return;
+  if (done < DONATE_AFTER_EXPORTS) return;
+
+  const last = state.settings.donatePromptedAt ? Date.parse(state.settings.donatePromptedAt) : 0;
+  if (Date.now() - last < DONATE_COOLDOWN_DAYS * 86400000) return;
+
+  state.settings = await window.api.settings.set({ donatePromptedAt: new Date().toISOString() });
+
+  showAlert(
+    'Glad this is useful. It is free and stays free, but donations help me keep building it.',
+    '♥ Donate',
+    () => {
+      window.api.shell.openExternal(url);
+      hideAlert();
+    }
+  );
+
+  // A second button so dismissing is as easy as accepting.
+  const dismiss = document.createElement('button');
+  dismiss.className = 'btn btn-small btn-ghost';
+  dismiss.textContent = 'No thanks';
+  dismiss.addEventListener('click', async () => {
+    state.settings = await window.api.settings.set({ donateDismissed: true });
+    hideAlert();
+  });
+  el.alertBar.append(dismiss);
+}
+
 // Splash
 
 const SPLASH_MIN_MS = 1700;
@@ -431,6 +483,7 @@ async function checkForUpdate() {
  * something actually needs attention, with a button that fixes it.
  */
 function showAlert(message, actionLabel, onAction) {
+  clearExtraAlertButtons();
   el.alertText.textContent = message;
   el.alertBar.hidden = false;
   el.alertAction.hidden = !actionLabel;
@@ -440,9 +493,17 @@ function showAlert(message, actionLabel, onAction) {
   }
 }
 
+/** Removes buttons a previous alert appended beyond the built-in one. */
+function clearExtraAlertButtons() {
+  for (const extra of [...el.alertBar.querySelectorAll('button')]) {
+    if (extra !== el.alertAction) extra.remove();
+  }
+}
+
 function hideAlert() {
   el.alertBar.hidden = true;
   el.alertAction.onclick = null;
+  clearExtraAlertButtons();
 }
 
 function renderFfmpegStatus() {
@@ -1210,6 +1271,7 @@ async function drainQueue() {
     const done = toast(`Exported "${next.name}" (${formatBytes(result.size)}). Click to show it.`, 'ok', 9000);
     done.style.cursor = 'pointer';
     done.addEventListener('click', () => window.api.shell.reveal(result.outputPath));
+    maybeAskForDonation();
   } else if (result.cancelled) {
     toast(`Cancelled "${next.name}".`, 'warn');
   } else {
@@ -1312,6 +1374,13 @@ function wireEvents() {
   el.btnAboutDiscord.addEventListener('click', () => window.api.shell.openExternal(links.discord));
   el.btnAboutRepo.addEventListener('click', () => window.api.shell.openExternal(links.releases));
   el.btnDiscord.addEventListener('click', () => window.api.shell.openExternal(links.discord));
+
+  // Donation links stay hidden entirely until a page is configured.
+  if (links.donate) {
+    el.btnAboutDonate.hidden = false;
+    el.donateBlurb.hidden = false;
+    el.btnAboutDonate.addEventListener('click', () => window.api.shell.openExternal(links.donate));
+  }
 
   for (const tab of el.helpTabs) {
     tab.addEventListener('click', () => {

@@ -8,7 +8,6 @@ const el = {
   setTheme: $('#set-theme'),
   setSplash: $('#set-splash'),
   btnAbout: $('#btn-about'),
-  btnDiscord: $('#btn-discord'),
   aboutDialog: $('#about-dialog'),
   aboutVersion: $('#about-version'),
   aboutUpdate: $('#about-update'),
@@ -24,10 +23,6 @@ const el = {
   alertText: $('#alert-text'),
   alertAction: $('#alert-action'),
 
-  captionDialog: $('#caption-dialog'),
-  btnCaptionStyle: $('#btn-caption-style'),
-  btnSettingsCaptions: $('#btn-settings-captions'),
-  btnCaptionClose: $('#btn-caption-close'),
   btnCaptionReset: $('#btn-caption-reset'),
   captionPreview: $('#caption-preview'),
   capFont: $('#cap-font'),
@@ -77,6 +72,7 @@ const el = {
   btnResetMix: $('#btn-reset-mix'),
 
   exportDialog: $('#export-dialog'),
+  exportTabs: document.querySelectorAll('[data-export-tab]'),
   optFormat: $('#opt-format'),
   optPreset: $('#opt-preset'),
   optQuality: $('#opt-quality'),
@@ -356,7 +352,7 @@ function renderCharacterColors() {
   }
 }
 
-function openCaptionDialog() {
+function syncCaptionControls() {
   const s = captionStyle();
   el.capFont.value = s.font;
   el.capSize.value = String(s.fontSize);
@@ -368,7 +364,6 @@ function openCaptionDialog() {
   el.capPerCharacter.checked = s.perCharacterColors !== false;
   renderCharacterColors();
   renderCaptionPreview();
-  el.captionDialog.showModal();
 }
 
 // Donations
@@ -1136,6 +1131,7 @@ async function openExportDialog() {
   state.outputPathChosen = false;
   refreshOutputName();
   updateExportSummary();
+  syncCaptionControls();
   el.exportDialog.showModal();
 }
 
@@ -1384,7 +1380,6 @@ function wireEvents() {
   el.btnAboutPage.addEventListener('click', () => window.api.shell.openExternal(links.game));
   el.btnAboutDiscord.addEventListener('click', () => window.api.shell.openExternal(links.discord));
   el.btnAboutRepo.addEventListener('click', () => window.api.shell.openExternal(links.releases));
-  el.btnDiscord.addEventListener('click', () => window.api.shell.openExternal(links.discord));
 
   // Donation links stay hidden entirely until a page is configured.
   if (links.donate) {
@@ -1402,16 +1397,16 @@ function wireEvents() {
     });
   }
 
-  // Caption appearance
-  el.btnCaptionStyle.addEventListener('click', openCaptionDialog);
-  el.btnCaptionClose.addEventListener('click', () => el.captionDialog.close());
-
-  // Also reachable from Settings: the Lines panel button only exists once a
-  // pack is open, which made the whole feature easy to miss.
-  el.btnSettingsCaptions.addEventListener('click', () => {
-    el.settingsDialog.close();
-    openCaptionDialog();
-  });
+  // Caption appearance lives on the export dialog's Captions tab, since it
+  // only affects what an export looks like.
+  for (const tab of el.exportTabs) {
+    tab.addEventListener('click', () => {
+      for (const other of el.exportTabs) other.classList.toggle('on', other === tab);
+      for (const panel of document.querySelectorAll('[data-export-panel]')) {
+        panel.hidden = panel.dataset.exportPanel !== tab.dataset.exportTab;
+      }
+    });
+  }
 
   const captionInputs = [
     [el.capFont, 'font', (v) => v],
@@ -1445,7 +1440,7 @@ function wireEvents() {
       replaceCharacterColors: true,
     });
     applyCaptionStyle();
-    openCaptionDialog();
+    syncCaptionControls();
   });
 
   el.packSearch.addEventListener('input', (e) => {

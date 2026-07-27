@@ -413,7 +413,9 @@ function runSmokeTest(win) {
         gameDir: document.getElementById('set-gamedir').value,
         alertVisible: !document.getElementById('alert-bar').hidden,
         tabs: document.querySelectorAll('.tab').length,
-        captionButton: Boolean(document.getElementById('btn-caption-style')),
+        captionTab: document.querySelectorAll('[data-export-tab]').length,
+        settingsGroups: document.querySelectorAll('.settings-group').length,
+        discordButtonGone: !document.getElementById('btn-discord'),
         donateVisible: !document.getElementById('btn-about-donate').hidden,
         donateBlurbVisible: !document.getElementById('donate-blurb').hidden,
         palettes: (() => {

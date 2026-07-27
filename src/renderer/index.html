@@ -51,7 +51,6 @@
     <div class="credit">
       <strong>Choicer Voicer Content Manager</strong>
       <span>Made by <b>@jojozagjos</b></span>
-      <button type="button" id="btn-discord">Get help on Discord</button>
     </div>
   </aside>
 
@@ -134,7 +133,6 @@
             <button id="btn-all-take" class="btn btn-small">All: your take</button>
             <button id="btn-all-original" class="btn btn-small">All: original</button>
             <button id="btn-reset-mix" class="btn btn-small">Reset mix</button>
-            <button id="btn-caption-style" class="btn btn-small">Captions…</button>
           </div>
         </div>
         <div id="line-list" class="line-list"></div>
@@ -163,216 +161,255 @@
 </div>
 
 <!-- Export dialog -->
-<dialog id="export-dialog" class="dialog">
-  <form method="dialog" class="dialog-body">
-    <h2>Export video</h2>
+<dialog id="export-dialog" class="dialog dialog-wide">
+  <form method="dialog" class="dialog-body dialog-body-tabbed">
+    <header class="dialog-head">
+      <h2>Export video</h2>
+      <p class="muted small" id="export-summary"></p>
+    </header>
 
-    <div class="grid-2">
-      <label class="field">
-        <span>Format</span>
-        <select id="opt-format" class="select">
-          <option value="mp4">MP4 (H.264 + AAC), most compatible</option>
-          <option value="mkv">MKV (H.264 + AAC)</option>
-          <option value="mov">MOV (H.264 + AAC)</option>
-          <option value="webm">WebM (VP9 + Opus)</option>
-        </select>
-      </label>
+    <nav class="seg-tabs" role="tablist">
+      <button type="button" class="seg-tab on" data-export-tab="video">Video</button>
+      <button type="button" class="seg-tab" data-export-tab="audio">Audio</button>
+      <button type="button" class="seg-tab" data-export-tab="captions">Captions</button>
+    </nav>
 
-      <label class="field">
-        <span>Size</span>
-        <select id="opt-preset" class="select">
-          <option value="source">Source (1920×1080)</option>
-          <option value="1080p">1080p</option>
-          <option value="720p">720p</option>
-          <option value="480p">480p</option>
-          <option value="vertical">Vertical 9:16 for Shorts, TikTok and Reels</option>
-          <option value="square">Square 1:1</option>
-        </select>
-      </label>
+    <div class="dialog-scroll">
 
-      <label class="field">
-        <span>Quality</span>
-        <select id="opt-quality" class="select">
-          <option value="high">High (bigger file)</option>
-          <option value="balanced" selected>Balanced</option>
-          <option value="small">Small (faster, lower quality)</option>
-        </select>
-      </label>
+      <section data-export-panel="video">
+        <div class="grid-2">
+          <label class="field">
+            <span>Format</span>
+            <select id="opt-format" class="select">
+              <option value="mp4">MP4 (H.264 + AAC), most compatible</option>
+              <option value="mkv">MKV (H.264 + AAC)</option>
+              <option value="mov">MOV (H.264 + AAC)</option>
+              <option value="webm">WebM (VP9 + Opus)</option>
+            </select>
+          </label>
 
-      <label class="field">
-        <span>Scope</span>
-        <select id="opt-scope" class="select">
-          <option value="full">Whole video</option>
-          <option value="line">Selected line only</option>
-        </select>
-      </label>
+          <label class="field">
+            <span>Size</span>
+            <select id="opt-preset" class="select">
+              <option value="source">Source (1920×1080)</option>
+              <option value="1080p">1080p</option>
+              <option value="720p">720p</option>
+              <option value="480p">480p</option>
+              <option value="vertical">Vertical 9:16 for Shorts, TikTok and Reels</option>
+              <option value="square">Square 1:1</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Quality</span>
+            <select id="opt-quality" class="select">
+              <option value="high">High (bigger file)</option>
+              <option value="balanced" selected>Balanced</option>
+              <option value="small">Small (faster, lower quality)</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>What to export</span>
+            <select id="opt-scope" class="select">
+              <option value="full">The whole video</option>
+              <option value="line">Just the selected line</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section data-export-panel="audio" hidden>
+        <label class="option-row">
+          <input type="checkbox" id="opt-normalize" />
+          <span>
+            <b>Even out the volume of your takes</b>
+            <em>Lifts quiet lines and tames loud ones so the dub sits at a consistent level.</em>
+          </span>
+        </label>
+
+        <label class="option-row">
+          <input type="checkbox" id="opt-original" />
+          <span>
+            <b>Keep the original dialogue underneath</b>
+            <em>Plays the video's own voices beneath yours. Usually off.</em>
+          </span>
+        </label>
+
+        <p class="muted small pad-top">
+          The music and dub balance comes from the sliders under the player, so what you hear in
+          the preview is what you get.
+        </p>
+      </section>
+
+      <section data-export-panel="captions" hidden>
+        <label class="option-row">
+          <input type="checkbox" id="opt-burn" />
+          <span>
+            <b>Draw captions onto the video</b>
+            <em>Permanent, and needs no subtitle support wherever you upload it.</em>
+          </span>
+        </label>
+
+        <label class="option-row">
+          <input type="checkbox" id="opt-srt" />
+          <span>
+            <b>Also save a <code>.srt</code> subtitle file</b>
+            <em>A separate file you can restyle in a video editor.</em>
+          </span>
+        </label>
+
+        <div class="caption-preview" id="caption-preview-wrap">
+          <div class="caption-preview-inner" id="caption-preview"></div>
+        </div>
+
+        <div class="grid-3">
+          <label class="field">
+            <span>Font</span>
+            <select id="cap-font" class="select">
+              <option value="Arial">Arial</option>
+              <option value="Segoe UI">Segoe UI</option>
+              <option value="Verdana">Verdana</option>
+              <option value="Tahoma">Tahoma</option>
+              <option value="Georgia">Georgia</option>
+              <option value="Impact">Impact</option>
+              <option value="Comic Sans MS">Comic Sans MS</option>
+              <option value="Courier New">Courier New</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Size</span>
+            <span class="num-field">
+              <input id="cap-size" class="num wide" type="number" min="16" max="120" step="1" value="46" />
+              <b>px</b>
+            </span>
+          </label>
+
+          <label class="field">
+            <span>Height above bottom</span>
+            <span class="num-field">
+              <input id="cap-margin" class="num wide" type="number" min="0" max="400" step="5" value="70" />
+              <b>px</b>
+            </span>
+          </label>
+
+          <label class="field">
+            <span>Text</span>
+            <input id="cap-color" class="color" type="color" value="#ffffff" />
+          </label>
+
+          <label class="field">
+            <span>Outline</span>
+            <input id="cap-outline-color" class="color" type="color" value="#000000" />
+          </label>
+
+          <label class="field">
+            <span>Outline width</span>
+            <span class="num-field">
+              <input id="cap-outline" class="num wide" type="number" min="0" max="12" step="0.5" value="3.5" />
+              <b>px</b>
+            </span>
+          </label>
+        </div>
+
+        <label class="option-row">
+          <input type="checkbox" id="cap-show-speaker" checked />
+          <span><b>Show who is speaking</b><em>Puts the character's name before their line.</em></span>
+        </label>
+
+        <label class="option-row">
+          <input type="checkbox" id="cap-per-character" checked />
+          <span><b>A colour for each character</b><em>Makes it easy to follow who is who.</em></span>
+        </label>
+
+        <div class="field">
+          <span>Character colours</span>
+          <div id="character-colors" class="character-colors"></div>
+        </div>
+
+        <button type="button" id="btn-caption-reset" class="btn btn-small">Reset captions to defaults</button>
+      </section>
+
     </div>
 
-    <fieldset class="checks">
-      <legend>Extras</legend>
-      <label class="check"><input type="checkbox" id="opt-burn" /> <span>Burn captions into the video</span></label>
-      <label class="check"><input type="checkbox" id="opt-srt" /> <span>Also write a <code>.srt</code> subtitle file</span></label>
-      <label class="check"><input type="checkbox" id="opt-normalize" /> <span>Normalise dub loudness (evens out quiet/loud takes)</span></label>
-      <label class="check"><input type="checkbox" id="opt-original" /> <span>Include the original video audio underneath</span></label>
-    </fieldset>
-
-    <label class="field">
-      <span>Save to</span>
-      <div class="path-row">
-        <input id="opt-output" class="input" type="text" readonly />
-        <button type="button" id="btn-pick-output" class="btn btn-small">Change…</button>
-      </div>
-    </label>
-
-    <p class="muted small" id="export-summary"></p>
-
-    <menu class="dialog-actions">
-      <button type="button" id="btn-export-cancel" class="btn btn-ghost">Cancel</button>
-      <button type="button" id="btn-export-start" class="btn btn-primary">Start export</button>
-    </menu>
+    <footer class="dialog-foot">
+      <label class="field">
+        <span>Save to</span>
+        <div class="path-row">
+          <input id="opt-output" class="input" type="text" readonly />
+          <button type="button" id="btn-pick-output" class="btn btn-small">Change…</button>
+        </div>
+      </label>
+      <menu class="dialog-actions">
+        <button type="button" id="btn-export-cancel" class="btn btn-ghost">Cancel</button>
+        <button type="button" id="btn-export-start" class="btn btn-primary">Start export</button>
+      </menu>
+    </footer>
   </form>
 </dialog>
 
-<!-- Settings dialog -->
+<!-- Settings -->
 <dialog id="settings-dialog" class="dialog">
   <form method="dialog" class="dialog-body">
-    <h2>Settings</h2>
+    <header class="dialog-head">
+      <h2>Settings</h2>
+    </header>
 
-    <label class="field">
-      <span>Appearance</span>
-      <select id="set-theme" class="select">
-        <option value="system">Match my system</option>
-        <option value="dark">Dark</option>
-        <option value="light">Light</option>
-      </select>
-    </label>
+    <div class="dialog-scroll">
+      <section class="settings-group">
+        <h3>Appearance</h3>
+        <label class="field">
+          <span>Theme</span>
+          <select id="set-theme" class="select">
+            <option value="system">Match my system</option>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </label>
+        <label class="option-row">
+          <input type="checkbox" id="set-splash" />
+          <span><b>Show the splash screen at startup</b></span>
+        </label>
+      </section>
 
-    <label class="check">
-      <input type="checkbox" id="set-splash" /> <span>Show the splash screen at startup</span>
-    </label>
+      <section class="settings-group">
+        <h3>Folders</h3>
+        <label class="field">
+          <span>Where the game keeps its files</span>
+          <div class="path-row">
+            <input id="set-gamedir" class="input" type="text" readonly />
+            <button type="button" id="btn-pick-gamedir" class="btn btn-small">Change…</button>
+          </div>
+        </label>
+        <label class="field">
+          <span>Where exported videos go</span>
+          <div class="path-row">
+            <input id="set-outdir" class="input" type="text" readonly />
+            <button type="button" id="btn-pick-outdir" class="btn btn-small">Change…</button>
+          </div>
+        </label>
+      </section>
 
-    <label class="field">
-      <span>Captions and character colours</span>
-      <div class="path-row">
-        <span class="muted small" style="flex:1">Font, size, colour, outline, and a colour per character.</span>
-        <button type="button" id="btn-settings-captions" class="btn btn-small">Edit captions…</button>
-      </div>
-    </label>
-
-    <label class="field">
-      <span>Game folder</span>
-      <div class="path-row">
-        <input id="set-gamedir" class="input" type="text" readonly />
-        <button type="button" id="btn-pick-gamedir" class="btn btn-small">Change…</button>
-      </div>
-    </label>
-
-    <label class="field">
-      <span>Default export folder</span>
-      <div class="path-row">
-        <input id="set-outdir" class="input" type="text" readonly />
-        <button type="button" id="btn-pick-outdir" class="btn btn-small">Change…</button>
-      </div>
-    </label>
-
-    <label class="field">
-      <span>ffmpeg (leave blank to use the bundled or system copy)</span>
-      <div class="path-row">
-        <input id="set-ffmpeg" class="input" type="text" readonly placeholder="auto" />
-        <button type="button" id="btn-pick-ffmpeg" class="btn btn-small">Locate…</button>
-        <button type="button" id="btn-clear-ffmpeg" class="btn btn-small">Auto</button>
-      </div>
-    </label>
-
-    <p id="settings-ffmpeg-status" class="muted small"></p>
-
-    <menu class="dialog-actions">
-      <button type="button" id="btn-settings-close" class="btn btn-primary">Done</button>
-    </menu>
-  </form>
-</dialog>
-
-<!-- Caption appearance and character colours -->
-<dialog id="caption-dialog" class="dialog dialog-wide">
-  <form method="dialog" class="dialog-body">
-    <h2>Captions</h2>
-    <p class="muted small">Applies to the preview and to burned-in captions when you export.</p>
-
-    <div class="caption-preview" id="caption-preview-wrap">
-      <div class="caption-preview-inner" id="caption-preview"></div>
+      <section class="settings-group">
+        <h3>Advanced</h3>
+        <label class="field">
+          <span>Video tools (ffmpeg). Leave blank to use the bundled copy</span>
+          <div class="path-row">
+            <input id="set-ffmpeg" class="input" type="text" readonly placeholder="Using the bundled copy" />
+            <button type="button" id="btn-pick-ffmpeg" class="btn btn-small">Locate…</button>
+            <button type="button" id="btn-clear-ffmpeg" class="btn btn-small">Reset</button>
+          </div>
+        </label>
+        <p id="settings-ffmpeg-status" class="muted small"></p>
+      </section>
     </div>
 
-    <div class="grid-3">
-      <label class="field">
-        <span>Font</span>
-        <select id="cap-font" class="select">
-          <option value="Arial">Arial</option>
-          <option value="Segoe UI">Segoe UI</option>
-          <option value="Verdana">Verdana</option>
-          <option value="Tahoma">Tahoma</option>
-          <option value="Georgia">Georgia</option>
-          <option value="Impact">Impact</option>
-          <option value="Comic Sans MS">Comic Sans MS</option>
-          <option value="Courier New">Courier New</option>
-        </select>
-      </label>
-
-      <label class="field">
-        <span>Size</span>
-        <span class="num-field">
-          <input id="cap-size" class="num wide" type="number" min="16" max="120" step="1" value="46" />
-          <b>px</b>
-        </span>
-      </label>
-
-      <label class="field">
-        <span>Distance from bottom</span>
-        <span class="num-field">
-          <input id="cap-margin" class="num wide" type="number" min="0" max="400" step="5" value="70" />
-          <b>px</b>
-        </span>
-      </label>
-
-      <label class="field">
-        <span>Text colour</span>
-        <input id="cap-color" class="color" type="color" value="#ffffff" />
-      </label>
-
-      <label class="field">
-        <span>Outline colour</span>
-        <input id="cap-outline-color" class="color" type="color" value="#000000" />
-      </label>
-
-      <label class="field">
-        <span>Outline width</span>
-        <span class="num-field">
-          <input id="cap-outline" class="num wide" type="number" min="0" max="12" step="0.5" value="3.5" />
-          <b>px</b>
-        </span>
-      </label>
-    </div>
-
-    <fieldset class="checks">
-      <legend>Speaker names</legend>
-      <label class="check">
-        <input type="checkbox" id="cap-show-speaker" checked />
-        <span>Show who is speaking before the line</span>
-      </label>
-      <label class="check">
-        <input type="checkbox" id="cap-per-character" checked />
-        <span>Give each character their own colour</span>
-      </label>
-    </fieldset>
-
-    <div class="field">
-      <span>Character colours</span>
-      <div id="character-colors" class="character-colors"></div>
-    </div>
-
-    <menu class="dialog-actions">
-      <button type="button" id="btn-caption-reset" class="btn btn-ghost">Reset to defaults</button>
-      <button type="button" id="btn-caption-close" class="btn btn-primary">Done</button>
-    </menu>
+    <footer class="dialog-foot">
+      <menu class="dialog-actions">
+        <button type="button" id="btn-settings-close" class="btn btn-primary">Done</button>
+      </menu>
+    </footer>
   </form>
 </dialog>
 

@@ -8,13 +8,35 @@ const el = {
   setTheme: $('#set-theme'),
   setSplash: $('#set-splash'),
   btnAbout: $('#btn-about'),
+  btnDiscord: $('#btn-discord'),
   aboutDialog: $('#about-dialog'),
   aboutVersion: $('#about-version'),
+  aboutUpdate: $('#about-update'),
   btnAboutClose: $('#btn-about-close'),
   btnAboutPage: $('#btn-about-page'),
+  btnAboutDiscord: $('#btn-about-discord'),
+  btnAboutRepo: $('#btn-about-repo'),
+  helpTabs: document.querySelectorAll('.help-tab'),
 
-  gameDir: $('#game-dir'),
-  ffmpegPill: $('#ffmpeg-pill'),
+  alertBar: $('#alert-bar'),
+  alertText: $('#alert-text'),
+  alertAction: $('#alert-action'),
+
+  captionDialog: $('#caption-dialog'),
+  btnCaptionStyle: $('#btn-caption-style'),
+  btnCaptionClose: $('#btn-caption-close'),
+  btnCaptionReset: $('#btn-caption-reset'),
+  captionPreview: $('#caption-preview'),
+  capFont: $('#cap-font'),
+  capSize: $('#cap-size'),
+  capMargin: $('#cap-margin'),
+  capColor: $('#cap-color'),
+  capOutlineColor: $('#cap-outline-color'),
+  capOutline: $('#cap-outline'),
+  capShowSpeaker: $('#cap-show-speaker'),
+  capPerCharacter: $('#cap-per-character'),
+  characterColors: $('#character-colors'),
+
   btnRefresh: $('#btn-refresh'),
   btnSettings: $('#btn-settings'),
 
@@ -190,6 +212,162 @@ systemDark.addEventListener('change', () => {
   if (state.settings && (state.settings.theme || 'system') === 'system') applyTheme('system');
 });
 
+// Captions and character colours
+
+const DEFAULT_CAPTION_STYLE = {
+  font: 'Arial',
+  fontSize: 46,
+  marginV: 70,
+  color: '#ffffff',
+  outlineColor: '#000000',
+  outline: 3.5,
+  showSpeaker: true,
+  perCharacterColors: true,
+};
+
+// Picked to stay legible on video in both light and dark scenes, and to stay
+// distinguishable for the most common forms of colour blindness.
+const CHARACTER_PALETTE = [
+  '#7fdcff', '#ffd166', '#8affc1', '#ff9ecd', '#c2a3ff',
+  '#ffb27f', '#9fe8ff', '#ffe98a', '#b8ff9e', '#ff8f8f',
+];
+
+function captionStyle() {
+  return { ...DEFAULT_CAPTION_STYLE, ...(state.settings.captionStyle || {}) };
+}
+
+/**
+ * A character's colour: whatever you picked, else one from the palette chosen
+ * by name so the same character keeps the same colour between sessions.
+ */
+function characterColor(name) {
+  const style = captionStyle();
+  if (!style.perCharacterColors || !name) return style.color;
+
+  const overrides = state.settings.characterColors || {};
+  if (overrides[name]) return overrides[name];
+
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  return CHARACTER_PALETTE[hash % CHARACTER_PALETTE.length];
+}
+
+/** Distinct speakers in the loaded pack, in the order they first appear. */
+function packCharacters() {
+  const seen = [];
+  for (const item of player.items) {
+    if (item.character && !seen.includes(item.character)) seen.push(item.character);
+  }
+  return seen;
+}
+
+async function saveCaptionStyle(patch) {
+  state.settings = await window.api.settings.set({
+    captionStyle: { ...captionStyle(), ...patch },
+  });
+  applyCaptionStyle();
+}
+
+/** Pushes the style onto the preview overlay through CSS custom properties. */
+function applyCaptionStyle() {
+  const s = captionStyle();
+  const root = el.caption.style;
+  root.setProperty('--cap-font', s.font);
+  root.setProperty('--cap-color', s.color);
+  // The overlay is sized against a 1080-tall frame, same as the export.
+  const scale = (el.video.videoHeight || 1080) / 1080;
+  root.setProperty('--cap-size', `${Math.max(11, s.fontSize * scale * 0.62)}px`);
+  root.setProperty('--cap-bottom', `${Math.max(6, s.marginV * scale * 0.62)}px`);
+  root.setProperty(
+    '--cap-shadow',
+    s.outline > 0 ? buildTextOutline(s.outlineColor, Math.max(1, s.outline * scale * 0.5)) : 'none'
+  );
+}
+
+/** CSS has no text outline, so it is faked with shadows in eight directions. */
+function buildTextOutline(color, width) {
+  const steps = [];
+  for (let a = 0; a < 360; a += 45) {
+    const rad = (a * Math.PI) / 180;
+    steps.push(`${(Math.cos(rad) * width).toFixed(2)}px ${(Math.sin(rad) * width).toFixed(2)}px 0 ${color}`);
+  }
+  return steps.join(', ');
+}
+
+function renderCaptionPreview() {
+  const s = captionStyle();
+  const name = packCharacters()[0] || 'Caine';
+  const speaker = s.showSpeaker
+    ? `<b style="color:${characterColor(name)}">${escapeHtml(name)}</b>`
+    : '';
+  el.captionPreview.innerHTML = `${speaker}${escapeHtml('This is what your captions will look like.')}`;
+  el.captionPreview.style.fontFamily = s.font;
+  el.captionPreview.style.color = s.color;
+  el.captionPreview.style.fontSize = `${Math.max(12, s.fontSize * 0.42)}px`;
+  el.captionPreview.style.textShadow = s.outline > 0
+    ? buildTextOutline(s.outlineColor, Math.max(1, s.outline * 0.42))
+    : 'none';
+  el.captionPreview.style.paddingBottom = `${Math.max(0, s.marginV * 0.24)}px`;
+}
+
+function renderCharacterColors() {
+  const names = packCharacters();
+  el.characterColors.innerHTML = '';
+
+  if (!names.length) {
+    el.characterColors.innerHTML = '<p class="muted small">Open a pack to see its characters.</p>';
+    return;
+  }
+
+  const overrides = state.settings.characterColors || {};
+  const enabled = captionStyle().perCharacterColors;
+
+  for (const name of names) {
+    const row = document.createElement('div');
+    row.className = 'character-row';
+    row.innerHTML = `
+      <input type="color" class="color" value="${characterColor(name)}" ${enabled ? '' : 'disabled'} />
+      <span class="character-name">${escapeHtml(name)}</span>
+      ${overrides[name] ? '<button type="button" class="link-btn">reset</button>' : ''}`;
+
+    row.querySelector('input').addEventListener('change', async (event) => {
+      state.settings = await window.api.settings.set({
+        characterColors: { ...(state.settings.characterColors || {}), [name]: event.target.value },
+      });
+      renderCharacterColors();
+      renderCaptionPreview();
+    });
+
+    const reset = row.querySelector('.link-btn');
+    if (reset) {
+      reset.addEventListener('click', async () => {
+        const next = { ...(state.settings.characterColors || {}) };
+        delete next[name];
+        state.settings = await window.api.settings.set({ characterColors: next, replaceCharacterColors: true });
+        renderCharacterColors();
+        renderCaptionPreview();
+      });
+    }
+
+    el.characterColors.append(row);
+  }
+}
+
+function openCaptionDialog() {
+  const s = captionStyle();
+  el.capFont.value = s.font;
+  el.capSize.value = String(s.fontSize);
+  el.capMargin.value = String(s.marginV);
+  el.capColor.value = s.color;
+  el.capOutlineColor.value = s.outlineColor;
+  el.capOutline.value = String(s.outline);
+  el.capShowSpeaker.checked = s.showSpeaker !== false;
+  el.capPerCharacter.checked = s.perCharacterColors !== false;
+  renderCharacterColors();
+  renderCaptionPreview();
+  el.captionDialog.showModal();
+}
+
 // Splash
 
 const SPLASH_MIN_MS = 1700;
@@ -216,44 +394,94 @@ async function boot() {
 
   renderFfmpegStatus();
   applyExportDefaults();
+  applyCaptionStyle();
   await rescan(state.settings.gameDir || state.info.defaultGameDir);
   wireEvents();
   requestAnimationFrame(tick);
 
   if (wantSplash) setTimeout(dismissSplash, Math.max(0, splashUntil - Date.now()));
+
+  checkForUpdate();
+}
+
+/**
+ * Looks for a newer release in the background. Nothing is downloaded; if one
+ * exists you get a dismissible note and a link to the releases page.
+ */
+async function checkForUpdate() {
+  const result = await window.api.checkUpdate().catch(() => null);
+  if (!result || !result.ok) return;
+
+  if (!result.newer) {
+    el.aboutUpdate.textContent = ' (up to date)';
+    return;
+  }
+
+  el.aboutUpdate.innerHTML = ` — <b>${escapeHtml(result.latest)} available</b>`;
+  showAlert(
+    `Version ${result.latest} is out. You have ${result.current}.`,
+    'Get it',
+    () => window.api.shell.openExternal(result.url)
+  );
+}
+
+/**
+ * The header used to carry a permanent ffmpeg version string and the game
+ * path, which mean nothing to most people. Status now only appears when
+ * something actually needs attention, with a button that fixes it.
+ */
+function showAlert(message, actionLabel, onAction) {
+  el.alertText.textContent = message;
+  el.alertBar.hidden = false;
+  el.alertAction.hidden = !actionLabel;
+  if (actionLabel) {
+    el.alertAction.textContent = actionLabel;
+    el.alertAction.onclick = onAction;
+  }
+}
+
+function hideAlert() {
+  el.alertBar.hidden = true;
+  el.alertAction.onclick = null;
 }
 
 function renderFfmpegStatus() {
   const { ffmpeg } = state.info;
-  if (ffmpeg.ok) {
-    el.ffmpegPill.textContent = `ffmpeg ${ffmpeg.version || 'ready'}`;
-    el.ffmpegPill.className = 'pill pill-ok';
-  } else {
-    el.ffmpegPill.textContent = 'ffmpeg missing';
-    el.ffmpegPill.className = 'pill pill-bad';
-  }
   el.settingsFfmpegStatus.textContent = ffmpeg.ok
     ? `Using: ${ffmpeg.ffmpeg}`
     : 'ffmpeg was not found. Exporting will not work until it is installed or located here.';
+
+  if (!ffmpeg.ok) {
+    showAlert('Video tools are missing, so exporting will not work.', 'Fix in Settings', openSettings);
+  }
 }
 
 async function rescan(dir) {
   try {
     state.model = await window.api.game.scan(dir);
     state.settings = await window.api.settings.get();
-    el.gameDir.textContent = state.model.gameDir;
-    el.gameDir.title = state.model.gameDir;
+    el.setGameDir.value = state.model.gameDir;
     renderPacks();
 
     const withRecordings = state.model.packs.filter((p) => p.sessions.length);
     if (!state.model.packs.length) {
-      toast('No voice packs found in that folder.', 'warn');
+      showAlert('No voice packs found in that folder.', 'Choose folder', pickGameDir);
     } else if (!withRecordings.length) {
-      toast('Packs found, but no recordings yet. Dub something in the game first.', 'warn', 6000);
+      showAlert(
+        'Packs found, but you have not recorded any dubs yet. Record one in the game first.',
+        'How it works',
+        () => el.aboutDialog.showModal()
+      );
+    } else if (state.info.ffmpeg.ok) {
+      hideAlert();
     }
   } catch (err) {
-    el.gameDir.textContent = 'Game folder not found. Click here to choose it.';
-    toast(err.message, 'error', 8000);
+    showAlert(
+      'Could not find The Choicer Voicer’s files. Point the app at your game folder.',
+      'Choose folder',
+      pickGameDir
+    );
+    console.warn(err.message);
   }
 }
 
@@ -668,10 +896,12 @@ function tick() {
 
   const active = player.activeItem(time);
   if (active && active.caption) {
+    const showSpeaker = captionStyle().showSpeaker !== false;
+    const speaker = showSpeaker && active.character
+      ? `<b style="color:${characterColor(active.character)}">${escapeHtml(active.character)}</b>`
+      : '';
     el.caption.hidden = false;
-    el.caption.innerHTML = active.character
-      ? `<b>${escapeHtml(active.character)}</b>${escapeHtml(active.caption)}`
-      : escapeHtml(active.caption);
+    el.caption.innerHTML = `${speaker}${escapeHtml(active.caption)}`;
   } else {
     el.caption.hidden = true;
   }
@@ -786,6 +1016,7 @@ function applyExportDefaults() {
 }
 
 function currentExportOptions() {
+  const style = captionStyle();
   return {
     format: el.optFormat.value,
     preset: el.optPreset.value,
@@ -796,6 +1027,13 @@ function currentExportOptions() {
     includeOriginalAudio: el.optOriginal.checked,
     backingVolume: Number(el.volBacking.value) / 100,
     dubVolume: Number(el.volDub.value) / 100,
+    // Burned-in captions match what the preview showed.
+    captionStyle: {
+      ...style,
+      characterColors: style.perCharacterColors
+        ? Object.fromEntries(packCharacters().map((n) => [n, characterColor(n)]))
+        : {},
+    },
   };
 }
 
@@ -1068,8 +1306,59 @@ function wireEvents() {
 
   el.btnAbout.addEventListener('click', () => el.aboutDialog.showModal());
   el.btnAboutClose.addEventListener('click', () => el.aboutDialog.close());
-  el.btnAboutPage.addEventListener('click', () => {
-    window.api.shell.openExternal('https://yeahmaybe.itch.io/the-choicer-voicer');
+
+  const links = (state.info && state.info.links) || {};
+  el.btnAboutPage.addEventListener('click', () => window.api.shell.openExternal(links.game));
+  el.btnAboutDiscord.addEventListener('click', () => window.api.shell.openExternal(links.discord));
+  el.btnAboutRepo.addEventListener('click', () => window.api.shell.openExternal(links.releases));
+  el.btnDiscord.addEventListener('click', () => window.api.shell.openExternal(links.discord));
+
+  for (const tab of el.helpTabs) {
+    tab.addEventListener('click', () => {
+      for (const other of el.helpTabs) other.classList.toggle('on', other === tab);
+      for (const panel of document.querySelectorAll('[data-help-panel]')) {
+        panel.hidden = panel.dataset.helpPanel !== tab.dataset.help;
+      }
+    });
+  }
+
+  // Caption appearance
+  el.btnCaptionStyle.addEventListener('click', openCaptionDialog);
+  el.btnCaptionClose.addEventListener('click', () => el.captionDialog.close());
+
+  const captionInputs = [
+    [el.capFont, 'font', (v) => v],
+    [el.capSize, 'fontSize', Number],
+    [el.capMargin, 'marginV', Number],
+    [el.capColor, 'color', (v) => v],
+    [el.capOutlineColor, 'outlineColor', (v) => v],
+    [el.capOutline, 'outline', Number],
+  ];
+  for (const [input, key, cast] of captionInputs) {
+    input.addEventListener('input', async () => {
+      await saveCaptionStyle({ [key]: cast(input.value) });
+      renderCaptionPreview();
+    });
+  }
+
+  el.capShowSpeaker.addEventListener('change', async () => {
+    await saveCaptionStyle({ showSpeaker: el.capShowSpeaker.checked });
+    renderCaptionPreview();
+  });
+  el.capPerCharacter.addEventListener('change', async () => {
+    await saveCaptionStyle({ perCharacterColors: el.capPerCharacter.checked });
+    renderCharacterColors();
+    renderCaptionPreview();
+  });
+
+  el.btnCaptionReset.addEventListener('click', async () => {
+    state.settings = await window.api.settings.set({
+      captionStyle: { ...DEFAULT_CAPTION_STYLE },
+      characterColors: {},
+      replaceCharacterColors: true,
+    });
+    applyCaptionStyle();
+    openCaptionDialog();
   });
 
   el.packSearch.addEventListener('input', (e) => {
@@ -1077,7 +1366,6 @@ function wireEvents() {
     renderPacks();
   });
 
-  el.gameDir.addEventListener('click', pickGameDir);
   el.btnRefresh.addEventListener('click', () => rescan(state.settings.gameDir));
   el.btnSettings.addEventListener('click', openSettings);
 

@@ -4,28 +4,26 @@
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; img-src 'self' cvmedia: data:; media-src 'self' cvmedia:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' cvmedia:;" />
-  <title>Choicer Voicer Export</title>
+  <title>Choicer Voicer Content Manager</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
 
 <div id="splash" class="splash">
-  <div class="splash-mark">CV</div>
-  <h1 class="splash-fade">Choicer Voicer Export</h1>
-  <p class="splash-by splash-fade">by <b>Joseph Slade</b></p>
-  <p class="splash-note splash-fade">Preview and export your dubs as video</p>
+  <div class="splash-mark">🎙️</div>
+  <h1 class="splash-fade">Choicer Voicer Content Manager</h1>
+  <p class="splash-by splash-fade">by <b>@jojozagjos</b></p>
+  <p class="splash-note splash-fade">Turn your dubs into videos you can share</p>
 </div>
 
 <header class="topbar">
-  <div class="brand">
-    <span class="brand-mark">CV</span>
-    <div class="brand-text">
-      <h1>Choicer Voicer Export</h1>
-      <button id="game-dir" class="game-dir" title="Click to change the game folder">Locating game data…</button>
-    </div>
-  </div>
+  <nav class="tabs" role="tablist">
+    <button class="tab on" role="tab" data-tab="dubs">Dubs</button>
+  </nav>
+
+  <p class="tagline">Preview a dub you recorded, then export it as a video.</p>
+
   <div class="topbar-actions">
-    <span id="ffmpeg-pill" class="pill pill-muted">ffmpeg…</span>
     <div class="theme-toggle" role="group" aria-label="Colour theme">
       <button type="button" data-theme-set="light" title="Light mode">☀</button>
       <button type="button" data-theme-set="system" title="Match my system">◐</button>
@@ -33,8 +31,14 @@
     </div>
     <button id="btn-refresh" class="btn btn-ghost" title="Rescan the game folder (R)">Rescan</button>
     <button id="btn-settings" class="btn btn-ghost">Settings</button>
+    <button id="btn-about" class="btn btn-ghost" title="About, setup and credits">Help</button>
   </div>
 </header>
+
+<div id="alert-bar" class="alert-bar" hidden>
+  <span id="alert-text"></span>
+  <button id="alert-action" class="btn btn-small"></button>
+</div>
 
 <main class="layout">
 
@@ -45,9 +49,9 @@
     </div>
     <div id="pack-list" class="pack-list"></div>
     <div class="credit">
-      <strong>Choicer Voicer Export</strong>
-      <span>Made by Joseph Slade</span>
-      <button type="button" id="btn-about">About &amp; credits</button>
+      <strong>Choicer Voicer Content Manager</strong>
+      <span>Made by <b>@jojozagjos</b></span>
+      <button type="button" id="btn-discord">Get help on Discord</button>
     </div>
   </aside>
 
@@ -57,8 +61,11 @@
     <div id="empty-state" class="empty-state">
       <div class="empty-art">🎙️</div>
       <h2>Pick a pack to get started</h2>
-      <p>Your recorded dubs live in the game's <code>recordings</code> folder. Choose a pack on the
-         left, pick a take, preview it, then export it as a video.</p>
+      <p>This app finds the dubs you recorded in <b>The Choicer Voicer</b>, plays them back over the
+         original video, and exports the result as a video file you can upload or share.</p>
+      <p class="muted small">Choose a pack on the left, pick which recording session to use, press
+         play to check it, then hit <b>Export video</b>. New to this? Open <b>Help</b> in the top
+         right.</p>
     </div>
 
     <div id="workspace" class="workspace" hidden>
@@ -127,6 +134,7 @@
             <button id="btn-all-take" class="btn btn-small">All: your take</button>
             <button id="btn-all-original" class="btn btn-small">All: original</button>
             <button id="btn-reset-mix" class="btn btn-small">Reset mix</button>
+            <button id="btn-caption-style" class="btn btn-small">Captions…</button>
           </div>
         </div>
         <div id="line-list" class="line-list"></div>
@@ -276,32 +284,193 @@
   </form>
 </dialog>
 
-<!-- About -->
-<dialog id="about-dialog" class="dialog">
+<!-- Caption appearance and character colours -->
+<dialog id="caption-dialog" class="dialog dialog-wide">
+  <form method="dialog" class="dialog-body">
+    <h2>Captions</h2>
+    <p class="muted small">Applies to the preview and to burned-in captions when you export.</p>
+
+    <div class="caption-preview" id="caption-preview-wrap">
+      <div class="caption-preview-inner" id="caption-preview"></div>
+    </div>
+
+    <div class="grid-3">
+      <label class="field">
+        <span>Font</span>
+        <select id="cap-font" class="select">
+          <option value="Arial">Arial</option>
+          <option value="Segoe UI">Segoe UI</option>
+          <option value="Verdana">Verdana</option>
+          <option value="Tahoma">Tahoma</option>
+          <option value="Georgia">Georgia</option>
+          <option value="Impact">Impact</option>
+          <option value="Comic Sans MS">Comic Sans MS</option>
+          <option value="Courier New">Courier New</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span>Size</span>
+        <span class="num-field">
+          <input id="cap-size" class="num wide" type="number" min="16" max="120" step="1" value="46" />
+          <b>px</b>
+        </span>
+      </label>
+
+      <label class="field">
+        <span>Distance from bottom</span>
+        <span class="num-field">
+          <input id="cap-margin" class="num wide" type="number" min="0" max="400" step="5" value="70" />
+          <b>px</b>
+        </span>
+      </label>
+
+      <label class="field">
+        <span>Text colour</span>
+        <input id="cap-color" class="color" type="color" value="#ffffff" />
+      </label>
+
+      <label class="field">
+        <span>Outline colour</span>
+        <input id="cap-outline-color" class="color" type="color" value="#000000" />
+      </label>
+
+      <label class="field">
+        <span>Outline width</span>
+        <span class="num-field">
+          <input id="cap-outline" class="num wide" type="number" min="0" max="12" step="0.5" value="3.5" />
+          <b>px</b>
+        </span>
+      </label>
+    </div>
+
+    <fieldset class="checks">
+      <legend>Speaker names</legend>
+      <label class="check">
+        <input type="checkbox" id="cap-show-speaker" checked />
+        <span>Show who is speaking before the line</span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="cap-per-character" checked />
+        <span>Give each character their own colour</span>
+      </label>
+    </fieldset>
+
+    <div class="field">
+      <span>Character colours</span>
+      <div id="character-colors" class="character-colors"></div>
+    </div>
+
+    <menu class="dialog-actions">
+      <button type="button" id="btn-caption-reset" class="btn btn-ghost">Reset to defaults</button>
+      <button type="button" id="btn-caption-close" class="btn btn-primary">Done</button>
+    </menu>
+  </form>
+</dialog>
+
+<!-- Help, setup and credits -->
+<dialog id="about-dialog" class="dialog dialog-wide">
   <form method="dialog" class="dialog-body">
     <div class="about-head">
-      <span class="brand-mark">CV</span>
+      <span class="brand-mark">🎙️</span>
       <div class="about-lines">
-        <h2>Choicer Voicer Export</h2>
-        <span class="muted small">Version <b id="about-version">1.0.0</b></span>
+        <h2>Choicer Voicer Content Manager</h2>
+        <span class="muted small">
+          Version <b id="about-version">1.1.0</b>
+          <span id="about-update" class="update-note"></span>
+        </span>
       </div>
     </div>
 
-    <p>A companion tool for <b>The Choicer Voicer</b> that rebuilds the dubs you record in the
-       game: your takes laid over the backing track and the original video, then exports them
-       as a shareable video file.</p>
+    <nav class="help-tabs" role="tablist">
+      <button type="button" class="help-tab on" data-help="start">Getting started</button>
+      <button type="button" class="help-tab" data-help="export">Exporting</button>
+      <button type="button" class="help-tab" data-help="trouble">Troubleshooting</button>
+      <button type="button" class="help-tab" data-help="credits">Credits</button>
+    </nav>
 
-    <p class="muted small">
-      Built by <b>Joseph Slade</b>.<br />
-      <em>The Choicer Voicer</em> is made by YeahMaybe; voice packs belong to their respective
-      authors. This tool only reads the files the game has already written to your own computer.
-      It is not affiliated with or endorsed by the game's developers.
-    </p>
+    <section class="help-panel" data-help-panel="start">
+      <p>This app reads the dubs you have already recorded in <b>The Choicer Voicer</b> and turns
+         them into video files. It never changes the game or your recordings.</p>
+      <ol class="steps">
+        <li><b>Record a dub in the game first.</b> Play a voice pack and record your lines. The game
+            saves every take automatically. Nothing shows up here until you have done this at least
+            once.</li>
+        <li><b>Open this app.</b> It finds the game's data folder on its own. If it cannot, open
+            <b>Settings</b> and point it at the folder containing <code>packs_voice</code>.</li>
+        <li><b>Pick a pack</b> from the list on the left. The first time you open one it spends a
+            few seconds preparing the video for preview. That only happens once per pack.</li>
+        <li><b>Choose a recording session.</b> If you dubbed the same pack more than once, each
+            attempt is listed with its date and how many lines it has.</li>
+        <li><b>Press play</b> to hear your dub over the original video, then adjust anything that
+            sounds off.</li>
+        <li><b>Hit Export video</b>, choose your settings, and save.</li>
+      </ol>
+    </section>
 
-    <p class="muted small">Video encoding is handled by <b>ffmpeg</b> (LGPL/GPL).</p>
+    <section class="help-panel" data-help-panel="export" hidden>
+      <p>Every line has its own controls in the list on the right:</p>
+      <ul class="bullets">
+        <li><b>Yours / Original / Off</b> swaps a single line between your recording, the original
+            dialogue, or silence. Handy when one line did not come out well.</li>
+        <li><b>Volume</b> raises or lowers just that line. Type a number for an exact value.</li>
+        <li><b>Timing</b> shifts a line earlier or later in milliseconds if your take starts slightly
+            off. Negative numbers are earlier.</li>
+        <li><b>Music</b> and <b>Dub</b> at the bottom set the overall balance between the backing
+            track and your voice.</li>
+      </ul>
+      <p>In the export window:</p>
+      <ul class="bullets">
+        <li><b>MP4</b> works everywhere. Use WebM only if you specifically need it.</li>
+        <li><b>Vertical 9:16</b> reformats for Shorts, TikTok and Reels, filling the sides with a
+            blurred copy of the video instead of black bars.</li>
+        <li><b>Burn captions</b> draws the script onto the video permanently. Leave it off and tick
+            the <code>.srt</code> box instead if you would rather add captions in an editor.</li>
+        <li><b>Normalise dub loudness</b> evens out lines recorded too quietly or too loudly.</li>
+        <li><b>Selected line only</b> exports a single line as a short clip. Click a line first.</li>
+      </ul>
+      <p class="muted small">Exports run one at a time. Queue as many as you like and they will
+         work through in order.</p>
+    </section>
+
+    <section class="help-panel" data-help-panel="trouble" hidden>
+      <ul class="bullets">
+        <li><b>No packs listed.</b> The game folder is wrong, or you have not recorded a dub yet.
+            Check the folder in Settings.</li>
+        <li><b>A pack shows "no dubs yet".</b> That pack is installed but you have not recorded for
+            it. Do that in the game first.</li>
+        <li><b>Export button is greyed out.</b> The pack is still loading. Wait for the spinner to
+            finish, then try again.</li>
+        <li><b>Preview is black.</b> Switch packs and back again to rebuild the preview. If it keeps
+            happening, tell me on Discord.</li>
+        <li><b>Export failed.</b> Usually a full disk or a folder you do not have permission to write
+            to. Try exporting somewhere like your Videos folder.</li>
+        <li><b>Windows warned about the app on first run.</b> That is because the app is not signed
+            with a paid certificate. Click <i>More info</i> then <i>Run anyway</i>.</li>
+      </ul>
+    </section>
+
+    <section class="help-panel" data-help-panel="credits" hidden>
+      <p>Made by <b>@jojozagjos</b>.</p>
+      <p class="muted small">
+        <em>The Choicer Voicer</em> is a game by <b>Yeah Maybe</b> and is not affiliated with this
+        app, nor has it endorsed it. Voice packs and their audio, art and captions belong to whoever
+        made them. Check with a pack's author before publishing videos made from their work.
+      </p>
+      <p class="muted small">
+        This app only reads files the game has already written on your own computer. It does not
+        modify the game, its files, or your recordings.
+      </p>
+      <p class="muted small">
+        Video and audio processing by <b>ffmpeg</b>, used under the GPL. The app ships ffmpeg's
+        licence alongside it.
+      </p>
+    </section>
 
     <menu class="dialog-actions">
-      <button type="button" id="btn-about-page" class="btn btn-ghost">Game on itch.io</button>
+      <button type="button" id="btn-about-discord" class="btn btn-ghost">Discord</button>
+      <button type="button" id="btn-about-repo" class="btn btn-ghost">Updates</button>
+      <button type="button" id="btn-about-page" class="btn btn-ghost">The game</button>
       <button type="button" id="btn-about-close" class="btn btn-primary">Close</button>
     </menu>
   </form>

@@ -94,6 +94,45 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
   flex: none;
 }
 
+/* Section navigation. More tabs arrive with the content manager. */
+.tabs { display: flex; gap: 4px; flex: none; }
+.tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 650;
+  font-size: 13px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+.tab:hover { color: var(--text); background: var(--hover); }
+.tab.on { background: var(--panel); border-color: var(--accent-dim); color: var(--text); }
+
+.tagline {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Only appears when something needs attention, and always offers a fix. */
+.alert-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 16px;
+  background: var(--glow);
+  border-bottom: 1px solid var(--accent-dim);
+  font-size: 13px;
+}
+.alert-bar span { flex: 1; min-width: 0; }
+
 .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
 
 .brand-mark {
@@ -334,23 +373,25 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
   filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.6));
 }
 
+/* Driven by the caption settings so the preview matches a burned-in export. */
 .caption {
   position: absolute;
   left: 50%;
-  bottom: 18px;
+  bottom: var(--cap-bottom, 18px);
   transform: translateX(-50%);
-  max-width: 84%;
-  padding: 8px 16px;
-  border-radius: 8px;
-  background: rgba(4, 14, 22, 0.82);
-  font-size: clamp(14px, 1.7vw, 20px);
-  font-weight: 600;
+  max-width: 88%;
+  padding: 2px 10px;
+  font-family: var(--cap-font, inherit);
+  color: var(--cap-color, #fff);
+  font-size: var(--cap-size, 20px);
+  text-shadow: var(--cap-shadow, none);
+  font-weight: 700;
   text-align: center;
   text-wrap: balance;
   pointer-events: none;
-  line-height: 1.35;
+  line-height: 1.3;
 }
-.caption b { color: var(--accent); margin-right: 8px; }
+.caption b { margin-right: 8px; }
 
 .loading-overlay {
   position: absolute;
@@ -588,6 +629,101 @@ input[type="range"]::-webkit-slider-thumb {
 .dialog-body h2 { font-size: 17px; }
 
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+
+.dialog-wide { width: min(760px, 94vw); }
+
+.color {
+  width: 100%;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-sunken);
+  cursor: pointer;
+}
+.color:disabled { opacity: 0.4; cursor: not-allowed; }
+.num.wide { width: 68px; }
+
+/* Help */
+
+.help-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); padding-bottom: 8px; flex-wrap: wrap; }
+.help-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 5px 11px;
+  cursor: pointer;
+}
+.help-tab:hover { color: var(--text); background: var(--hover); }
+.help-tab.on { background: var(--accent-dim); color: var(--accent-ink); }
+
+.help-panel { max-height: 46vh; overflow-y: auto; padding-right: 4px; }
+.help-panel p + p, .help-panel p + ul, .help-panel p + ol { margin-top: 10px; }
+
+.steps, .bullets { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 7px; }
+.steps li, .bullets li { font-size: 13px; }
+.steps { counter-reset: step; }
+
+.update-note { color: var(--accent); }
+
+/* Caption settings */
+
+.caption-preview {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(135deg, #1d3346 0%, #2c4257 40%, #14212e 100%);
+  min-height: 96px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 12px;
+  overflow: hidden;
+}
+.caption-preview-inner {
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.3;
+  max-width: 92%;
+}
+.caption-preview-inner b { margin-right: 8px; }
+
+.character-colors {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px;
+  max-height: 150px;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+}
+.character-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.character-row .color { width: 34px; height: 26px; flex: none; }
+.character-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  flex: none;
+}
+.link-btn:hover { text-decoration: underline; }
 
 .checks {
   border: 1px solid var(--line);

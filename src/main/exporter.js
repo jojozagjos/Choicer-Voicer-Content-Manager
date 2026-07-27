@@ -87,11 +87,18 @@ function buildAss(captions, { width, height, style = {} }) {
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
   ];
 
+  // Each speaker can carry their own colour; anything unassigned falls back to
+  // the shared speaker colour.
+  const perCharacter = style.characterColors || {};
+
   const events = captions
     .filter((c) => c.text && c.end > c.start)
     .map((c) => {
+      const colour = perCharacter[c.character]
+        ? assColour(perCharacter[c.character])
+        : speakerColour;
       const speaker = style.showSpeaker !== false && c.character
-        ? `{\\c${speakerColour}}${assEscape(c.character)}:{\\c${primary}} `
+        ? `{\\c${colour}}${assEscape(c.character)}:{\\c${primary}} `
         : '';
       return `Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Default,,0,0,0,,${speaker}${assEscape(c.text)}`;
     });

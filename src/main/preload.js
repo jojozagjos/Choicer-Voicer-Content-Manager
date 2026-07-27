@@ -32,6 +32,7 @@ const on = makeEmitter([
 
 contextBridge.exposeInMainWorld('api', {
   appInfo: () => ipcRenderer.invoke('app:info'),
+  checkUpdate: () => ipcRenderer.invoke('app:checkUpdate'),
 
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),

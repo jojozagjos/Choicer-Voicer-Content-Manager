@@ -1,4 +1,4 @@
-# Choicer Voicer Export
+# Choicer Voicer Content Manager
 
 A desktop companion for [The Choicer Voicer](https://yeahmaybe.itch.io/the-choicer-voicer) that
 rebuilds the dubs you record in the game and exports them as real video files.
@@ -7,7 +7,7 @@ The game saves your takes as loose `.wav` files but gives you no way to get them
 finds them, lays each take back over the pack's video and backing track exactly where it belongs,
 lets you preview the result, and renders it to MP4 (or MKV / MOV / WebM).
 
-Made by **Joseph Slade**.
+Made by **@jojozagjos** — [Discord](https://discord.com/users/jojozagjos)
 
 ---
 
@@ -45,14 +45,14 @@ Build it once, then just double-click the `.exe` forever after. No Node, no npm,
 
 ```bash
 npm install
-npm run package
+npm run build
 ```
 
 That writes a self-contained folder to `dist/`:
 
 ```
-dist/Choicer Voicer Export-win32-x64/
-  Choicer Voicer Export.exe     <- double-click this
+dist/Choicer Voicer Content Manager/
+  Choicer Voicer Content Manager.exe   <- double-click this
   resources/ ...
 ```
 
@@ -65,34 +65,17 @@ ffmpeg is bundled inside it, so nothing else needs installing. Make a desktop sh
 > somewhere else instead:
 >
 > ```bash
-> CV_BUILD_OUT=%LOCALAPPDATA%\ChoicerVoicerExport npm run package
+> CV_BUILD_OUT=%LOCALAPPDATA%\ChoicerVoicerExport npm run build
 > ```
 >
 > The same goes for `node_modules`: thousands of small files in a synced folder makes for a
 > miserable time. Keeping the repo itself outside your synced folders is the tidier option.
 
-### Updating it after a code change
+### Rebuilding after a change
 
-```bash
-npm run update-app
-```
-
-That rebuilds and replaces the installed app in place. Your shortcut keeps working, and your
-settings, chosen theme and cached previews are all untouched, since those live in your user
-profile rather than in the app folder.
-
-**Close the app first.** Windows will not let the folder be replaced while the exe is running,
-and the script says so rather than leaving you with a half-written app.
-
-By default it installs to a folder named `Choicer Voicer Export` beside this repo. Point it
-somewhere else with `CV_INSTALL_DIR`:
-
-```bash
-CV_INSTALL_DIR=D:\Apps\ChoicerVoicerExport npm run update-app
-```
-
-The build is staged in a temp folder and only swapped in at the end, so a sync client holding a
-lock cannot leave you with a broken install.
+Run `npm run build` again. Your settings, theme and cached previews live in your user profile,
+not the app folder, so they survive. **Close the app first** or Windows will not let the folder be
+replaced.
 
 ### From source
 
@@ -106,12 +89,6 @@ npm start
 If you'd rather use your own ffmpeg than the bundled one, point at it under
 **Settings → ffmpeg**.
 
-### Installers
-
-`npm run dist` uses electron-builder to produce a proper installer. On Windows it needs symlink
-privileges to unpack its code-signing bundle, so it only works with Developer Mode enabled or from
-an admin shell. `npm run package` has no such requirement, which is why it's the recommended route.
-
 ---
 
 ## Sharing it with other people
@@ -122,10 +99,10 @@ Node and run npm.
 ### Making the zip
 
 ```bash
-npm run package
+npm run build:zip
 ```
 
-Then compress the folder it produced. The result is around 155 MB.
+That produces the app folder plus a zip ready to attach to a release, around 155 MB.
 
 ### Putting it on GitHub
 
@@ -172,8 +149,8 @@ The app looks here by default:
 | macOS | `~/Library/Application Support/YeahMaybe/ChoicerVoicer/game` |
 | Linux | `~/.local/share/YeahMaybe/ChoicerVoicer/game` |
 
-If yours is somewhere else (a portable install, a different drive, a copied save folder), click
-the path in the top bar (or **Settings → Game folder**) and pick it. Any folder containing
+If yours is somewhere else (a portable install, a different drive, a copied save folder), open
+**Settings → Game folder** and pick it. Any folder containing
 `packs_voice` works, and it will also accept the `ChoicerVoicer` or `YeahMaybe` folder above it
 and find the rest itself. The choice is remembered.
 

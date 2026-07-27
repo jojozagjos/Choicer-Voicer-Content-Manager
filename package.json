@@ -1,52 +1,31 @@
 {
-  "name": "choicer-voicer-export",
-  "version": "1.0.0",
-  "description": "Preview and export your The Choicer Voicer dubs as MP4 videos",
+  "name": "choicer-voicer-content-manager",
+  "version": "1.1.0",
+  "description": "Preview and export your The Choicer Voicer dubs as video, and manage custom content packs",
   "main": "src/main/main.js",
-  "author": "",
+  "author": "jojozagjos",
   "license": "MIT",
   "private": true,
+  "homepage": "https://github.com/jojozagjos/Choicer-Voicer-Content-Manager",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jojozagjos/Choicer-Voicer-Content-Manager.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jojozagjos/Choicer-Voicer-Content-Manager/issues"
+  },
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "package": "node scripts/package.js",
-    "update-app": "node scripts/package.js --install",
-    "dist": "electron-builder",
-    "dist:win": "electron-builder --win"
+    "build": "node scripts/build.js",
+    "build:zip": "node scripts/build.js --zip"
   },
   "devDependencies": {
     "@electron/packager": "^20.0.4",
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8"
+    "electron": "^33.2.0"
   },
   "dependencies": {
     "ffmpeg-static": "^5.2.0",
     "ffprobe-static": "^3.1.0"
-  },
-  "build": {
-    "appId": "com.choicervoicer.export",
-    "productName": "Choicer Voicer Export",
-    "files": [
-      "src/**/*",
-      "!**/*.map"
-    ],
-    "asarUnpack": [
-      "node_modules/ffmpeg-static/**",
-      "node_modules/ffprobe-static/**"
-    ],
-    "win": {
-      "target": [
-        "nsis",
-        "portable"
-      ]
-    },
-    "mac": {
-      "target": "dmg",
-      "category": "public.app-category.video"
-    },
-    "linux": {
-      "target": "AppImage",
-      "category": "AudioVideo"
-    }
   }
 }

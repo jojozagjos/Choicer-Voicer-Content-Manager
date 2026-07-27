@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 Joseph Slade
+Copyright (c) 2026 jojozagjos
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -21,7 +21,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-This licence covers the Choicer Voicer Export source code only.
+This licence covers the Choicer Voicer Content Manager source code only.
 
 The packaged application also ships ffmpeg and ffprobe binaries, which are
 licensed under the GPL v3 and carry their own licence text inside the build at
@@ -30,5 +30,5 @@ invoked as separate programs and are redistributed unmodified. Their source is
 available from https://github.com/eugeneware/ffmpeg-static and the upstream
 ffmpeg project at https://ffmpeg.org/.
 
-The Choicer Voicer is a separate work by YeahMaybe. Voice packs belong to their
+The Choicer Voicer is a separate work by Yeah Maybe. Voice packs belong to their
 respective authors. This tool is not affiliated with or endorsed by either.

@@ -17,6 +17,20 @@ const execFileAsync = promisify(execFile);
 
 const MEDIA_SCHEME = 'cvmedia';
 
+const GITHUB_REPO = 'jojozagjos/Choicer-Voicer-Content-Manager';
+const DISCORD_URL = 'https://discord.com/users/jojozagjos';
+
+/** Compares "1.2.10" style versions. Returns >0 when `a` is newer than `b`. */
+function compareVersions(a, b) {
+  const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] || 0) - (pb[i] || 0);
+    if (diff) return diff;
+  }
+  return 0;
+}
+
 let mainWindow = null;
 let settings = null;
 let durationCache = new Map();
@@ -36,6 +50,8 @@ const DEFAULT_SETTINGS = {
   ffprobePath: null,
   theme: 'system', // 'system' | 'dark' | 'light'
   showSplash: true,
+  captionStyle: {},
+  characterColors: {},
   exportOptions: {
     format: 'mp4',
     preset: 'source',
@@ -68,11 +84,20 @@ function loadSettings() {
 }
 
 function saveSettings(next) {
+  // Character colours normally merge, so one pack's edits don't wipe another's.
+  // `replaceCharacterColors` is how a reset removes an entry outright.
+  const characterColors = next.replaceCharacterColors
+    ? (next.characterColors || {})
+    : { ...settings.characterColors, ...(next.characterColors || {}) };
+
   settings = {
     ...settings,
     ...next,
     exportOptions: { ...settings.exportOptions, ...(next.exportOptions || {}) },
+    captionStyle: { ...settings.captionStyle, ...(next.captionStyle || {}) },
+    characterColors,
   };
+  delete settings.replaceCharacterColors;
   ffmpeg.setOverrides({ ffmpeg: settings.ffmpegPath, ffprobe: settings.ffprobePath });
   try {
     fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
@@ -280,7 +305,7 @@ function createWindow() {
     backgroundColor: startupBackground(),
     show: false,
     autoHideMenuBar: true,
-    title: 'Choicer Voicer Export',
+    title: 'Choicer Voicer Content Manager',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -376,8 +401,10 @@ function runSmokeTest(win) {
         workspaceHidden: document.getElementById('workspace').hidden,
         progressHidden: document.getElementById('progress-bar').hidden,
         emptyVisible: !document.getElementById('empty-state').hidden,
-        ffmpeg: document.getElementById('ffmpeg-pill').textContent,
-        gameDir: document.getElementById('game-dir').textContent,
+        gameDir: document.getElementById('set-gamedir').value,
+        alertVisible: !document.getElementById('alert-bar').hidden,
+        tabs: document.querySelectorAll('.tab').length,
+        captionButton: Boolean(document.getElementById('btn-caption-style')),
         palettes: (() => {
           const root = document.documentElement;
           const was = root.dataset.theme;
@@ -603,9 +630,45 @@ function registerIpc() {
     platform: process.platform,
     ffmpeg: ffmpeg.status(),
     defaultGameDir: gamedata.defaultGameDir(),
+    links: {
+      discord: DISCORD_URL,
+      releases: `https://github.com/${GITHUB_REPO}/releases`,
+      game: 'https://yeahmaybe.itch.io/the-choicer-voicer',
+    },
   }));
 
   ipcMain.handle('settings:get', () => settings);
+
+  /**
+   * Asks GitHub for the newest release so the app can tell you an update
+   * exists. Nothing is downloaded or installed automatically; it just points
+   * you at the releases page.
+   */
+  ipcMain.handle('app:checkUpdate', async () => {
+    const url = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
+    try {
+      const res = await fetch(url, {
+        headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'choicer-voicer-content-manager' },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) return { ok: false, error: `GitHub returned ${res.status}` };
+
+      const data = await res.json();
+      const latest = String(data.tag_name || '').replace(/^v/, '');
+      if (!latest) return { ok: false, error: 'No release found' };
+
+      return {
+        ok: true,
+        latest,
+        current: app.getVersion(),
+        newer: compareVersions(latest, app.getVersion()) > 0,
+        url: data.html_url || `https://github.com/${GITHUB_REPO}/releases`,
+        notes: typeof data.body === 'string' ? data.body.slice(0, 2000) : '',
+      };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
   ipcMain.handle('settings:set', (_e, next) => saveSettings(next || {}));
 
   ipcMain.handle('game:scan', async (_e, dir) => {

@@ -465,9 +465,15 @@ export class Timeline {
       canvas.style.cursor = '';
       try { canvas.releasePointerCapture(e.pointerId); } catch { /* already released */ }
 
-      // Released before the hold armed anything: treat it as a click to seek.
+      // Released before the hold armed anything: a click on empty space, which
+      // seeks and clears the selection.
       if (drag.kind === 'maybe') {
         if (this.onSeek) this.onSeek(clamp(drag.startTime, 0, this.duration));
+        if (this.selected) {
+          this.selected = null;
+          if (this.onSelect) this.onSelect(null);
+          this.draw();
+        }
         return;
       }
 

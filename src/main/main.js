@@ -280,7 +280,9 @@ function decorate(model) {
   allowedRoots.add(path.resolve(model.gameDir));
 
   for (const pack of model.packs) {
-    pack.videoUrl = mediaUrl(pack.videoPath);
+    // Deliberately no URL for the pack video: it is Theora, which Chromium
+    // cannot decode, and handing one out only produces a black frame and a
+    // console error. Everything that shows the video asks for a proxy.
     pack.backingUrl = pack.backingPath ? mediaUrl(pack.backingPath) : null;
     pack.iconUrl = pack.iconPath ? mediaUrl(pack.iconPath) : null;
 
@@ -1098,7 +1100,7 @@ function registerIpc() {
   ipcMain.handle('media:probe', (_e, files) => probeMany(files || []));
 
   /** Every pack of every type, with whatever is wrong with each one. */
-  ipcMain.handle('content:scan', (_e, dir) => {
+  ipcMain.handle('content:scan', async (_e, dir) => {
     const target = gamedata.resolveGameDir(dir || settings.gameDir || gamedata.defaultGameDir());
     if (!target) return { ok: false, error: 'No game folder found' };
 
@@ -1117,6 +1119,9 @@ function registerIpc() {
         // findAudioSibling already hands back an absolute path.
         for (const clip of pack.clips || []) {
           clip.audioUrl = clip.audio ? mediaUrl(clip.audio) : null;
+          clip.imagePath = clip.image ? path.join(pack.dir, clip.image) : null;
+          clip.imageUrl = clip.imagePath && fs.existsSync(clip.imagePath)
+            ? mediaUrl(clip.imagePath) : null;
         }
         if (pack.slotFiles) {
           pack.slotUrls = Object.fromEntries(
@@ -1125,6 +1130,25 @@ function registerIpc() {
         }
       }
     }
+    // Clip lengths come from ffprobe, cached by path and mtime. Without them
+    // every block on the timeline is drawn at the same minimum width, which
+    // tells you nothing about how long a line actually is.
+    const clipAudio = model.types
+      .flatMap((t) => t.packs)
+      .flatMap((p) => (p.clips || []).map((c) => c.audio))
+      .filter(Boolean);
+
+    if (clipAudio.length) {
+      const durations = await probeMany([...new Set(clipAudio)]);
+      for (const type of model.types) {
+        for (const pack of type.packs) {
+          for (const clip of pack.clips || []) {
+            clip.duration = (clip.audio && durations[clip.audio]) || 0;
+          }
+        }
+      }
+    }
+
     return { ok: true, ...model };
   });
 
@@ -1206,7 +1230,10 @@ function registerIpc() {
     try {
       const results = await convert.convertMany(files || [], destDir, {
         ...(options || {}),
-        onFile: (result, done, total) => send({ done, total, name: path.basename(result.source) }),
+        // Percent comes from ffmpeg; a long video needs more than "1 of 1".
+        onProgress: ({ percent }) => send({ destDir, percent }),
+        onFile: (result, done, total) =>
+          send({ destDir, done, total, name: path.basename(result.source) }),
       });
       return { ok: true, results };
     } catch (err) {

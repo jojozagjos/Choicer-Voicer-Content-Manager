@@ -451,6 +451,21 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
 
 .dropzone-slim { padding: 12px; gap: 5px; }
 
+.pack-tile.working { border-color: var(--accent-dim); }
+.tile-progress { display: flex; flex-direction: column; gap: 3px; }
+.tile-progress-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+.tile-progress-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+
 /* Dropping a pack folder anywhere on the list installs it. */
 .content-grid.drop-target {
   outline: 2px dashed var(--accent);

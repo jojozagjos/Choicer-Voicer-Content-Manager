@@ -174,6 +174,8 @@ const state = {
   content: null,
   contentType: 'voice',
   contentPackId: null,
+  // Packs whose files are still converting, keyed by folder.
+  converting: new Map(),
 };
 
 const player = new DubPlayer(el.video);
@@ -663,17 +665,29 @@ function renderContentGrid() {
       ? `<img class="tile-icon" src="${pack.iconUrl}" alt="" loading="lazy" />`
       : `<div class="tile-icon tile-icon-blank">${TYPE_ICONS[type.id] || '📦'}</div>`;
 
-    const badge = pack.counts.error
-      ? `<span class="badge badge-error">${pack.counts.error} problem${pack.counts.error > 1 ? 's' : ''}</span>`
-      : pack.counts.warn
-        ? `<span class="badge badge-warn">${pack.counts.warn} warning${pack.counts.warn > 1 ? 's' : ''}</span>`
-        : '<span class="badge badge-ok">ok</span>';
+    const job = state.converting.get(pack.dir);
+    const badge = job
+      ? ''
+      : pack.counts.error
+        ? `<span class="badge badge-error">${pack.counts.error} problem${pack.counts.error > 1 ? 's' : ''}</span>`
+        : pack.counts.warn
+          ? `<span class="badge badge-warn">${pack.counts.warn} warning${pack.counts.warn > 1 ? 's' : ''}</span>`
+          : '<span class="badge badge-ok">ok</span>';
 
+    // A pack still converting shows its progress here rather than in a dialog.
+    const status = job
+      ? `<span class="tile-progress">
+           <span class="tile-progress-bar"><i style="width:${(job.percent || 0).toFixed(0)}%"></i></span>
+           <span class="muted small">${escapeHtml(job.label)}</span>
+         </span>`
+      : `<span class="muted small">${escapeHtml(pack.summary || '')}</span>`;
+
+    tile.classList.toggle('working', Boolean(job));
     tile.innerHTML = `
       ${icon}
       <span class="tile-body">
         <strong>${escapeHtml(pack.title)}</strong>
-        <span class="muted small">${escapeHtml(pack.summary || '')}</span>
+        ${status}
         <span class="tile-meta">${badge}</span>
       </span>`;
 
@@ -1015,54 +1029,59 @@ async function runCreate() {
     options.isDub = createState.files.some((f) => f.kind === 'video');
   }
 
-  // Converting a video takes a while, so the dialog says what it is doing and
-  // stays disabled rather than looking like nothing happened.
-  setCreateBusy(true, 'Creating the pack…');
-
   const created = await window.api.content.create(type.id, options);
   if (!created.ok) {
-    setCreateBusy(false);
     toast(`Could not create it: ${created.error}`, 'error', 8000);
     return;
   }
 
-  // Media gets converted into the new folder under the names the game expects.
-  let done = 0;
-  for (const file of createState.files) {
-    done++;
-    setCreateBusy(true, `Converting ${file.name} (${done} of ${createState.files.length})…`);
-    const target = importTargetName(type.id, file, createState.files);
-    await window.api.content.import(created.dir, [file.path], {
+  // The folder exists now, so show it straight away and close the dialog. The
+  // files convert in the background with a bar on the tile, which leaves you
+  // free to queue up another one instead of watching a spinner.
+  const files = [...createState.files];
+  el.createDialog.close();
+
+  state.contentType = type.id;
+  await switchTab('content');
+  await refreshContent();
+
+  if (!files.length) {
+    toast(`Made "${created.name}".`, 'ok', 6000);
+    return;
+  }
+
+  convertIntoNewPack(created, type, files);
+}
+
+/**
+ * Converts a new pack's files in the background, showing progress on its tile
+ * rather than blocking the dialog.
+ */
+async function convertIntoNewPack(created, type, files) {
+  state.converting.set(created.dir, { percent: 0, label: 'Converting…', name: created.name });
+  renderContentGrid();
+
+  let failed = 0;
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const target = importTargetName(type.id, file, files);
+    const job = state.converting.get(created.dir);
+    if (job) job.label = files.length > 1 ? `Converting ${i + 1} of ${files.length}…` : 'Converting…';
+
+    const result = await window.api.content.import(created.dir, [file.path], {
       baseName: target.base,
       kind: file.kind,
       audioFormat: target.audioFormat,
       maxSeconds: target.maxSeconds,
     });
+    if (!result.ok || result.results.some((r) => !r.ok)) failed++;
   }
 
-  setCreateBusy(false);
-  el.createDialog.close();
-  toast(`Made "${created.name}".`, 'ok', 6000);
-
+  state.converting.delete(created.dir);
   await refreshContent();
-  state.contentType = type.id;
-  await switchTab('content');
 
-  // A new dub pack is useless until its clips exist, so go straight there.
-  const fresh = state.content
-    && state.content.types.flatMap((t) => t.packs).find((p) => p.dir === created.dir);
-  if (fresh && type.opensEditor) await openEditorFor(fresh);
-}
-
-/** Locks the create dialog while files are converting, and says why. */
-function setCreateBusy(on, message) {
-  el.btnCreateGo.disabled = on;
-  el.btnCreateBack.disabled = on;
-  el.createBrowse.disabled = on;
-  el.btnCreateGo.textContent = on ? 'Working…' : 'Create';
-  el.createHint.textContent = on
-    ? message
-    : (createState.type ? createState.type.blurb : 'Pick what you want to make.');
+  if (failed) toast(`"${created.name}" is ready, but ${failed} file(s) failed.`, 'warn', 9000);
+  else toast(`"${created.name}" is ready. Open it and press Edit.`, 'ok', 8000);
 }
 
 /**
@@ -2430,6 +2449,15 @@ function wireEvents() {
   el.btnProgressCancel.addEventListener('click', cancelCurrentExport);
   el.btnProgressCancelAll.addEventListener('click', cancelAllExports);
 
+  // Conversion progress lands on the tile of the pack it belongs to.
+  window.api.content.onImportProgress(({ destDir, percent, done, total }) => {
+    const job = state.converting.get(destDir);
+    if (!job) return;
+    if (percent != null) job.percent = percent;
+    if (done != null && total > 1) job.label = `Converting ${done} of ${total}…`;
+    if (state.tab === 'content') renderContentGrid();
+  });
+
   // First open of a pack transcodes its video; show how far along that is.
   // Ignore progress from a pack you have already clicked away from.
   window.api.media.onProxyProgress(({ videoPath, percent }) => {
@@ -2451,6 +2479,9 @@ function wireEvents() {
 
   document.addEventListener('keydown', (event) => {
     if (event.target.matches('input, select, textarea') || document.querySelector('dialog[open]')) return;
+    // The editor has its own shortcuts. Without this, Space reached both and
+    // started the export preview playing behind the editor.
+    if (!el.editorView.hidden || state.tab !== 'export') return;
     if (event.code === 'Space') { event.preventDefault(); player.toggle(); }
     else if (event.code === 'ArrowLeft') player.seek(el.video.currentTime - (event.shiftKey ? 1 : 5));
     else if (event.code === 'ArrowRight') player.seek(el.video.currentTime + (event.shiftKey ? 1 : 5));

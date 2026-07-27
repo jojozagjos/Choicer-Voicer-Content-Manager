@@ -34,13 +34,27 @@ export class Timeline {
 
     this.drag = null;
     this.hover = null;
+    this.pending = null;    // the range being marked out in add mode
+
+    // Dragging empty space used to create clips, which meant every attempt to
+    // pan made one by accident. Panning is the default; creating is a mode you
+    // choose.
+    this.mode = 'select';
 
     this.onSeek = null;
     this.onSelect = null;
     this.onCommit = null;   // (clip, {start, duration, resized}) once a drag ends
-    this.onCreate = null;   // (start, duration) from dragging empty space
+    this.onCreate = null;   // (start, duration) once a range is marked out
+    this.onModeChange = null;
 
     this._bind();
+  }
+
+  setMode(mode) {
+    this.mode = mode;
+    this.canvas.classList.toggle('adding', mode === 'add');
+    if (this.onModeChange) this.onModeChange(mode);
+    this.draw();
   }
 
   setDuration(seconds) {
@@ -146,7 +160,46 @@ export class Timeline {
     this._drawRuler(ctx, rect, colour);
     this._drawWave(ctx, rect, waveTop, waveH, colour);
     this._drawClips(ctx, rect, waveTop, waveH, colour);
+    this._drawPending(ctx, rect, waveTop, waveH, colour);
     this._drawPlayhead(ctx, rect, colour);
+  }
+
+  /** The range being marked out, so you can see the clip before committing. */
+  _drawPending(ctx, rect, top, height, colour) {
+    if (!this.pending) return;
+    const { start, end } = this.pending;
+    const left = this.timeToX(Math.min(start, end));
+    const right = this.timeToX(Math.max(start, end));
+    const length = Math.abs(end - start);
+
+    ctx.fillStyle = `${colour('--ok', '#4ade80')}44`;
+    ctx.strokeStyle = colour('--ok', '#4ade80');
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(left, top + 6, Math.max(2, right - left), height - 12, 4);
+    ctx.fill();
+    ctx.stroke();
+
+    // Say how long it is and whether the game will accept it.
+    const label = length > this.maxClip
+      ? `${length.toFixed(2)}s, capped at ${this.maxClip}s`
+      : length < MIN_CLIP ? `${length.toFixed(2)}s, too short`
+        : `${length.toFixed(2)}s`;
+
+    ctx.font = '600 11px system-ui, sans-serif';
+    ctx.textBaseline = 'middle';
+    const w = ctx.measureText(label).width + 10;
+    const bx = Math.min(rect.width - w - 2, Math.max(2, right + 6));
+
+    ctx.fillStyle = colour('--panel', '#172636');
+    ctx.strokeStyle = colour('--ok', '#4ade80');
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(bx, top + 8, w, 20, 4);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = colour('--text', '#e6f2fb');
+    ctx.fillText(label, bx + 5, top + 18);
   }
 
   _drawRuler(ctx, rect, colour) {
@@ -267,12 +320,29 @@ export class Timeline {
 
     canvas.addEventListener('pointerdown', (e) => {
       const x = e.offsetX;
-      const hit = this.clipAt(x);
+      const onRuler = e.offsetY < RULER_H;
 
-      if (e.offsetY < RULER_H || !hit) {
-        // The ruler and empty space scrub, unless a drag turns into a new clip.
-        this.drag = { mode: 'scrub', startX: x, startTime: this.xToTime(x), moved: false };
+      // The ruler always scrubs, whatever the mode.
+      if (onRuler) {
+        this.drag = { kind: 'scrub' };
         if (this.onSeek) this.onSeek(clamp(this.xToTime(x), 0, this.duration));
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+
+      if (this.mode === 'add') {
+        const at = clamp(this.xToTime(x), 0, this.duration);
+        this.pending = { start: at, end: at };
+        this.drag = { kind: 'create', startX: x };
+        canvas.setPointerCapture(e.pointerId);
+        this.draw();
+        return;
+      }
+
+      const hit = this.clipAt(x);
+      if (!hit) {
+        // Empty space pans, which is what dragging a timeline should do.
+        this.drag = { kind: 'pan', startX: x, startView: this.viewStart };
         canvas.setPointerCapture(e.pointerId);
         return;
       }
@@ -281,7 +351,7 @@ export class Timeline {
       if (this.onSelect) this.onSelect(hit.clip);
 
       this.drag = {
-        mode: hit.edge ? `resize-${hit.edge}` : 'move',
+        kind: hit.edge ? `resize-${hit.edge}` : 'move',
         clip: hit.clip,
         startX: x,
         originalTime: hit.clip.time,
@@ -298,24 +368,41 @@ export class Timeline {
       if (!this.drag) {
         const hit = this.clipAt(x);
         canvas.style.cursor = e.offsetY < RULER_H ? 'text'
-          : hit && hit.edge ? 'ew-resize'
-            : hit ? 'grab' : 'crosshair';
+          : this.mode === 'add' ? 'crosshair'
+            : hit && hit.edge ? 'ew-resize'
+              : hit ? 'grab' : 'grab';
         return;
       }
 
-      const deltaSeconds = (x - this.drag.startX) / this.canvas.getBoundingClientRect().width * this.viewSpan;
+      const width = this.canvas.getBoundingClientRect().width;
+      const deltaSeconds = ((x - this.drag.startX) / width) * this.viewSpan;
       if (Math.abs(x - this.drag.startX) > 3) this.drag.moved = true;
 
-      if (this.drag.mode === 'scrub') {
+      if (this.drag.kind === 'scrub') {
         if (this.onSeek) this.onSeek(clamp(this.xToTime(x), 0, this.duration));
         this.draw();
         return;
       }
 
+      if (this.drag.kind === 'pan') {
+        const span = this.viewSpan;
+        this.viewStart = clamp(this.drag.startView - deltaSeconds, 0, Math.max(0, this.duration - span));
+        this.viewEnd = this.viewStart + span;
+        canvas.style.cursor = 'grabbing';
+        this.draw();
+        return;
+      }
+
+      if (this.drag.kind === 'create') {
+        this.pending.end = clamp(this.xToTime(x), 0, this.duration);
+        this.draw();
+        return;
+      }
+
       const clip = this.drag.clip;
-      if (this.drag.mode === 'move') {
+      if (this.drag.kind === 'move') {
         clip.time = clamp(this.drag.originalTime + deltaSeconds, 0, Math.max(0, this.duration - 0.05));
-      } else if (this.drag.mode === 'resize-start') {
+      } else if (this.drag.kind === 'resize-start') {
         const end = this.drag.originalTime + this.drag.originalDuration;
         const next = clamp(this.drag.originalTime + deltaSeconds, 0, end - MIN_CLIP);
         clip.time = next;
@@ -330,24 +417,27 @@ export class Timeline {
       if (!this.drag) return;
       const drag = this.drag;
       this.drag = null;
+      canvas.style.cursor = '';
       try { canvas.releasePointerCapture(e.pointerId); } catch { /* already released */ }
 
-      if (drag.mode === 'scrub') {
-        // A drag across empty space marks out a new clip.
-        if (drag.moved && this.onCreate) {
-          const end = clamp(this.xToTime(e.offsetX), 0, this.duration);
-          const start = Math.min(drag.startTime, end);
-          const length = Math.abs(end - drag.startTime);
-          if (length >= MIN_CLIP) this.onCreate(start, Math.min(length, this.maxClip));
+      if (drag.kind === 'create') {
+        const { start, end } = this.pending;
+        this.pending = null;
+        const length = Math.abs(end - start);
+        if (length >= MIN_CLIP && this.onCreate) {
+          this.onCreate(Math.min(start, end), Math.min(length, this.maxClip));
         }
+        this.draw();
         return;
       }
+
+      if (drag.kind === 'scrub' || drag.kind === 'pan') return;
 
       if (drag.moved && this.onCommit) {
         this.onCommit(drag.clip, {
           start: drag.clip.time,
           duration: drag.clip.duration,
-          resized: drag.mode !== 'move',
+          resized: drag.kind !== 'move',
         });
       }
     };

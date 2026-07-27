@@ -58,6 +58,8 @@ contextBridge.exposeInMainWorld('api', {
     remove: (packDir) => ipcRenderer.invoke('content:delete', packDir),
     extractClip: (payload) => ipcRenderer.invoke('content:extractClip', payload),
     writeClipMeta: (payload) => ipcRenderer.invoke('content:writeClipMeta', payload),
+    trashClip: (payload) => ipcRenderer.invoke('content:trashClip', payload),
+    restoreClip: (payload) => ipcRenderer.invoke('content:restoreClip', payload),
     saveImage: (payload) => ipcRenderer.invoke('content:saveImage', payload),
     saveRecording: (payload) => ipcRenderer.invoke('content:saveRecording', payload),
     writeConfig: (payload) => ipcRenderer.invoke('content:writeConfig', payload),

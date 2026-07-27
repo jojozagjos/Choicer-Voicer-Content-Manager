@@ -217,12 +217,20 @@ function inspectPlayer(dir, files) {
     }
   }
 
+  // Every audio file in the pack, keyed by the name a slot would reference it
+  // by, so the editor can play a slot back without guessing the extension.
+  const slots = {};
+  for (const file of files) {
+    if (AUDIO_EXTS.includes(extOf(file))) slots[baseOf(file)] = path.join(dir, file);
+  }
+
   return {
     kind: 'player',
     title: data.name || null,
     subtitle: data.introduction || '',
     // The editor reads this to show what each reaction slot points at.
     config: data,
+    slotFiles: slots,
     icon: image,
     summary: `${assigned} of 9 sounds`,
     colors: [data.color1, data.color2].filter(Boolean),

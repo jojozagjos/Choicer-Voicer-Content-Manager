@@ -14,7 +14,9 @@ const ffmpeg = require('./ffmpeg');
 const { runExport } = require('./exporter');
 const { ensureProxy } = require('./proxy');
 const { scanContent } = require('./content');
-const { createPack, deletePack, writeClipMeta, saveImage } = require('./create');
+const {
+  createPack, deletePack, trashClip, restoreClip, writeClipMeta, saveImage,
+} = require('./create');
 const convert = require('./convert');
 
 const execFileAsync = promisify(execFile);
@@ -621,6 +623,21 @@ function runSmokeTest(win) {
         const canvas = document.querySelector('canvas.timeline');
         if (!canvas) return { skipped: 'no timeline canvas' };
 
+        // Captions were being blanked by quotes ending the value attribute.
+        const captionInputs = [...document.querySelectorAll('.clip-row [data-field="caption"]')];
+        const filled = captionInputs.filter((i) => i.value.trim()).length;
+        const withQuotes = captionInputs.filter((i) => i.value.includes('"')).length;
+
+        const shortcuts = (() => {
+          const btn = [...document.querySelectorAll('.editor-head button')]
+            .find((b) => b.textContent.includes('Shortcuts'));
+          if (!btn) return 0;
+          btn.click();
+          const n = document.querySelectorAll('.shortcut-sheet dt').length;
+          btn.click();
+          return n;
+        })();
+
         // Wait for the timeline to know the duration before working in pixels.
         for (let i = 0; i < 40; i++) {
           await new Promise((r) => setTimeout(r, 250));
@@ -637,9 +654,16 @@ function runSmokeTest(win) {
           canvas.dispatchEvent(new PointerEvent('pointerup', opts(toX)));
         };
 
-        // Drag across empty space low in the lane to mark out a new clip.
-        // 6% of the width of a 100 second video is a few seconds.
         const y = box.height - 20;
+
+        // In the default mode a drag must pan, not create anything.
+        const beforePan = document.querySelectorAll('.clip-row').length;
+        drag(box.width * 0.5, box.width * 0.4, y);
+        await new Promise((r) => setTimeout(r, 400));
+        const createdByPan = document.querySelectorAll('.clip-row').length - beforePan;
+
+        // Only add mode creates.
+        $('[data-act="mode-add"]').click();
         drag(box.width * 0.60, box.width * 0.66, y);
 
         for (let i = 0; i < 80; i++) {
@@ -651,6 +675,11 @@ function runSmokeTest(win) {
           videoReady: video.readyState >= 2,
           videoW: video.videoWidth,
           timelineWidth: Math.round(box.width),
+          captionsFilled: filled,
+          captionsTotal: captionInputs.length,
+          captionsWithQuotes: withQuotes,
+          shortcutsListed: shortcuts,
+          createdByPan,
           clipsBefore,
           clipsAfter: document.querySelectorAll('.clip-row').length,
           detailIssues: before,
@@ -1075,10 +1104,20 @@ function registerIpc() {
       findAudioSibling: gamedata.findAudioSibling,
     });
 
-    // Icons are served through the media protocol like everything else.
+    // Icons and clip audio are served through the media protocol, so the
+    // editor can show a picture and play a clip back.
     for (const type of model.types) {
       for (const pack of type.packs) {
         pack.iconUrl = pack.iconPath ? mediaUrl(pack.iconPath) : null;
+        // findAudioSibling already hands back an absolute path.
+        for (const clip of pack.clips || []) {
+          clip.audioUrl = clip.audio ? mediaUrl(clip.audio) : null;
+        }
+        if (pack.slotFiles) {
+          pack.slotUrls = Object.fromEntries(
+            Object.entries(pack.slotFiles).map(([name, file]) => [name, mediaUrl(file)])
+          );
+        }
       }
     }
     return { ok: true, ...model };
@@ -1202,6 +1241,28 @@ function registerIpc() {
       const base = path.basename(clip.path, path.extname(clip.path));
       const metaFile = writeClipMeta(destDir, base, { ...(meta || {}), timestamp: start });
       return { ok: true, path: clip.path, base, metaFile };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // Deleting a clip is undoable: its files are moved aside rather than removed.
+  ipcMain.handle('content:trashClip', (_e, { packDir, base }) => {
+    if (!isAllowed(packDir)) return { ok: false, error: 'That folder is outside the game folder' };
+    try {
+      const trashRoot = path.join(app.getPath('userData'), 'deleted-clips');
+      return { ok: true, ...trashClip(packDir, base, trashRoot) };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('content:restoreClip', (_e, { moved }) => {
+    try {
+      for (const entry of moved || []) {
+        if (!isAllowed(entry.from)) return { ok: false, error: 'That folder is outside the game folder' };
+      }
+      return { ok: true, ...restoreClip(moved || []) };
     } catch (err) {
       return { ok: false, error: err.message };
     }

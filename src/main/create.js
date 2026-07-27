@@ -311,6 +311,43 @@ function saveImage(packDir, base, dataUrl) {
 }
 
 /**
+ * Moves a clip's files out of a pack into a holding folder, so deleting one is
+ * undoable. Anything the game would load goes: the audio, the metadata and the
+ * picture that shares its name.
+ */
+function trashClip(packDir, base, trashRoot) {
+  const stamp = `${Date.now()}_${base}`;
+  const bin = path.join(trashRoot, stamp);
+  fs.mkdirSync(bin, { recursive: true });
+
+  const moved = [];
+  for (const file of fs.readdirSync(packDir)) {
+    if (path.basename(file, path.extname(file)) !== base) continue;
+    const from = path.join(packDir, file);
+    if (!fs.statSync(from).isFile()) continue;
+    const to = path.join(bin, file);
+    fs.renameSync(from, to);
+    moved.push({ from, to });
+  }
+
+  if (!moved.length) {
+    fs.rmSync(bin, { recursive: true, force: true });
+    throw new Error('Nothing to delete');
+  }
+  return { bin, moved };
+}
+
+/** Puts a trashed clip back where it came from. */
+function restoreClip(moved) {
+  for (const { from, to } of moved) {
+    if (!fs.existsSync(to)) continue;
+    fs.mkdirSync(path.dirname(from), { recursive: true });
+    fs.renameSync(to, from);
+  }
+  return { restored: moved.length };
+}
+
+/**
  * Removes a pack. Refuses anything outside the game folder, since this deletes
  * recursively and a wrong path would be unrecoverable.
  */
@@ -336,6 +373,8 @@ function deletePack(gameDir, packDir) {
 module.exports = {
   createPack,
   deletePack,
+  trashClip,
+  restoreClip,
   writeClipMeta,
   saveImage,
   TYPE_DIRS,

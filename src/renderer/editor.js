@@ -42,6 +42,20 @@ function clipFileName(index, label) {
   return `${String(index).padStart(2, '0')}_${clean}`;
 }
 
+/** Keyboard shortcuts, shown in the editor so they are discoverable. */
+export const EDITOR_KEYS = [
+  ['Space', 'Play or pause'],
+  ['← →', 'Step 2 seconds'],
+  ['Shift + ← →', 'Step a frame'],
+  ['A', 'Add clip mode'],
+  ['V', 'Select mode'],
+  ['Delete', 'Delete the selected clip'],
+  ['Ctrl + Z', 'Undo'],
+  ['Ctrl + Y', 'Redo'],
+  ['F', 'Fit the whole video'],
+  ['+ −', 'Zoom in and out'],
+];
+
 export class PackEditor {
   constructor(root, api, toast) {
     this.root = root;
@@ -50,16 +64,121 @@ export class PackEditor {
     this.pack = null;
     this.onClose = null;
     this.onChanged = null;
+
+    // Undo covers everything that changes a clip, including deletion, which
+    // moves files aside rather than removing them so it can be put back.
+    this.undoStack = [];
+    this.redoStack = [];
+    this.busy = 0;
+
+    this._keyHandler = (e) => this._onKey(e);
   }
 
   close() {
     this.root.hidden = true;
     this.root.innerHTML = '';
+    document.removeEventListener('keydown', this._keyHandler);
     if (this.video) {
       this.video.pause();
       this.video = null;
     }
+    this.timeline = null;
+    this.undoStack = [];
+    this.redoStack = [];
     if (this.onClose) this.onClose();
+  }
+
+  /** Shows a blocking-looking overlay while ffmpeg works on a clip. */
+  setBusy(on, message) {
+    this.busy += on ? 1 : -1;
+    this.busy = Math.max(0, this.busy);
+    const bar = this.root.querySelector('.editor-busy');
+    if (!bar) return;
+    bar.hidden = this.busy === 0;
+    if (message) bar.querySelector('span').textContent = message;
+  }
+
+  async run(label, task) {
+    this.setBusy(true, label);
+    try {
+      return await task();
+    } finally {
+      this.setBusy(false);
+    }
+  }
+
+  // Undo
+
+  push(entry) {
+    this.undoStack.push(entry);
+    if (this.undoStack.length > 50) this.undoStack.shift();
+    this.redoStack = [];
+    this._refreshUndoButtons();
+  }
+
+  async undo() {
+    const entry = this.undoStack.pop();
+    if (!entry) { this.toast('Nothing to undo.', 'info', 1500); return; }
+    await entry.undo();
+    this.redoStack.push(entry);
+    this._refreshUndoButtons();
+    this.toast(`Undid: ${entry.label}`, 'ok', 1800);
+  }
+
+  async redo() {
+    const entry = this.redoStack.pop();
+    if (!entry) { this.toast('Nothing to redo.', 'info', 1500); return; }
+    await entry.redo();
+    this.undoStack.push(entry);
+    this._refreshUndoButtons();
+    this.toast(`Redid: ${entry.label}`, 'ok', 1800);
+  }
+
+  _refreshUndoButtons() {
+    const undo = this.root.querySelector('[data-act="undo"]');
+    const redo = this.root.querySelector('[data-act="redo"]');
+    if (undo) undo.disabled = !this.undoStack.length;
+    if (redo) redo.disabled = !this.redoStack.length;
+  }
+
+  _onKey(event) {
+    if (this.root.hidden) return;
+    // Never steal keys from a field someone is typing in.
+    if (event.target.matches('input, textarea, select')) return;
+
+    const key = event.key.toLowerCase();
+    const ctrl = event.ctrlKey || event.metaKey;
+
+    if (ctrl && key === 'z') { event.preventDefault(); this.undo(); return; }
+    if (ctrl && (key === 'y' || (key === 'z' && event.shiftKey))) { event.preventDefault(); this.redo(); return; }
+    if (ctrl) return;
+
+    const video = this.video;
+    const timeline = this.timeline;
+
+    if (event.code === 'Space' && video) {
+      event.preventDefault();
+      if (video.paused) video.play().catch(() => {});
+      else video.pause();
+    } else if (key === 'arrowleft' && video) {
+      video.currentTime = Math.max(0, video.currentTime - (event.shiftKey ? 1 / 30 : 2));
+    } else if (key === 'arrowright' && video) {
+      video.currentTime += event.shiftKey ? 1 / 30 : 2;
+    } else if (key === 'a' && timeline) timeline.setMode('add');
+    else if (key === 'v' && timeline) timeline.setMode('select');
+    else if (key === 'f' && timeline) {
+      timeline.viewStart = 0;
+      timeline.viewEnd = timeline.duration;
+      timeline.draw();
+    } else if ((key === '+' || key === '=') && timeline) {
+      timeline.zoomAt(timeline.canvas.getBoundingClientRect().width / 2, 1 / 1.3);
+    } else if ((key === '-' || key === '_') && timeline) {
+      timeline.zoomAt(timeline.canvas.getBoundingClientRect().width / 2, 1.3);
+    } else if ((key === 'delete' || key === 'backspace') && timeline && timeline.selected) {
+      event.preventDefault();
+      const clip = (this.pack.clips || []).find((c) => c.base === timeline.selected);
+      if (clip) this.deleteClip(clip);
+    }
   }
 
   /** Opens the right editor for a pack that already exists on disk. */
@@ -77,19 +196,51 @@ export class PackEditor {
       <h2>${escapeHtml(pack.title)}</h2>
       <p class="muted small">${escapeHtml(pack.dir)}</p>`));
 
+    const undo = el('button', 'btn btn-small', '↶ Undo');
+    undo.dataset.act = 'undo';
+    undo.disabled = true;
+    undo.addEventListener('click', () => this.undo());
+
+    const redo = el('button', 'btn btn-small', '↷ Redo');
+    redo.dataset.act = 'redo';
+    redo.disabled = true;
+    redo.addEventListener('click', () => this.redo());
+
+    const keys = el('button', 'btn btn-small', 'Shortcuts');
+    keys.addEventListener('click', () => this.toggleShortcuts());
+
     const openFolder = el('button', 'btn btn-small', 'Open folder');
     openFolder.addEventListener('click', () => this.api.shell.openPath(pack.dir));
-    head.append(openFolder);
 
+    head.append(undo, redo, keys, openFolder);
     this.root.append(head);
+
+    const busy = el('div', 'editor-busy', '<div class="spinner spinner-small"></div><span></span>');
+    busy.hidden = true;
+    this.root.append(busy);
+
+    const sheet = el('div', 'shortcut-sheet', `
+      <h4>Keyboard shortcuts</h4>
+      <dl>${EDITOR_KEYS.map(([k, what]) =>
+    `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(what)}</dd></div>`).join('')}</dl>`);
+    sheet.hidden = true;
+    this.root.append(sheet);
+    this.sheet = sheet;
 
     const body = el('div', 'editor-body');
     this.root.append(body);
     this.body = body;
 
+    document.removeEventListener('keydown', this._keyHandler);
+    document.addEventListener('keydown', this._keyHandler);
+
     if (pack.type === 'voice') this.renderDubEditor(body);
     else if (pack.type === 'player') this.renderPlayerEditor(body);
     else this.renderGenericEditor(body);
+  }
+
+  toggleShortcuts() {
+    if (this.sheet) this.sheet.hidden = !this.sheet.hidden;
   }
 
   // Dub and voice packs
@@ -130,10 +281,13 @@ export class PackEditor {
         <button type="button" class="btn btn-icon" data-act="back">⟲</button>
         <button type="button" class="btn btn-icon" data-act="fwd">⟳</button>
         <span class="time" data-role="time">0:00.00</span>
-        <span class="muted small" data-role="hint">
-          Drag across the timeline to make a clip. Drag a block to move it, or its edge to retime
-          it. Scroll to zoom, double click to fit.
+
+        <span class="mode-switch" role="group">
+          <button type="button" data-act="mode-select" class="on">Move</button>
+          <button type="button" data-act="mode-add">+ Add clip</button>
         </span>
+
+        <span class="muted small" data-role="hint"></span>
         <button type="button" class="btn btn-small" data-act="zoom-fit">Fit</button>
       </div>
       <canvas class="timeline" data-role="timeline"></canvas>`;
@@ -171,6 +325,16 @@ export class PackEditor {
     };
     new ResizeObserver(sizeToBox).observe(q('timeline'));
 
+    const hint = q('hint');
+    timeline.onModeChange = (mode) => {
+      controls.querySelector('[data-act="mode-select"]').classList.toggle('on', mode === 'select');
+      controls.querySelector('[data-act="mode-add"]').classList.toggle('on', mode === 'add');
+      hint.textContent = mode === 'add'
+        ? 'Drag across the timeline to mark out a clip.'
+        : 'Drag to pan. Drag a block to move it, or its edge to retime it.';
+    };
+    timeline.onModeChange('select');
+
     controls.addEventListener('click', async (event) => {
       const act = event.target.dataset.act;
       if (!act) return;
@@ -180,6 +344,8 @@ export class PackEditor {
         else { video.pause(); event.target.textContent = '▶'; }
       } else if (act === 'back') video.currentTime = Math.max(0, video.currentTime - 2);
       else if (act === 'fwd') video.currentTime += 2;
+      else if (act === 'mode-select') timeline.setMode('select');
+      else if (act === 'mode-add') timeline.setMode('add');
       else if (act === 'zoom-fit') {
         timeline.viewStart = 0;
         timeline.viewEnd = timeline.duration;
@@ -271,15 +437,15 @@ export class PackEditor {
     const index = (pack.clipCount || 0) + 1;
     const base = clipFileName(index, `clip_${Math.round(start * 1000)}`);
 
-    this.toast('Cutting the clip…');
-    const result = await this.api.content.extractClip({
-      source: pack.videoPath,
-      destDir: pack.dir,
-      baseName: base,
-      start,
-      duration,
-      meta: { caption: '', character: '' },
-    });
+    const result = await this.run('Cutting the clip from the video…', () =>
+      this.api.content.extractClip({
+        source: pack.videoPath,
+        destDir: pack.dir,
+        baseName: base,
+        start,
+        duration,
+        meta: { caption: '', character: '' },
+      }));
 
     if (!result.ok) {
       this.toast(`Could not cut that clip: ${result.error}`, 'error', 8000);
@@ -331,14 +497,27 @@ export class PackEditor {
       const row = el('div', 'clip-row');
       row.dataset.base = clip.base;
       row.classList.toggle('on', this.timeline && this.timeline.selected === clip.base);
+
+      const hasAudio = Boolean(clip.audio);
       row.innerHTML = `
-        <button type="button" class="line-time">${fmt(clip.time)}</button>
+        <div class="clip-head">
+          <button type="button" class="line-time">${fmt(clip.time)}</button>
+          <span class="clip-name">${escapeHtml(clip.base)}</span>
+          <button type="button" class="icon-btn" data-act="play" title="Play this clip"
+                  ${hasAudio ? '' : 'disabled'}>▶</button>
+          <button type="button" class="icon-btn danger" data-act="delete" title="Delete this clip">✕</button>
+        </div>
         <div class="clip-fields">
-          <input class="input" data-field="caption" placeholder="Caption"
-                 value="${escapeHtml(clip.caption || '')}" />
-          <input class="input" data-field="character" placeholder="Who says it"
-                 value="${escapeHtml(clip.character || '')}" />
+          <input class="input" data-field="caption" placeholder="Caption" />
+          <input class="input" data-field="character" placeholder="Who says it" />
         </div>`;
+
+      // Set through the property, never through the attribute: captions are
+      // full of double quotes and putting one in value="" ends the attribute,
+      // which silently blanked most of them.
+      const [captionInput, characterInput] = row.querySelectorAll('[data-field]');
+      captionInput.value = clip.caption || '';
+      characterInput.value = clip.character || '';
 
       row.querySelector('.line-time').addEventListener('click', () => {
         if (this.video) this.video.currentTime = clip.time;
@@ -346,26 +525,100 @@ export class PackEditor {
         this.renderClipList(container);
       });
 
-      // Saving on blur keeps typing responsive and avoids a write per keypress.
-      for (const input of row.querySelectorAll('[data-field]')) {
-        input.addEventListener('change', async () => {
-          const fields = row.querySelectorAll('[data-field]');
+      const playBtn = row.querySelector('[data-act="play"]');
+      if (hasAudio) playBtn.addEventListener('click', () => this.playClip(clip, playBtn));
+
+      row.querySelector('[data-act="delete"]').addEventListener('click', () => this.deleteClip(clip));
+
+      // Saving on change keeps typing responsive and avoids a write per keypress.
+      const save = async () => {
+        const before = { caption: clip.caption || '', character: clip.character || '' };
+        const after = { caption: captionInput.value, character: characterInput.value };
+        if (before.caption === after.caption && before.character === after.character) return;
+
+        const write = async (values) => {
           await this.api.content.writeClipMeta({
             destDir: this.pack.dir,
             base: clip.base,
-            meta: {
-              caption: fields[0].value,
-              character: fields[1].value,
-              image: clip.image || `${clip.base}.png`,
-              timestamp: clip.time,
-            },
+            meta: { ...values, image: clip.image || `${clip.base}.png`, timestamp: clip.time },
           });
-          this.toast('Saved.', 'ok', 1500);
+          clip.caption = values.caption;
+          clip.character = values.character;
+          if (this.timeline) this.timeline.setClips(this.pack.clips || []);
+        };
+
+        await write(after);
+        this.push({
+          label: 'caption edit',
+          undo: async () => { await write(before); this.renderClipList(container); },
+          redo: async () => { await write(after); this.renderClipList(container); },
         });
-      }
+      };
+
+      captionInput.addEventListener('change', save);
+      characterInput.addEventListener('change', save);
 
       container.append(row);
     }
+  }
+
+  /** Plays a single clip so you can hear what you cut. */
+  playClip(clip, button) {
+    if (this.clipAudio) {
+      this.clipAudio.pause();
+      if (this.clipButton) this.clipButton.textContent = '▶';
+      if (this.clipAudio.dataset.base === clip.base) {
+        this.clipAudio = null;
+        this.clipButton = null;
+        return;
+      }
+    }
+
+    const audio = new Audio(clip.audioUrl);
+    audio.dataset.base = clip.base;
+    audio.addEventListener('ended', () => { button.textContent = '▶'; this.clipAudio = null; });
+    audio.play().catch(() => this.toast('Could not play that clip.', 'warn'));
+
+    button.textContent = '■';
+    this.clipAudio = audio;
+    this.clipButton = button;
+  }
+
+  /** Deletes a clip by moving its files aside, so undo can put them back. */
+  async deleteClip(clip) {
+    const pack = this.pack;
+    const result = await this.run('Deleting the clip…', () =>
+      this.api.content.trashClip({ packDir: pack.dir, base: clip.base }));
+
+    if (!result.ok) {
+      this.toast(`Could not delete it: ${result.error}`, 'error', 7000);
+      return;
+    }
+
+    this.toast(`Deleted ${clip.base}.`, 'ok');
+    this.push({
+      label: `delete ${clip.base}`,
+      undo: async () => {
+        await this.api.content.restoreClip({ moved: result.moved });
+        if (this.onChanged) await this.onChanged(pack.id, { keepEditor: true });
+        this.refreshClips();
+      },
+      redo: async () => {
+        await this.api.content.trashClip({ packDir: pack.dir, base: clip.base });
+        if (this.onChanged) await this.onChanged(pack.id, { keepEditor: true });
+        this.refreshClips();
+      },
+    });
+
+    if (this.onChanged) await this.onChanged(pack.id, { keepEditor: true });
+    this.refreshClips();
+  }
+
+  /** Repaints the timeline and clip list from the pack's current clips. */
+  refreshClips() {
+    if (this.timeline) this.timeline.setClips(this.pack.clips || []);
+    const list = this.root.querySelector('[data-role="clips"]');
+    if (list) this.renderClipList(list);
   }
 
   // Contestants
@@ -409,12 +662,19 @@ export class PackEditor {
     for (const [key, label] of SLOTS) {
       const assigned = (config.audio_assignment || {})[key] || '';
       const row = el('div', 'slot-row');
+      row.dataset.slot = key;
+      row.classList.toggle('filled', Boolean(assigned));
       row.innerHTML = `
+        <span class="slot-state" title="${assigned ? 'Ready' : 'Nothing set'}">${assigned ? '●' : '○'}</span>
         <span class="slot-label">${escapeHtml(label)}</span>
-        <span class="slot-file ${assigned ? '' : 'muted'}">${escapeHtml(assigned || 'nothing')}</span>
+        <span class="slot-file">${assigned ? escapeHtml(assigned) : 'not set'}</span>
         <span class="slot-timer muted small"></span>
+        <button type="button" class="btn btn-small play" ${assigned ? '' : 'disabled'}>▶</button>
         <button type="button" class="btn btn-small rec">● Record</button>
         <button type="button" class="btn btn-small pick">File…</button>`;
+
+      const playBtn = row.querySelector('.play');
+      playBtn.addEventListener('click', () => this.playSlot(key, playBtn));
 
       attachRecorder(
         row.querySelector('.rec'),
@@ -466,10 +726,45 @@ export class PackEditor {
       return;
     }
     this.pack.config = { ...config, audio_assignment: assignment };
-    const label = row.querySelector('.slot-file');
-    label.textContent = base;
-    label.classList.remove('muted');
+    row.querySelector('.slot-file').textContent = base;
+    row.querySelector('.slot-state').textContent = '●';
+    row.querySelector('.slot-state').title = 'Ready';
+    row.querySelector('.play').disabled = false;
+    row.classList.add('filled');
     this.toast('Saved.', 'ok', 1500);
+  }
+
+  /** Plays whatever a reaction slot points at. */
+  async playSlot(key, button) {
+    const assigned = ((this.pack.config || {}).audio_assignment || {})[key];
+    if (!assigned) return;
+
+    if (this.slotAudio) {
+      this.slotAudio.pause();
+      if (this.slotButton) this.slotButton.textContent = '▶';
+      const same = this.slotAudio.dataset.slot === key;
+      this.slotAudio = null;
+      this.slotButton = null;
+      if (same) return;
+    }
+
+    // The scan lists every file in the pack, so find the one this points at
+    // regardless of which extension it happens to use.
+    const scan = await this.api.content.scan();
+    const fresh = scan.ok && scan.types.flatMap((t) => t.packs).find((p) => p.id === this.pack.id);
+    const url = fresh && fresh.slotUrls ? fresh.slotUrls[assigned] : null;
+    if (!url) {
+      this.toast(`Could not find "${assigned}" in this pack.`, 'warn', 6000);
+      return;
+    }
+
+    const audio = new Audio(url);
+    audio.dataset.slot = key;
+    audio.addEventListener('ended', () => { button.textContent = '▶'; this.slotAudio = null; });
+    audio.play().catch(() => this.toast('Could not play that sound.', 'warn'));
+    button.textContent = '■';
+    this.slotAudio = audio;
+    this.slotButton = button;
   }
 
   // Everything else, for now

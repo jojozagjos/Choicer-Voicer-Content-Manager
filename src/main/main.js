@@ -54,6 +54,7 @@ const DEFAULT_SETTINGS = {
   ffprobePath: null,
   theme: 'system', // 'system' | 'dark' | 'light'
   showSplash: true,
+  showPreviewCaptions: true,
   captionStyle: {},
   characterColors: {},
   // Donation prompt state. It only appears after the app has actually been
@@ -415,6 +416,8 @@ function runSmokeTest(win) {
         tabs: document.querySelectorAll('.tab').length,
         captionTab: document.querySelectorAll('[data-export-tab]').length,
         settingsGroups: document.querySelectorAll('.settings-group').length,
+        previewCaptionToggle: Boolean(document.getElementById('set-preview-captions')),
+        footIsSunken: getComputedStyle(document.querySelector('#export-dialog .dialog-foot')).backgroundColor,
         discordButtonGone: !document.getElementById('btn-discord'),
         donateVisible: !document.getElementById('btn-about-donate').hidden,
         donateBlurbVisible: !document.getElementById('donate-blurb').hidden,
@@ -571,6 +574,16 @@ function runSmokeTest(win) {
           rowsMatch: rows === wantRows,
           markersMatch: document.querySelectorAll('.marker').length === wantRows,
           videoW: document.getElementById('video').videoWidth,
+          // Each speaker should get their own colour in the list, matching the
+          // captions, rather than every name sharing the accent colour.
+          characterColours: (() => {
+            const byName = {};
+            for (const r of document.querySelectorAll('.line-row')) {
+              const el = r.querySelector('.line-char');
+              if (el) byName[el.textContent] = el.style.color || getComputedStyle(el).color;
+            }
+            return byName;
+          })(),
           lineVolNumber: Boolean(row && row.querySelector('.line-vol-num')),
           lineOffsetNumber: Boolean(row && row.querySelector('input.nudge-val')),
           mixNumbers: document.querySelectorAll('.mix .num').length,

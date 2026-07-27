@@ -567,6 +567,8 @@ input[type="range"]::-webkit-slider-thumb {
 
 .line-body { grid-area: body; min-width: 0; }
 .line-top { display: flex; align-items: center; gap: 7px; margin-bottom: 2px; }
+/* Colour comes from the caption settings, set inline per row, so the line list
+   and the captions agree on who is who. */
 .line-char { font-size: 12px; font-weight: 700; color: var(--accent); }
 .line-caption { font-size: 12.5px; color: var(--text); overflow-wrap: anywhere; }
 
@@ -649,14 +651,18 @@ input[type="range"]::-webkit-slider-thumb {
 }
 .dialog-scroll > section { display: flex; flex-direction: column; gap: 12px; }
 
+/* Sits flush with the dialog rather than as a separate sunken bar, which read
+   as an empty input strip when it held nothing but a button. */
 .dialog-foot {
   flex: none;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  border-top: 1px solid var(--line);
-  background: var(--bg-sunken);
 }
+
+/* Only the scrolling dialogs need a divider, and only to show there is more
+   above. A footer holding just buttons gets none. */
+.dialog-foot:has(.field) { border-top: 1px solid var(--line); padding-top: 14px; }
 
 .seg-tabs {
   flex: none;

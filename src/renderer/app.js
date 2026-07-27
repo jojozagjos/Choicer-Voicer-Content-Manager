@@ -7,6 +7,7 @@ const el = {
   themeButtons: document.querySelectorAll('[data-theme-set]'),
   setTheme: $('#set-theme'),
   setSplash: $('#set-splash'),
+  setPreviewCaptions: $('#set-preview-captions'),
   btnAbout: $('#btn-about'),
   aboutDialog: $('#about-dialog'),
   aboutVersion: $('#about-version'),
@@ -236,8 +237,12 @@ function captionStyle() {
 }
 
 /**
- * A character's colour: whatever you picked, else one from the palette chosen
- * by name so the same character keeps the same colour between sessions.
+ * A character's colour: whatever you picked, else one from the palette.
+ *
+ * Assigned by order of first appearance in the pack rather than by hashing the
+ * name, because hashing let two characters in the same pack land on the same
+ * colour, which is exactly the case the feature exists to prevent. Order is
+ * stable for a given pack, so a character keeps its colour between sessions.
  */
 function characterColor(name) {
   const style = captionStyle();
@@ -246,6 +251,11 @@ function characterColor(name) {
   const overrides = state.settings.characterColors || {};
   if (overrides[name]) return overrides[name];
 
+  const index = packCharacters().indexOf(name);
+  if (index >= 0) return CHARACTER_PALETTE[index % CHARACTER_PALETTE.length];
+
+  // Not in the loaded pack (the settings preview, say), so fall back to a
+  // stable hash rather than always showing the first palette entry.
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
   return CHARACTER_PALETTE[hash % CHARACTER_PALETTE.length];
@@ -335,6 +345,7 @@ function renderCharacterColors() {
       });
       renderCharacterColors();
       renderCaptionPreview();
+      renderLines();
     });
 
     const reset = row.querySelector('.link-btn');
@@ -836,7 +847,7 @@ function renderLines() {
       <button class="line-time" title="Jump to this line">${formatTime(item.time)}</button>
       <div class="line-body">
         <div class="line-top">
-          <span class="line-char">${escapeHtml(item.character || 'Unknown')}</span>
+          <span class="line-char" style="color:${characterColor(item.character)}">${escapeHtml(item.character || 'Unknown')}</span>
           ${hasTake ? '' : '<span class="chip chip-warn">not dubbed</span>'}
           <span class="muted small">${item.duration ? `${item.duration.toFixed(1)}s` : ''}</span>
         </div>
@@ -962,7 +973,8 @@ function tick() {
   el.timeDisplay.textContent = `${formatTime(time)} / ${formatTime(duration)}`;
 
   const active = player.activeItem(time);
-  if (active && active.caption) {
+  const wantCaptions = state.settings.showPreviewCaptions !== false;
+  if (wantCaptions && active && active.caption) {
     const showSpeaker = captionStyle().showSpeaker !== false;
     const speaker = showSpeaker && active.character
       ? `<b style="color:${characterColor(active.character)}">${escapeHtml(active.character)}</b>`
@@ -1338,6 +1350,7 @@ function openSettings() {
   el.setFfmpeg.value = state.settings.ffmpegPath || '';
   el.setTheme.value = state.settings.theme || 'system';
   el.setSplash.checked = state.settings.showSplash !== false;
+  el.setPreviewCaptions.checked = state.settings.showPreviewCaptions !== false;
   renderFfmpegStatus();
   el.settingsDialog.showModal();
 }
@@ -1369,6 +1382,9 @@ function wireEvents() {
     button.addEventListener('click', () => setTheme(button.dataset.themeSet));
   }
   el.setTheme.addEventListener('change', () => setTheme(el.setTheme.value));
+  el.setPreviewCaptions.addEventListener('change', async () => {
+    state.settings = await window.api.settings.set({ showPreviewCaptions: el.setPreviewCaptions.checked });
+  });
   el.setSplash.addEventListener('change', async () => {
     state.settings = await window.api.settings.set({ showSplash: el.setSplash.checked });
   });
@@ -1431,6 +1447,7 @@ function wireEvents() {
     await saveCaptionStyle({ perCharacterColors: el.capPerCharacter.checked });
     renderCharacterColors();
     renderCaptionPreview();
+    renderLines();
   });
 
   el.btnCaptionReset.addEventListener('click', async () => {

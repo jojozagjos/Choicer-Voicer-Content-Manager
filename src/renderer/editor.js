@@ -47,8 +47,8 @@ export const EDITOR_KEYS = [
   ['Space', 'Play or pause'],
   ['← →', 'Step 2 seconds'],
   ['Shift + ← →', 'Step a frame'],
-  ['A', 'Add clip mode'],
-  ['V', 'Select mode'],
+  ['Hold then drag', 'Cut a new clip'],
+  ['Right or middle drag', 'Pan the timeline'],
   ['Delete', 'Delete the selected clip'],
   ['Ctrl + Z', 'Undo'],
   ['Ctrl + Y', 'Redo'],
@@ -76,6 +76,7 @@ export class PackEditor {
 
   close() {
     this.root.hidden = true;
+    if (this.timeline) this.timeline.destroy();
     this.root.innerHTML = '';
     document.removeEventListener('keydown', this._keyHandler);
     if (this.video) {
@@ -164,9 +165,7 @@ export class PackEditor {
       video.currentTime = Math.max(0, video.currentTime - (event.shiftKey ? 1 / 30 : 2));
     } else if (key === 'arrowright' && video) {
       video.currentTime += event.shiftKey ? 1 / 30 : 2;
-    } else if (key === 'a' && timeline) timeline.setMode('add');
-    else if (key === 'v' && timeline) timeline.setMode('select');
-    else if (key === 'f' && timeline) {
+    } else if (key === 'f' && timeline) {
       timeline.viewStart = 0;
       timeline.viewEnd = timeline.duration;
       timeline.draw();
@@ -282,12 +281,10 @@ export class PackEditor {
         <button type="button" class="btn btn-icon" data-act="fwd">⟳</button>
         <span class="time" data-role="time">0:00.00</span>
 
-        <span class="mode-switch" role="group">
-          <button type="button" data-act="mode-select" class="on">Move</button>
-          <button type="button" data-act="mode-add">+ Add clip</button>
+        <span class="muted small" data-role="hint">
+          Click a clip to select it. Drag it to move, or its edge to retime.
+          Drag empty space to pan, or hold still a moment then drag to cut a new clip.
         </span>
-
-        <span class="muted small" data-role="hint"></span>
         <button type="button" class="btn btn-small" data-act="zoom-fit">Fit</button>
       </div>
       <canvas class="timeline" data-role="timeline"></canvas>`;
@@ -325,16 +322,6 @@ export class PackEditor {
     };
     new ResizeObserver(sizeToBox).observe(q('timeline'));
 
-    const hint = q('hint');
-    timeline.onModeChange = (mode) => {
-      controls.querySelector('[data-act="mode-select"]').classList.toggle('on', mode === 'select');
-      controls.querySelector('[data-act="mode-add"]').classList.toggle('on', mode === 'add');
-      hint.textContent = mode === 'add'
-        ? 'Drag across the timeline to mark out a clip.'
-        : 'Drag to pan. Drag a block to move it, or its edge to retime it.';
-    };
-    timeline.onModeChange('select');
-
     controls.addEventListener('click', async (event) => {
       const act = event.target.dataset.act;
       if (!act) return;
@@ -344,8 +331,6 @@ export class PackEditor {
         else { video.pause(); event.target.textContent = '▶'; }
       } else if (act === 'back') video.currentTime = Math.max(0, video.currentTime - 2);
       else if (act === 'fwd') video.currentTime += 2;
-      else if (act === 'mode-select') timeline.setMode('select');
-      else if (act === 'mode-add') timeline.setMode('add');
       else if (act === 'zoom-fit') {
         timeline.viewStart = 0;
         timeline.viewEnd = timeline.duration;
@@ -360,9 +345,11 @@ export class PackEditor {
     if (video.readyState >= 1) ready();
     else video.addEventListener('loadedmetadata', ready, { once: true });
 
+    // The playhead follows the video every frame; the readout only needs to
+    // keep up with what a person can read.
+    timeline.follow(video);
     video.addEventListener('timeupdate', () => {
       q('time').textContent = fmt(video.currentTime);
-      timeline.setPlayhead(video.currentTime);
     });
 
     this.renderClipList(clipList);
@@ -389,8 +376,10 @@ export class PackEditor {
    */
   async commitClipChange(clip, change, clipList) {
     const pack = this.pack;
+    const before = { start: change.previousStart, duration: change.previousDuration };
 
-    if (!change.resized) {
+    // Moving a clip only rewrites its timestamp.
+    const move = async (start) => {
       const result = await this.api.content.writeClipMeta({
         destDir: pack.dir,
         base: clip.base,
@@ -398,37 +387,58 @@ export class PackEditor {
           caption: clip.caption || '',
           character: clip.character || '',
           image: clip.image || `${clip.base}.png`,
-          timestamp: change.start,
+          timestamp: start,
         },
       });
-      if (!result.ok) this.toast(`Could not save it: ${result.error}`, 'error', 7000);
-      else this.toast(`Moved to ${fmt(change.start)}.`, 'ok', 1600);
-      this.renderClipList(clipList);
-      return;
-    }
+      if (!result.ok) throw new Error(result.error);
+      clip.time = start;
+      this.refreshClips();
+    };
 
-    this.toast('Recutting the clip…');
-    const result = await this.api.content.extractClip({
-      source: pack.videoPath,
-      destDir: pack.dir,
-      baseName: clip.base,
-      start: change.start,
-      duration: change.duration,
-      meta: {
-        caption: clip.caption || '',
-        character: clip.character || '',
-        image: clip.image || `${clip.base}.png`,
-      },
-      overwrite: true,
-    });
+    // Retiming has to cut the audio again so the file matches the block.
+    const retime = async (start, duration) => {
+      const result = await this.run('Recutting the clip…', () => this.api.content.extractClip({
+        source: pack.videoPath,
+        destDir: pack.dir,
+        baseName: clip.base,
+        start,
+        duration,
+        meta: {
+          caption: clip.caption || '',
+          character: clip.character || '',
+          image: clip.image || `${clip.base}.png`,
+        },
+        overwrite: true,
+      }));
+      if (!result.ok) throw new Error(result.error);
+      clip.time = start;
+      clip.duration = duration;
+      if (this.onChanged) await this.onChanged(pack.id, { keepEditor: true });
+      this.refreshClips();
+    };
 
-    if (!result.ok) {
-      this.toast(`Could not recut it: ${result.error}`, 'error', 8000);
-      return;
+    try {
+      if (!change.resized) {
+        await move(change.start);
+        this.toast(`Moved to ${fmt(change.start)}.`, 'ok', 1600);
+        this.push({
+          label: 'move clip',
+          undo: () => move(before.start),
+          redo: () => move(change.start),
+        });
+      } else {
+        await retime(change.start, change.duration);
+        this.toast(`Retimed to ${fmt(change.start)}, ${change.duration.toFixed(2)}s.`, 'ok', 2000);
+        this.push({
+          label: 'retime clip',
+          undo: () => retime(before.start, before.duration),
+          redo: () => retime(change.start, change.duration),
+        });
+      }
+    } catch (err) {
+      this.toast(`Could not save that: ${err.message}`, 'error', 8000);
+      this.refreshClips();
     }
-    this.toast(`Retimed to ${fmt(change.start)}, ${change.duration.toFixed(2)}s.`, 'ok', 2000);
-    if (this.onChanged) await this.onChanged(pack.id, { keepEditor: true });
-    this.renderClipList(clipList);
   }
 
   /** Cuts the marked range out of the video and writes its metadata. */

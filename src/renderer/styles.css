@@ -451,6 +451,13 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
 
 .dropzone-slim { padding: 12px; gap: 5px; }
 
+/* Dropping a pack folder anywhere on the list installs it. */
+.content-grid.drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: -8px;
+  background: var(--glow);
+}
+
 .detail-actions { display: flex; gap: 6px; margin-top: auto; }
 .detail-actions .btn { flex: 1; }
 
@@ -478,6 +485,7 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
 /* Pack editors */
 
 .editor-view {
+  position: relative;
   grid-column: 1 / -1;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -607,10 +615,19 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
 }
 .spinner-small { width: 15px; height: 15px; border-width: 2px; }
 
+/* Floats over the editor: in normal flow it sat behind the video, which
+   creates its own stacking context. */
 .shortcut-sheet {
+  position: absolute;
+  top: 56px;
+  right: 16px;
+  z-index: 40;
+  width: min(520px, calc(100% - 32px));
   padding: 12px 16px;
   background: var(--bg-raised);
-  border-bottom: 1px solid var(--line);
+  border: 1px solid var(--accent-dim);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
 }
 .shortcut-sheet h4 { font-size: 12px; margin-bottom: 8px; }
 .shortcut-sheet dl {

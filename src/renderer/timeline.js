@@ -14,6 +14,7 @@
 const EDGE_GRAB = 7;      // pixels either side of a boundary that resize
 const MIN_CLIP = 0.15;    // seconds, below which a clip is not worth having
 const RULER_H = 18;
+const HOLD_TO_CREATE = 320; // ms of holding still before a drag marks a clip
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -48,13 +49,34 @@ export class Timeline {
     this.onModeChange = null;
 
     this._bind();
+
+    // Colours are read from CSS variables at paint time, so a theme change has
+    // to trigger a repaint or the timeline keeps the old palette until the
+    // next interaction.
+    this._themeWatch = new MutationObserver(() => this.draw());
+    this._themeWatch.observe(document.documentElement, {
+      attributes: true, attributeFilter: ['data-theme'],
+    });
   }
 
-  setMode(mode) {
-    this.mode = mode;
-    this.canvas.classList.toggle('adding', mode === 'add');
-    if (this.onModeChange) this.onModeChange(mode);
-    this.draw();
+  destroy() {
+    if (this._themeWatch) this._themeWatch.disconnect();
+    if (this._raf) cancelAnimationFrame(this._raf);
+  }
+
+  /**
+   * Follows a media element frame by frame. `timeupdate` only fires a few
+   * times a second, which made the playhead jump rather than travel.
+   */
+  follow(media) {
+    const tick = () => {
+      if (this.playhead !== media.currentTime) {
+        this.playhead = media.currentTime;
+        this.draw();
+      }
+      this._raf = requestAnimationFrame(tick);
+    };
+    this._raf = requestAnimationFrame(tick);
   }
 
   setDuration(seconds) {
@@ -318,11 +340,23 @@ export class Timeline {
   _bind() {
     const canvas = this.canvas;
 
+    // Right and middle drag pan, so the context menu must not interrupt.
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
     canvas.addEventListener('pointerdown', (e) => {
       const x = e.offsetX;
       const onRuler = e.offsetY < RULER_H;
 
-      // The ruler always scrubs, whatever the mode.
+      // Middle or right button pans from anywhere, including over a clip.
+      if (e.button === 1 || e.button === 2) {
+        this.drag = { kind: 'pan', startX: x, startView: this.viewStart };
+        canvas.setPointerCapture(e.pointerId);
+        canvas.style.cursor = 'grabbing';
+        return;
+      }
+      if (e.button !== 0) return;
+
+      // The ruler always scrubs.
       if (onRuler) {
         this.drag = { kind: 'scrub' };
         if (this.onSeek) this.onSeek(clamp(this.xToTime(x), 0, this.duration));
@@ -330,36 +364,37 @@ export class Timeline {
         return;
       }
 
-      if (this.mode === 'add') {
-        const at = clamp(this.xToTime(x), 0, this.duration);
-        this.pending = { start: at, end: at };
-        this.drag = { kind: 'create', startX: x };
+      const hit = this.clipAt(x);
+      if (hit) {
+        this.selected = hit.clip.base;
+        if (this.onSelect) this.onSelect(hit.clip);
+        this.drag = {
+          kind: hit.edge ? `resize-${hit.edge}` : 'move',
+          clip: hit.clip,
+          startX: x,
+          originalTime: hit.clip.time,
+          originalDuration: Math.max(hit.clip.duration || 0, MIN_CLIP),
+          moved: false,
+        };
         canvas.setPointerCapture(e.pointerId);
         this.draw();
         return;
       }
 
-      const hit = this.clipAt(x);
-      if (!hit) {
-        // Empty space pans, which is what dragging a timeline should do.
-        this.drag = { kind: 'pan', startX: x, startView: this.viewStart };
-        canvas.setPointerCapture(e.pointerId);
-        return;
-      }
-
-      this.selected = hit.clip.base;
-      if (this.onSelect) this.onSelect(hit.clip);
-
-      this.drag = {
-        kind: hit.edge ? `resize-${hit.edge}` : 'move',
-        clip: hit.clip,
-        startX: x,
-        originalTime: hit.clip.time,
-        originalDuration: Math.max(hit.clip.duration || 0, MIN_CLIP),
-        moved: false,
-      };
+      // Empty space: a quick drag pans, but holding still first arms a new
+      // clip. That way panning is the reflex and creating is deliberate,
+      // without needing a mode to switch between.
+      const at = clamp(this.xToTime(x), 0, this.duration);
+      this.drag = { kind: 'maybe', startX: x, startView: this.viewStart, startTime: at };
       canvas.setPointerCapture(e.pointerId);
-      this.draw();
+
+      this.drag.timer = setTimeout(() => {
+        if (!this.drag || this.drag.kind !== 'maybe') return;
+        this.drag = { kind: 'create', startX: x };
+        this.pending = { start: at, end: at };
+        canvas.style.cursor = 'crosshair';
+        this.draw();
+      }, HOLD_TO_CREATE);
     });
 
     canvas.addEventListener('pointermove', (e) => {
@@ -368,10 +403,19 @@ export class Timeline {
       if (!this.drag) {
         const hit = this.clipAt(x);
         canvas.style.cursor = e.offsetY < RULER_H ? 'text'
-          : this.mode === 'add' ? 'crosshair'
-            : hit && hit.edge ? 'ew-resize'
-              : hit ? 'grab' : 'grab';
+          : hit && hit.edge ? 'ew-resize'
+            : hit ? 'grab' : 'grab';
         return;
+      }
+
+      // Moving before the hold expires means a pan was intended.
+      if (this.drag.kind === 'maybe') {
+        if (Math.abs(x - this.drag.startX) > 3) {
+          clearTimeout(this.drag.timer);
+          this.drag = { kind: 'pan', startX: this.drag.startX, startView: this.drag.startView };
+        } else {
+          return;
+        }
       }
 
       const width = this.canvas.getBoundingClientRect().width;
@@ -416,9 +460,16 @@ export class Timeline {
     const finish = (e) => {
       if (!this.drag) return;
       const drag = this.drag;
+      clearTimeout(drag.timer);
       this.drag = null;
       canvas.style.cursor = '';
       try { canvas.releasePointerCapture(e.pointerId); } catch { /* already released */ }
+
+      // Released before the hold armed anything: treat it as a click to seek.
+      if (drag.kind === 'maybe') {
+        if (this.onSeek) this.onSeek(clamp(drag.startTime, 0, this.duration));
+        return;
+      }
 
       if (drag.kind === 'create') {
         const { start, end } = this.pending;
@@ -437,6 +488,9 @@ export class Timeline {
         this.onCommit(drag.clip, {
           start: drag.clip.time,
           duration: drag.clip.duration,
+          // Where it was, so the change can be undone.
+          previousStart: drag.originalTime,
+          previousDuration: drag.originalDuration,
           resized: drag.kind !== 'move',
         });
       }

@@ -119,8 +119,6 @@ const el = {
   cardExport: $('#card-export'),
   cardCreate: $('#card-create'),
   cardManage: $('#card-manage'),
-  creditHelp: $('#credit-help'),
-  creditDonate: $('#credit-donate'),
 
   editorView: $('#editor-view'),
   btnContentNew: $('#btn-content-new'),
@@ -722,12 +720,6 @@ function renderContentDetail(pack) {
       ${issues}
     </div>
 
-    <div class="dropzone dropzone-slim" id="detail-drop">
-      <p class="muted small"><b>Drop files here to add them</b></p>
-      <p class="muted small">Anything in the wrong format is converted.</p>
-      <button type="button" class="btn btn-small" id="btn-detail-add">Add files…</button>
-    </div>
-
     <div class="detail-actions">
       <button type="button" class="btn btn-primary btn-small" id="btn-detail-edit">Edit</button>
       <button type="button" class="btn btn-small" id="btn-detail-open">Open folder</button>
@@ -742,26 +734,6 @@ function renderContentDetail(pack) {
 
   el.contentDetail.querySelector('#btn-detail-delete')
     .addEventListener('click', () => removePack(pack));
-
-  const drop = el.contentDetail.querySelector('#detail-drop');
-  el.contentDetail.querySelector('#btn-detail-add').addEventListener('click', async () => {
-    const picked = await window.api.dialog.pickFiles({ title: `Add files to ${pack.title}` });
-    importIntoPack(pack, picked);
-  });
-
-  for (const event of ['dragenter', 'dragover']) {
-    drop.addEventListener(event, (e) => { e.preventDefault(); drop.classList.add('over'); });
-  }
-  for (const event of ['dragleave', 'drop']) {
-    drop.addEventListener(event, () => drop.classList.remove('over'));
-  }
-  drop.addEventListener('drop', (e) => {
-    e.preventDefault();
-    const paths = [...(e.dataTransfer.files || [])]
-      .map((f) => window.api.pathForFile(f))
-      .filter(Boolean);
-    importIntoPack(pack, paths);
-  });
 }
 
 /**
@@ -796,6 +768,31 @@ async function openEditorFor(pack) {
     if (options.keepEditor) editor.pack = fresh;
     else openEditorFor(fresh);
   };
+}
+
+/** Installs dropped pack folders, refusing anything that is not one. */
+async function installPacks(paths) {
+  toast(`Installing ${paths.length} folder${paths.length > 1 ? 's' : ''}…`);
+  const result = await window.api.content.install(paths);
+
+  if (!result.ok) {
+    toast(`Could not install: ${result.error}`, 'error', 8000);
+    return;
+  }
+
+  for (const bad of result.rejected) {
+    toast(bad.error, 'warn', 9000);
+  }
+  if (result.installed.length) {
+    const names = result.installed.map((i) => i.name).join(', ');
+    toast(`Installed ${names}.`, 'ok', 7000);
+    await refreshContent();
+    await rescan(state.settings.gameDir);
+    // Land on the type it went into, so the new pack is visible.
+    state.contentType = result.installed[0].type;
+    renderContentTypes();
+    renderContentGrid();
+  }
 }
 
 /** Copies or converts files into an existing pack, then rescans. */
@@ -857,14 +854,13 @@ async function removePack(pack) {
 const CREATE_TYPES = [
   {
     id: 'voice', icon: '🎬', label: 'Dub or voice pack',
-    blurb: 'Clips to dub over. Add a video to make it a dub pack.',
-    accepts: 'all',
-    dropHint: 'Drop a video, a backing track, and your clips. A video in any format is converted to .ogv.',
-    fields: [
-      { key: 'title', label: 'Title shown in game', placeholder: 'My Dub Pack' },
-      { key: 'subtitle', label: 'Subtitle', placeholder: 'Optional' },
-      { key: 'authorsText', label: 'Authors, comma separated', placeholder: 'you, a friend' },
-    ],
+    blurb: 'Clips to dub over. Add a video and cut it up in the editor.',
+    accepts: 'video',
+    // Name and a video is all it takes; captions, clips and pictures are all
+    // made in the editor afterwards.
+    dropHint: 'Drop the video. Any format works, it is converted to .ogv for you.',
+    fields: [],
+    opensEditor: true,
   },
   {
     id: 'player', icon: '🧍', label: 'Contestant',
@@ -1019,32 +1015,54 @@ async function runCreate() {
     options.isDub = createState.files.some((f) => f.kind === 'video');
   }
 
+  // Converting a video takes a while, so the dialog says what it is doing and
+  // stays disabled rather than looking like nothing happened.
+  setCreateBusy(true, 'Creating the pack…');
+
   const created = await window.api.content.create(type.id, options);
   if (!created.ok) {
+    setCreateBusy(false);
     toast(`Could not create it: ${created.error}`, 'error', 8000);
     return;
   }
 
   // Media gets converted into the new folder under the names the game expects.
-  if (createState.files.length) {
-    toast(`Importing ${createState.files.length} file${createState.files.length > 1 ? 's' : ''}…`);
-    for (const file of createState.files) {
-      const target = importTargetName(type.id, file, createState.files);
-      await window.api.content.import(created.dir, [file.path], {
-        baseName: target.base,
-        kind: file.kind,
-        audioFormat: target.audioFormat,
-        maxSeconds: target.maxSeconds,
-      });
-    }
+  let done = 0;
+  for (const file of createState.files) {
+    done++;
+    setCreateBusy(true, `Converting ${file.name} (${done} of ${createState.files.length})…`);
+    const target = importTargetName(type.id, file, createState.files);
+    await window.api.content.import(created.dir, [file.path], {
+      baseName: target.base,
+      kind: file.kind,
+      audioFormat: target.audioFormat,
+      maxSeconds: target.maxSeconds,
+    });
   }
 
+  setCreateBusy(false);
   el.createDialog.close();
-  toast(`Made "${created.name}". ${created.next || ''}`, 'ok', 9000);
+  toast(`Made "${created.name}".`, 'ok', 6000);
 
   await refreshContent();
   state.contentType = type.id;
   await switchTab('content');
+
+  // A new dub pack is useless until its clips exist, so go straight there.
+  const fresh = state.content
+    && state.content.types.flatMap((t) => t.packs).find((p) => p.dir === created.dir);
+  if (fresh && type.opensEditor) await openEditorFor(fresh);
+}
+
+/** Locks the create dialog while files are converting, and says why. */
+function setCreateBusy(on, message) {
+  el.btnCreateGo.disabled = on;
+  el.btnCreateBack.disabled = on;
+  el.createBrowse.disabled = on;
+  el.btnCreateGo.textContent = on ? 'Working…' : 'Create';
+  el.createHint.textContent = on
+    ? message
+    : (createState.type ? createState.type.blurb : 'Pick what you want to make.');
 }
 
 /**
@@ -2265,11 +2283,6 @@ function wireEvents() {
   el.cardExport.addEventListener('click', () => switchTab('export'));
   el.cardManage.addEventListener('click', () => switchTab('content'));
   el.cardCreate.addEventListener('click', () => openCreateDialog());
-  el.creditHelp.addEventListener('click', () => el.aboutDialog.showModal());
-  if (links.donate) {
-    el.creditDonate.hidden = false;
-    el.creditDonate.addEventListener('click', () => window.api.shell.openExternal(links.donate));
-  }
 
   // Creating
   el.btnContentNew.addEventListener('click', () => openCreateDialog(state.contentType));
@@ -2300,6 +2313,25 @@ function wireEvents() {
       .map((f) => window.api.pathForFile(f))
       .filter(Boolean);
     addCreateFiles(paths);
+  });
+
+  // Dropping an unzipped pack onto the list installs it, working out which
+  // folder it belongs in from what is inside.
+  for (const event of ['dragenter', 'dragover']) {
+    el.contentGrid.addEventListener(event, (e) => {
+      e.preventDefault();
+      el.contentGrid.classList.add('drop-target');
+    });
+  }
+  for (const event of ['dragleave', 'drop']) {
+    el.contentGrid.addEventListener(event, () => el.contentGrid.classList.remove('drop-target'));
+  }
+  el.contentGrid.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    const paths = [...(e.dataTransfer.files || [])]
+      .map((f) => window.api.pathForFile(f))
+      .filter(Boolean);
+    if (paths.length) await installPacks(paths);
   });
 
   el.btnContentFolder.addEventListener('click', () => {

@@ -311,6 +311,58 @@ function saveImage(packDir, base, dataUrl) {
 }
 
 /**
+ * Works out what kind of pack a folder is by what is inside it, so a download
+ * can be dropped in without being told where it belongs.
+ */
+function identifyPack(dir) {
+  let files;
+  try {
+    files = fs.readdirSync(dir);
+  } catch {
+    return null;
+  }
+
+  const has = (name) => files.some((f) => f.toLowerCase() === name.toLowerCase());
+  const hasPrefix = (prefix) => files.some((f) => f.toLowerCase().startsWith(prefix));
+  const hasExt = (ext) => files.some((f) => f.toLowerCase().endsWith(ext));
+
+  if (has('config_player.json')) return 'player';
+  if (has('config_host.json')) return 'host';
+  if (has('config_menu.json')) return 'menu';
+  if (has('config_chatter.ini') || has('config_chatter.cfg')) return 'chatter';
+  if (has('config_judges.json') || hasPrefix('judge1')) return 'judges';
+  if (has('config_studio.json') || hasPrefix('model.') || hasPrefix('music_studio')) return 'studio';
+
+  // A voice pack is the loosest shape, so it is checked last: a video, a pack
+  // info file, or clip metadata alongside audio.
+  if (hasPrefix('dub_video') || has('_pack_info.ini') || has('_pack_info.txt')) return 'voice';
+  if (hasExt('.ini') && files.some((f) => /\.(wav|mp3|ogg)$/i.test(f))) return 'voice';
+
+  return null;
+}
+
+/**
+ * Copies a pack folder into the right place. Refuses anything it cannot
+ * identify rather than dumping a stray folder the game will ignore.
+ */
+function installPack(gameDir, sourceDir) {
+  const stat = fs.statSync(sourceDir);
+  if (!stat.isDirectory()) throw new Error('Drop the unzipped folder, not a file');
+
+  const type = identifyPack(sourceDir);
+  if (!type) {
+    throw new Error('That folder does not look like a pack. It needs a config file, a dub video, or clips.');
+  }
+
+  const parent = path.join(gameDir, TYPE_DIRS[type]);
+  fs.mkdirSync(parent, { recursive: true });
+
+  const target = uniqueDir(parent, safeFolderName(path.basename(sourceDir)));
+  fs.cpSync(sourceDir, target, { recursive: true });
+  return { type, dir: target, name: path.basename(target) };
+}
+
+/**
  * Moves a clip's files out of a pack into a holding folder, so deleting one is
  * undoable. Anything the game would load goes: the audio, the metadata and the
  * picture that shares its name.
@@ -372,6 +424,8 @@ function deletePack(gameDir, packDir) {
 
 module.exports = {
   createPack,
+  installPack,
+  identifyPack,
   deletePack,
   trashClip,
   restoreClip,

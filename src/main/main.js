@@ -15,7 +15,7 @@ const { runExport } = require('./exporter');
 const { ensureProxy } = require('./proxy');
 const { scanContent } = require('./content');
 const {
-  createPack, deletePack, trashClip, restoreClip, writeClipMeta, saveImage,
+  createPack, installPack, deletePack, trashClip, restoreClip, writeClipMeta, saveImage,
 } = require('./create');
 const convert = require('./convert');
 
@@ -655,16 +655,21 @@ function runSmokeTest(win) {
         };
 
         const y = box.height - 20;
+        const at = (x) => ({
+          bubbles: true, clientX: box.left + x, clientY: box.top + y, pointerId: 1, button: 0,
+        });
 
-        // In the default mode a drag must pan, not create anything.
+        // A quick drag pans and must not create anything.
         const beforePan = document.querySelectorAll('.clip-row').length;
         drag(box.width * 0.5, box.width * 0.4, y);
-        await new Promise((r) => setTimeout(r, 400));
+        await new Promise((r) => setTimeout(r, 600));
         const createdByPan = document.querySelectorAll('.clip-row').length - beforePan;
 
-        // Only add mode creates.
-        $('[data-act="mode-add"]').click();
-        drag(box.width * 0.60, box.width * 0.66, y);
+        // Holding still first arms a new clip, then the drag marks it out.
+        canvas.dispatchEvent(new PointerEvent('pointerdown', at(box.width * 0.60)));
+        await new Promise((r) => setTimeout(r, 450));
+        canvas.dispatchEvent(new PointerEvent('pointermove', at(box.width * 0.66)));
+        canvas.dispatchEvent(new PointerEvent('pointerup', at(box.width * 0.66)));
 
         for (let i = 0; i < 80; i++) {
           await new Promise((r) => setTimeout(r, 250));
@@ -1207,6 +1212,23 @@ function registerIpc() {
     } catch (err) {
       return { ok: false, error: err.message };
     }
+  });
+
+  /** Installs a pack folder someone dropped in, working out its type. */
+  ipcMain.handle('content:install', (_e, dirs) => {
+    const gameDir = gamedata.resolveGameDir(settings.gameDir || gamedata.defaultGameDir());
+    if (!gameDir) return { ok: false, error: 'No game folder found' };
+
+    const installed = [];
+    const rejected = [];
+    for (const dir of dirs || []) {
+      try {
+        installed.push(installPack(gameDir, dir));
+      } catch (err) {
+        rejected.push({ dir, error: err.message });
+      }
+    }
+    return { ok: true, installed, rejected };
   });
 
   ipcMain.handle('content:delete', async (_e, packDir) => {

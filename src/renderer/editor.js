@@ -362,17 +362,18 @@ export class PackEditor {
       <div class="backing-lane" data-role="backing-lane" hidden>
         <div class="backing-head">
           <span class="backing-title">Backing track</span>
-          <button type="button" class="btn btn-small" data-act="backing-mute"
-                  title="Hear the video and the backing track together, or just the video">
-            🔊 On
-          </button>
-          <label class="slider-field" title="How loud the backing track is here">
-            <input type="range" data-role="backing-volume" min="0" max="1" step="0.01" value="0.8" />
-            <b class="slider-read" data-role="backing-read">80%</b>
-          </label>
+
+          <span class="muted small">Listening to</span>
+          <div class="segmented listen-switch" role="group">
+            <button type="button" data-listen="video" class="on"
+                    title="The video's own audio, as it came">Video</button>
+            <button type="button" data-listen="backing"
+                    title="Only the backing track, to check it on its own">Backing track</button>
+          </div>
+
           <span class="grow"></span>
           <span class="muted small" data-role="backing-note">
-            Plays along with the video, from wherever the playhead is
+            Press play. Only the one selected is audible.
           </span>
         </div>
         <canvas class="backing-wave" data-role="backing-wave"></canvas>
@@ -453,9 +454,12 @@ export class PackEditor {
         this.toggleTrim(event.target);
       } else if (act === 'backing') {
         this.makeBackingTrack();
-      } else if (act === 'backing-mute') {
-        this.toggleBacking(event.target);
       }
+    });
+
+    controls.addEventListener('click', (event) => {
+      const which = event.target.dataset.listen;
+      if (which) this.listenTo(which);
     });
 
     this.setupBackingLane(controls, video);
@@ -687,12 +691,14 @@ export class PackEditor {
       title: replacing ? 'Replace the backing track?' : 'Build a backing track?',
       detail: `The video's own audio is used, quietened under each of the ${clips.length} lines `
         + 'so your dub sits in front of it.\n\n'
-        + 'Muffle dulls it and pulls it down, keeping the room tone and music underneath. '
-        + 'Silence removes it completely, which is cleaner but can sound like the audio dropped '
-        + 'out.\n\n'
+        + 'MUFFLE keeps the scene going underneath. The music and room tone are still there, '
+        + 'dulled and turned down, so it sounds like the original with the voices pushed back. '
+        + 'This is almost always what you want.\n\n'
+        + 'SILENCE cuts it to nothing under each line. Cleaner, but the scene drops away every '
+        + 'time somebody speaks, which can sound like the audio broke.\n\n'
         + 'Either way, music playing underneath a line is affected along with the voice.'
         + (replacing ? '\n\nThe current backing track is overwritten.' : ''),
-      buttons: ['Muffle under lines', 'Silence under lines', 'Cancel'],
+      buttons: ['Muffle (recommended)', 'Silence', 'Cancel'],
       mark: '♪',
     });
     if (answer !== 0 && answer !== 1) return;
@@ -710,8 +716,40 @@ export class PackEditor {
       this.toast(`Could not build it: ${result.error}`, 'error', 8000);
       return;
     }
-    this.toast(`Backing track built, quietened under ${result.ducked} lines.`, 'ok', 5000);
+    this.toast(
+      `Backing track ${result.mode === 'silence' ? 'built, silent' : 'built, muffled'} under `
+      + `${result.ducked} line${result.ducked === 1 ? '' : 's'}.`,
+      'ok', 6000
+    );
+
     if (this.onChanged) await this.onChanged(pack.id, { keepEditor: true });
+
+    // The lane is built from the pack as it was when the editor opened, so a
+    // track that did not exist then has nowhere to appear. Rebuilding the
+    // controls puts it there straight away rather than on the next visit.
+    this.rebuildBackingLane();
+  }
+
+  /**
+   * Rebuilds the backing lane against the pack's current state.
+   *
+   * Used after building or replacing a track, which is the one change that can
+   * make the lane appear from nothing or need a different file behind it.
+   */
+  rebuildBackingLane() {
+    const controls = this.root.querySelector('.editor-controls');
+    if (!controls || !this.video) return;
+
+    if (this.backingAudio) {
+      this.backingAudio.pause();
+      this.backingAudio.src = '';
+      this.backingAudio = null;
+    }
+    if (this._backingSync) { clearInterval(this._backingSync); this._backingSync = null; }
+    this.backingPeaks = null;
+    this.backingDuration = 0;
+
+    this.setupBackingLane(controls, this.video);
   }
 
   // Trimming the video
@@ -886,22 +924,11 @@ export class PackEditor {
     if (!this.pack.backingUrl) return;
 
     const canvas = controls.querySelector('[data-role="backing-wave"]');
-    const volume = controls.querySelector('[data-role="backing-volume"]');
-    const read = controls.querySelector('[data-role="backing-read"]');
 
     const audio = new Audio(this.pack.backingUrl);
     audio.preload = 'auto';
-    audio.volume = Number(volume.value);
     this.backingAudio = audio;
     this.backingCanvas = canvas;
-    this.backingOn = true;
-
-    const applyVolume = () => {
-      audio.volume = this.backingOn ? Number(volume.value) : 0;
-      read.textContent = `${Math.round(Number(volume.value) * 100)}%`;
-    };
-    volume.addEventListener('input', applyVolume);
-    applyVolume();
 
     // The video is the clock. The track chases it rather than running its own
     // timeline, because two independent players drift apart within seconds.
@@ -914,7 +941,7 @@ export class PackEditor {
 
     video.addEventListener('play', () => {
       sync();
-      if (this.backingOn) audio.play().catch(() => {});
+      if (this.listening === 'backing') audio.play().catch(() => {});
     });
     video.addEventListener('pause', () => audio.pause());
     video.addEventListener('seeked', sync);
@@ -925,26 +952,50 @@ export class PackEditor {
       if (!video.paused) sync();
     }, 1000);
 
+    this.listenTo('video');
+
     this.drawBackingWave();
     new ResizeObserver(() => this.drawBackingWave()).observe(canvas);
     this.loadBackingPeaks();
   }
 
-  /** Turns the backing track on or off without losing where it is. */
-  toggleBacking(button) {
-    if (!this.backingAudio) {
-      this.toast('This pack has no backing track yet.', 'warn');
-      return;
+  /**
+   * Picks which of the two you are hearing.
+   *
+   * They used to play together, which sounded like a mess and made it
+   * impossible to tell whether the backing track was right: the video's own
+   * dialogue was still in there underneath it. One at a time is the only way
+   * to check the track actually does what you asked for.
+   */
+  listenTo(which) {
+    this.listening = which;
+
+    for (const button of this.root.querySelectorAll('[data-listen]')) {
+      button.classList.toggle('on', button.dataset.listen === which);
     }
-    this.backingOn = !this.backingOn;
-    button.textContent = this.backingOn ? '🔊 On' : '🔇 Off';
-    button.classList.toggle('on', this.backingOn);
 
-    const slider = this.root.querySelector('[data-role="backing-volume"]');
-    this.backingAudio.volume = this.backingOn && slider ? Number(slider.value) : 0;
+    const note = this.root.querySelector('[data-role="backing-note"]');
+    if (note) {
+      note.textContent = which === 'backing'
+        ? 'The video is muted. You are hearing the backing track alone.'
+        : 'Press play. Only the one selected is audible.';
+    }
 
-    if (!this.backingOn) this.backingAudio.pause();
-    else if (this.video && !this.video.paused) this.backingAudio.play().catch(() => {});
+    const video = this.video;
+    const audio = this.backingAudio;
+    if (!video) return;
+
+    if (which === 'backing') {
+      video.muted = true;
+      if (audio) {
+        audio.volume = 1;
+        audio.currentTime = video.currentTime;
+        if (!video.paused) audio.play().catch(() => {});
+      }
+    } else {
+      video.muted = false;
+      if (audio) audio.pause();
+    }
   }
 
   /** Decodes the backing track once, for the waveform under the timeline. */
@@ -1474,6 +1525,27 @@ export class PackEditor {
     this.refreshClips();
   }
 
+  /**
+   * Repaints whatever the open editor is showing, from the pack as it now is.
+   *
+   * Called after every change that keeps the editor open. Individual actions
+   * used to each remember to refresh their own corner, and the ones that
+   * forgot produced the same puzzling symptom every time: the change was on
+   * disk, but you had to leave the editor and come back to see it. One place
+   * that repaints everything is harder to forget than a dozen.
+   */
+  refreshAfterChange() {
+    if (this.root.hidden) return;
+
+    // Each of these is a no-op when the editor on screen has no such part.
+    this.refreshSlots();
+    if (this.root.querySelector('[data-role="clips"]')) this.refreshClips();
+    if (this.root.querySelector('[data-role="chatter"]')) this.renderChatterList();
+
+    const heading = this.root.querySelector('.pack-head-text h3');
+    if (heading && this.pack.title) heading.textContent = this.pack.title;
+  }
+
   /** Repaints the timeline and clip list from the pack's current clips. */
   refreshClips() {
     if (this.timeline) this.timeline.setClips(this.pack.clips || []);
@@ -1739,7 +1811,7 @@ export class PackEditor {
     const pack = this.pack;
     const icon = pack.iconUrl
       ? `<img src="${pack.iconUrl}" alt="" />`
-      : '<img src="placeholder.png" alt="No picture yet" class="placeholder-art" />';
+      : '<img src="../../assets/placeholder.png" alt="No picture yet" class="placeholder-art" />';
 
     const head = el('div', 'pack-head');
     head.innerHTML = `
@@ -1930,7 +2002,7 @@ export class PackEditor {
     const preview = slot.kind === 'image' && url
       ? `<img src="${url}" alt="" />`
       : isCharacter
-        ? '<img src="placeholder.png" alt="No picture yet" class="placeholder-art" />'
+        ? '<img src="../../assets/placeholder.png" alt="No picture yet" class="placeholder-art" />'
         : `<span class="slot-glyph">${
           slot.kind === 'audio' ? '♪' : slot.kind === 'video' ? '▶' : slot.kind === 'model' ? '◈' : '🖼'
         }</span>`;
@@ -2064,7 +2136,7 @@ export class PackEditor {
     if (head) {
       head.innerHTML = this.pack.iconUrl
         ? `<img src="${this.pack.iconUrl}" alt="" />`
-        : '<img src="placeholder.png" alt="No picture yet" class="placeholder-art" />';
+        : '<img src="../../assets/placeholder.png" alt="No picture yet" class="placeholder-art" />';
     }
 
     for (const card of [...this.root.querySelectorAll('.slot-card[data-slot]')]) {

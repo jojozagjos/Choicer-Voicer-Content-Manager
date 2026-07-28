@@ -44,9 +44,11 @@ const ignore = [
   /^\/\.claude($|\/)/,
   /^\/scripts($|\/)/,
   /^\/docs($|\/)/,
-  // The icon is baked into the exe by the packager, so the sources that made
-  // it do not need to ship inside the app as well.
-  /^\/assets($|\/)/,
+  // assets/ ships: the app draws its own icon and the character placeholder
+  // from there. Only the inputs that made the .ico are left out, since the
+  // packager bakes that into the exe and nothing reads it at runtime.
+  /^\/assets\/icon-source\.png$/,
+  /^\/assets\/icon\.ico$/,
   /^\/build($|\/)/,
   /^\/README\.md$/,
   /^\/THIRD-PARTY-NOTICES\.md$/,

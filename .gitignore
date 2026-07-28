@@ -1,25 +1,20 @@
 # Dependencies
 node_modules/
 
-# Build output. `assets/` is deliberately not here: the app icon lives there
-# and is part of the source, unlike anything below.
+# Build output. The app folder is ~400 MB and the zip ~167 MB, so neither
+# belongs in git; they go on a GitHub release instead.
 dist/
-out/
-build/
-release/
 *.exe
-*.dmg
-*.AppImage
-*.blockmap
 
-# Claude Code
-# settings.local.json is your own machine's permission list, so it stays local.
-# A shared .claude/settings.json (if you ever add one) is fine to commit.
+# assets/ is deliberately NOT ignored. The app draws its own icon and the
+# character placeholder from there at runtime, and the .ico is a build input.
+
+# Claude Code. settings.local.json is this machine's permission list, so it
+# stays local; a shared .claude/settings.json would be fine to commit.
 .claude/settings.local.json
 
 # Logs and caches
 *.log
-npm-debug.log*
 .cache/
 
 # Editors
@@ -32,7 +27,7 @@ npm-debug.log*
 Thumbs.db
 desktop.ini
 
-# Exported videos, in case anyone points the app at the repo folder
+# Exported videos, in case the app is ever pointed at the repo folder
 exports/
 *.mp4
 *.mkv

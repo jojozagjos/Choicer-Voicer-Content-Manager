@@ -717,7 +717,7 @@ function renderContentGrid() {
     const icon = pack.iconUrl
       ? `<img class="tile-icon" src="${pack.iconUrl}" alt="" loading="lazy" />`
       : CHARACTER_TYPES.has(type.id)
-        ? '<img class="tile-icon" src="placeholder.png" alt="No picture yet" />'
+        ? '<img class="tile-icon" src="../../assets/placeholder.png" alt="No picture yet" />'
         : `<div class="tile-icon tile-icon-blank">${TYPE_ICONS[type.id] || '📦'}</div>`;
 
     const job = state.converting.get(pack.dir);
@@ -766,7 +766,7 @@ function renderContentDetail(pack) {
   const icon = pack.iconUrl
     ? `<img src="${pack.iconUrl}" alt="" />`
     : CHARACTER_TYPES.has(pack.type)
-      ? '<img src="placeholder.png" alt="No picture yet" />'
+      ? '<img src="../../assets/placeholder.png" alt="No picture yet" />'
       : '';
   const issues = (pack.issues || []).length
     ? `<div class="issue-list">${pack.issues.map((i) => `
@@ -872,6 +872,9 @@ async function openEditorFor(pack) {
     if (options.keepEditor) {
       await hydratePack(fresh);
       editor.pack = fresh;
+      // One repaint covering everything on screen, rather than each action
+      // remembering to refresh its own corner and some of them not.
+      editor.refreshAfterChange();
     } else {
       openEditorFor(fresh);
     }

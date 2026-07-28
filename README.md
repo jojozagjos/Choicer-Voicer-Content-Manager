@@ -4,8 +4,6 @@
 
 # Choicer Voicer Content Manager
 
-**Get your dubs out of the game, and build the packs you record them with.**
-
 [![Download](https://img.shields.io/badge/Download-latest%20release-5ecdf5?style=for-the-badge)](https://github.com/jojozagjos/Choicer-Voicer-Content-Manager/releases/latest)
 
 An unofficial fan tool for [The Choicer Voicer](https://yeahmaybe.itch.io/the-choicer-voicer).
@@ -144,17 +142,6 @@ the app with a newer version keeps them.
 
 There is a **Help** button in the app covering all of this in more detail, including what every
 file in every pack type is for.
-
-## Keyboard shortcuts
-
-| Key | Does |
-| --- | --- |
-| `Space` | Play or pause |
-| `←` `→` | Seek 5 seconds, hold `Shift` for 1 |
-| `E` | Export |
-| `R` | Rescan the game folder |
-
-The editor has its own set, listed under **Shortcuts** while it is open.
 
 ## Building it yourself
 

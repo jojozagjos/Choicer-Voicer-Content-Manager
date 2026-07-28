@@ -156,30 +156,65 @@ function inspectVoice(dir, files, { parseIni, findAudioSibling }) {
   // the immediate folder only, and doubles as the pack icon when none is set.
   const fillerImage = findFile(files, '_pack_filler_image', IMAGE_EXTS);
 
-  // Clips are metadata files that actually declare a timestamp.
-  const clips = [];
-  for (const file of files) {
-    if (!CLIP_META_EXTS.includes(extOf(file))) continue;
-    if (file.startsWith('_')) continue;
-    const data = parseIni(path.join(dir, file));
-    if (!('dub_timestamps' in data)) continue;
+  /**
+   * Reads the clips in one folder.
+   *
+   * A voice pack may sort its clips into child folders, which is why the game
+   * documents the filler image as covering only the folder it sits in. Each
+   * folder therefore gets read on its own terms: its own clips, its own filler
+   * image, and clip names qualified by the folder so two folders can both hold
+   * a clip called the same thing.
+   */
+  const readFolder = (folderDir, folderFiles, prefix) => {
+    const found = [];
+    const folderFiller = prefix
+      ? findFile(folderFiles, '_pack_filler_image', IMAGE_EXTS)
+      : fillerImage;
 
-    const base = baseOf(file);
-    const times = Array.isArray(data.dub_timestamps) ? data.dub_timestamps : [];
-    clips.push({
-      base,
-      time: typeof times[0] === 'number' ? times[0] : parseFloat(times[0]) || 0,
-      caption: readClipCaption(dir, files, base, data),
-      character: Array.isArray(data.dub_characters) ? data.dub_characters[0] || '' : '',
-      image: typeof data.image === 'string' ? data.image : '',
-      audio: findAudioSibling(dir, base, files),
-    });
+    for (const file of folderFiles) {
+      if (!CLIP_META_EXTS.includes(extOf(file))) continue;
+      if (file.startsWith('_')) continue;
+      const data = parseIni(path.join(folderDir, file));
+      if (!('dub_timestamps' in data)) continue;
+
+      const base = baseOf(file);
+      const times = Array.isArray(data.dub_timestamps) ? data.dub_timestamps : [];
+      found.push({
+        base,
+        // Where it actually lives, so the editor can find and rewrite it.
+        folder: prefix || '',
+        id: prefix ? `${prefix}/${base}` : base,
+        time: typeof times[0] === 'number' ? times[0] : parseFloat(times[0]) || 0,
+        caption: readClipCaption(folderDir, folderFiles, base, data),
+        character: Array.isArray(data.dub_characters) ? data.dub_characters[0] || '' : '',
+        image: typeof data.image === 'string' ? data.image : '',
+        audio: findAudioSibling(folderDir, base, folderFiles),
+        fillerImage: folderFiller ? path.join(folderDir, folderFiller) : null,
+      });
+    }
+    return found;
+  };
+
+  const clips = readFolder(dir, files, '');
+
+  // One level down only. Nothing in the game's documentation suggests deeper
+  // nesting, and walking arbitrarily deep would make a scan of a large library
+  // unpredictable.
+  const childFolders = [];
+  for (const child of listDirs(dir)) {
+    const childDir = path.join(dir, child);
+    const childFiles = listFiles(childDir);
+    const childClips = readFolder(childDir, childFiles, child);
+    if (childClips.length) {
+      childFolders.push({ name: child, count: childClips.length });
+      clips.push(...childClips);
+    }
   }
 
   const orphanAudio = files.filter((f) =>
     AUDIO_EXTS.includes(extOf(f))
     && !f.startsWith('_')
-    && !clips.some((c) => c.base.toLowerCase() === baseOf(f).toLowerCase()));
+    && !clips.some((c) => !c.folder && c.base.toLowerCase() === baseOf(f).toLowerCase()));
 
   checkForeignMedia(files, issues);
 
@@ -232,8 +267,10 @@ function inspectVoice(dir, files, { parseIni, findAudioSibling }) {
     // Sorted, so the editor lists them in the order they play.
     clips: clips.sort((a, b) => a.time - b.time),
     clipCount: clips.length,
+    childFolders,
     characters: [...new Set(clips.map((c) => c.character).filter(Boolean))],
-    summary: isDub ? `${clips.length} lines` : `${clips.length} clips`,
+    summary: (isDub ? `${clips.length} lines` : `${clips.length} clips`)
+      + (childFolders.length ? ` in ${childFolders.length + 1} folders` : ''),
     issues,
     maxClipSeconds: isDub ? MAX_DUB_CLIP_SECONDS : MAX_VOICE_CLIP_SECONDS,
   };

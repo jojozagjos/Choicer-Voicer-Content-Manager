@@ -1,17 +1,23 @@
 # Choicer Voicer Content Manager
 
-A desktop companion for [The Choicer Voicer](https://yeahmaybe.itch.io/the-choicer-voicer) that
-rebuilds the dubs you record in the game and exports them as real video files.
+A desktop companion for [The Choicer Voicer](https://yeahmaybe.itch.io/the-choicer-voicer).
+It does two jobs: it turns the dubs you record into video files, and it builds the content packs
+you record them with.
 
 The game saves your takes as loose `.wav` files but gives you no way to get them out. This app
 finds them, lays each take back over the pack's video and backing track exactly where it belongs,
 lets you preview the result, and renders it to MP4 (or MKV / MOV / WebM).
+
+It also manages all seven kinds of content pack the game reads, checking each one against what the
+game will actually load and telling you what is wrong before the game quietly ignores it.
 
 Made by **@jojozagjos** — [Discord](https://discord.com/users/jojozagjos)
 
 ---
 
 ## What it does
+
+### Turning a dub into a video
 
 - **Finds your dubs automatically.** Locates the game's data folder on startup, lists every voice
   pack and every recording session you've made.
@@ -22,6 +28,22 @@ Made by **@jojozagjos** — [Discord](https://discord.com/users/jojozagjos)
   silence it, change its volume, or nudge its timing in 50 ms steps.
 - **Handles freestyle sessions** (one continuous take over the whole video) as well as
   line-by-line ones.
+
+### Building packs
+
+- **A timeline editor for dub packs.** The official route is to cut audio in another program, name
+  each export with its timestamp by hand, then type those timestamps back into the game. Here you
+  scrub the video, mark a range, and the clip and its timestamp come out together.
+- **Backing tracks from the video itself.** The pack already knows when every line speaks, so the
+  video's own audio is quietened under those ranges. Muffled by default, so the scene keeps its
+  atmosphere; silenced if you prefer.
+- **Editors for every other type** — players, hosts, judges, studios, menus and chatter — each
+  built from the file structure that type actually uses.
+- **Converts anything you drop in.** An `.mp4` where the game wants `.ogv` is the single most
+  common reason a pack silently does nothing, and it is always fixable.
+- **Installs packs by drag and drop.** Unzip and drop the folder on the library; the type is
+  worked out from what is inside.
+- **Undo everywhere**, including deletions, which move files aside rather than removing them.
 
 ### Extras
 
@@ -227,8 +249,28 @@ Packs in the wild are inconsistent, so the reader copes with all of these:
 
 ## Notes
 
-This tool only reads files the game has already written to your own computer. It is not
-affiliated with or endorsed by the developers of The Choicer Voicer. Voice packs belong to their
-respective authors, so check with them before publishing anything made from their work.
+This tool only reads and writes files beside the game on your own computer. It does not modify the
+game itself. It is not affiliated with or endorsed by the developers of The Choicer Voicer. Content
+packs, and the audio, art and captions inside them, belong to whoever made them, so check with a
+pack's author before publishing anything made from their work.
 
-Video encoding by [ffmpeg](https://ffmpeg.org/).
+## Licensing
+
+The app is MIT licensed, see [LICENSE](LICENSE).
+
+The **download** also carries [FFmpeg](https://ffmpeg.org/), which does the video and audio work.
+The build bundled here is compiled with `--enable-gpl --enable-version3`, so it is under the
+**GPL v3**, not the LGPL a default FFmpeg build uses. Every release ships the GPL text and a
+written offer for its corresponding source in a `licenses/` folder next to the app.
+
+FFmpeg runs as a separate program rather than being linked in, which is why the two licences sit
+side by side. If you plan to redistribute builds yourself, read
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) first. It is not legal advice.
+
+## Also in this repo
+
+| File | What's in it |
+| --- | --- |
+| [CHANGELOG.md](CHANGELOG.md) | What changed between releases |
+| [docs/PACK_FORMATS.md](docs/PACK_FORMATS.md) | Every pack type the game reads, and exactly what goes in one |
+| [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) | Licences of everything the build carries |

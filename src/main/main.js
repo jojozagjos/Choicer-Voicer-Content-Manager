@@ -1736,8 +1736,10 @@ function registerIpc() {
           clip.audioUrl = clip.audio ? mediaUrl(clip.audio) : null;
           // Some packs declare image=, others just name the picture after the
           // clip and let the game find it. Both have to work, or half the real
-          // packs show no portrait.
-          clip.imagePath = findClipImage(pack.dir, clip);
+          // packs show no portrait. A clip in a child folder is looked up in
+          // its own folder, which is also where its filler image lives.
+          const clipDir = clip.folder ? path.join(pack.dir, clip.folder) : pack.dir;
+          clip.imagePath = findClipImage(clipDir, clip) || clip.fillerImage || null;
           clip.imageUrl = clip.imagePath ? mediaUrl(clip.imagePath) : null;
         }
         // Deliberately not building a URL for every file here. Only the pack

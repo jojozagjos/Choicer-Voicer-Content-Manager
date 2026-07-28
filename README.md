@@ -1,7 +1,7 @@
 # Choicer Voicer Content Manager
 
 > **Unofficial fan tool.** Made by [@jojozagjos](https://discord.com/users/jojozagjos). Not made by,
-> affiliated with, endorsed by, or supported by **Yeah Maybe**, who make *The Choicer Voicer*.
+> affiliated with, endorsed by, or supported by **Yeah Maybe**, who made *The Choicer Voicer*.
 > Please do not ask them for help with it.
 
 A desktop companion for [The Choicer Voicer](https://yeahmaybe.itch.io/the-choicer-voicer).

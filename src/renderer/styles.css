@@ -396,7 +396,6 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
   color: var(--muted);
 }
 .app-credit b { color: var(--text); }
-.app-credit-links { display: flex; gap: 14px; }
 
 /* First-run setup */
 
@@ -567,20 +566,7 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
 }
 
 .clip-row.on { border-color: var(--accent); background: var(--glow); }
-.timeline.adding { cursor: crosshair; border-color: var(--ok); }
 
-/* Move versus add, so a drag never creates a clip by surprise. */
-.mode-switch { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; flex: none; }
-.mode-switch button {
-  background: var(--bg-sunken);
-  border: none;
-  color: var(--muted);
-  font: inherit;
-  font-size: 11.5px;
-  font-weight: 650;
-  padding: 5px 11px;
-  cursor: pointer;
-}
 .mode-switch button + button { border-left: 1px solid var(--line); }
 .mode-switch button:hover { color: var(--text); }
 .mode-switch button.on { background: var(--accent-dim); color: var(--accent-ink); }
@@ -615,11 +601,7 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
 .icon-btn.danger:hover { border-color: var(--bad); color: var(--bad); }
 
 /* Whether a reaction slot is filled has to be obvious at a glance. */
-.slot-state { grid-area: state; font-size: 13px; color: var(--muted); }
 .slot-row.filled .slot-state { color: var(--ok); }
-.slot-row.filled .slot-file { color: var(--text); }
-.slot-file { color: var(--muted); font-style: italic; }
-.slot-row.filled .slot-file { font-style: normal; }
 
 .editor-busy {
   display: flex;
@@ -689,42 +671,8 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
 .editor-empty { margin: auto; max-width: 460px; text-align: center; padding: 32px 24px; }
 .editor-empty h3 { font-size: 17px; margin-bottom: 8px; }
 
-.editor-portrait {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg-sunken);
-  display: grid;
-  place-items: center;
-  min-height: 220px;
-  overflow: hidden;
-}
-.editor-portrait img { max-height: 46vh; max-width: 100%; object-fit: contain; }
 .editor-portrait-blank { color: var(--muted); font-size: 13px; }
 
-.slot-list { display: flex; flex-direction: column; gap: 6px; }
-.slot-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
-  grid-template-areas: "state label label timer timer" "file file play rec pick";
-  gap: 5px 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel);
-  align-items: center;
-}
-.slot-label { grid-area: label; font-size: 12.5px; font-weight: 600; }
-.slot-file { grid-area: file; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.slot-timer { grid-area: timer; text-align: right; font-variant-numeric: tabular-nums; }
-.slot-row .rec { grid-area: rec; }
-.slot-row .pick { grid-area: pick; }
-
-.btn.recording {
-  background: var(--bad);
-  border-color: var(--bad);
-  color: #fff;
-  animation: pulse 1.2s ease-in-out infinite;
-}
 @keyframes pulse { 50% { opacity: 0.65; } }
 
 /* Content manager */
@@ -1875,20 +1823,6 @@ input[type="range"]::-webkit-slider-thumb {
 .clip-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .clip-thumb.blank span { font-size: 9.5px; color: var(--muted); text-align: center; }
 
-.clip-thumb-actions {
-  position: absolute;
-  inset: auto 0 0 0;
-  display: flex;
-  justify-content: center;
-  gap: 3px;
-  padding: 2px;
-  background: rgba(0, 0, 0, 0.62);
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-.clip-thumb:hover .clip-thumb-actions,
-.clip-thumb:focus-within .clip-thumb-actions { opacity: 1; }
-.clip-thumb-actions .icon-btn { width: 20px; height: 20px; font-size: 11px; }
 
 .line-portrait {
   grid-area: portrait;
@@ -2472,7 +2406,6 @@ input[type="range"]::-webkit-slider-thumb {
 .clip-pic-actions { display: flex; flex-direction: column; gap: 4px; flex: none; }
 .clip-pic-actions .btn { padding: 3px 8px; font-size: 11px; white-space: nowrap; }
 
-.clip-thumb-actions { display: none; }
 
 .create-file {
   display: grid;
@@ -2481,3 +2414,63 @@ input[type="range"]::-webkit-slider-thumb {
   align-items: center;
 }
 .create-file .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* A rescan of a small library is over before it registers, so the button says
+   so itself rather than leaving you wondering whether the click landed. */
+.refresh-mark { display: inline-block; }
+#btn-refresh.spinning .refresh-mark { animation: refresh-spin 0.55s linear infinite; }
+#btn-refresh.spinning { color: var(--accent); }
+
+@keyframes refresh-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #btn-refresh.spinning .refresh-mark { animation: none; opacity: 0.5; }
+}
+
+/* Picture buttons appear over the thumbnail on hover. Always-on buttons made
+   every line taller for something used only occasionally. */
+.clip-thumb { position: relative; }
+.clip-pic-actions {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 3px;
+  background: rgba(0, 0, 0, 0.72);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.clip-thumb:hover .clip-pic-actions,
+.clip-thumb:focus-within .clip-pic-actions { opacity: 1; }
+.clip-pic-actions button {
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font: inherit;
+  font-size: 9.5px;
+  font-weight: 650;
+  padding: 2px 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.clip-pic-actions button:hover { background: var(--accent); color: var(--accent-ink); }
+
+/* A caption is a sentence, not a single line. It wraps and grows instead of
+   scrolling sideways forever. */
+.clip-fields textarea {
+  resize: vertical;
+  min-height: 44px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.clip-fields .input { font-size: 12px; padding: 5px 8px; }
+
+/* The first line of a help panel sat flush against the tabs above it. */
+.help-panel { padding-top: 14px; }
+.help-panel > :first-child { margin-top: 0; }

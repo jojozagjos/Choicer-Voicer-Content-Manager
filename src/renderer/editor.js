@@ -1046,17 +1046,18 @@ export class PackEditor {
             ${picture
     ? `<img src="${picture}" alt="" />`
     : '<span>no picture</span>'}
-          </div>
-          <div class="clip-pic-actions">
-            <button type="button" class="btn btn-small" data-act="grab"
-                    title="Take a picture from the video frame showing right now">Grab frame</button>
-            <button type="button" class="btn btn-small" data-act="upload"
-                    title="Choose a picture file from your computer">Upload</button>
-            <button type="button" class="btn btn-small" data-act="reuse"
-                    title="Point this line at a picture already in the pack">Reuse</button>
+            <div class="clip-pic-actions">
+              <button type="button" data-act="grab"
+                      title="Take a picture from the video frame showing right now">Grab frame</button>
+              <button type="button" data-act="upload"
+                      title="Choose a picture file from your computer">Upload</button>
+              <button type="button" data-act="reuse"
+                      title="Point this line at a picture already in the pack">Reuse</button>
+            </div>
           </div>
           <div class="clip-fields">
-            <input class="input" data-field="caption" placeholder="Caption" />
+            <textarea class="input" data-field="caption" rows="2"
+                      placeholder="What they say"></textarea>
             <input class="input" data-field="character" placeholder="Who says it" />
           </div>
         </div>`;
@@ -1384,6 +1385,7 @@ export class PackEditor {
 
     const card = el('div', 'slot-card slot-audio');
     card.dataset.slot = key;
+    card._slot = { key, label, kind: 'audio', reaction: true };
     card.classList.toggle('filled', Boolean(assigned));
 
     card.innerHTML = `
@@ -1739,6 +1741,9 @@ export class PackEditor {
 
     const card = el('div', `slot-card slot-${slot.kind}`);
     card.dataset.slot = slot.key;
+    // Kept on the element so a refresh can rebuild it without having to look
+    // the definition up again.
+    card._slot = slot;
     card.classList.toggle('filled', Boolean(file));
     if (slot.required && !file) card.classList.add('missing');
 
@@ -1866,14 +1871,31 @@ export class PackEditor {
   }
 
   /** Repaints every slot from the pack's current files. */
+  /**
+   * Repaints every slot card on screen from the pack's current files.
+   *
+   * Driven by what is actually in the page rather than by the type's spec.
+   * Going through the spec meant contestant packs, which have no spec entry
+   * because their sounds are assignments rather than fixed filenames, refreshed
+   * nothing at all: changing a contestant's picture only showed up after
+   * leaving the editor and coming back.
+   */
   refreshSlots() {
-    const spec = specFor(this.pack.type);
-    if (!spec) return;
-    for (const group of spec.groups) {
-      for (const slot of group.slots) {
-        const old = this.root.querySelector(`.slot-card[data-slot="${CSS.escape(slot.key)}"]`);
-        if (old) old.replaceWith(this.buildSlot(slot));
-      }
+    // The pack's own picture at the top is the one most likely to have just
+    // been changed, so it repaints too.
+    const head = this.root.querySelector('.pack-head-icon');
+    if (head) {
+      head.innerHTML = this.pack.iconUrl
+        ? `<img src="${this.pack.iconUrl}" alt="" />`
+        : '<img src="placeholder.png" alt="No picture yet" class="placeholder-art" />';
+    }
+
+    for (const card of [...this.root.querySelectorAll('.slot-card[data-slot]')]) {
+      const slot = card._slot;
+      if (!slot) continue;
+      card.replaceWith(slot.reaction
+        ? this.buildReactionSlot(slot.key, slot.label, this.pack.config || {})
+        : this.buildSlot(slot));
     }
   }
 

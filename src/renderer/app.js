@@ -2637,11 +2637,26 @@ function wireEvents() {
   });
 
   el.btnRefresh.addEventListener('click', async () => {
-    // Packs are cached between scans, so a rescan has to throw that away
-    // first. This is the one thing that catches edits made outside the app.
-    await window.api.content.forget();
-    await rescan(state.settings.gameDir);
-    if (state.tab === 'content') await refreshContent();
+    // A scan of a small library finishes faster than a person can perceive,
+    // so without this the button looks like it did nothing at all.
+    el.btnRefresh.classList.add('spinning');
+    el.btnRefresh.disabled = true;
+    const started = Date.now();
+
+    try {
+      // Packs are cached between scans, so a rescan has to throw that away
+      // first. This is the one thing that catches edits made outside the app.
+      await window.api.content.forget();
+      await rescan(state.settings.gameDir);
+      if (state.tab === 'content') await refreshContent();
+    } finally {
+      // Held briefly so the spin reads as a spin rather than a flicker.
+      const left = 550 - (Date.now() - started);
+      if (left > 0) await new Promise((r) => setTimeout(r, left));
+      el.btnRefresh.classList.remove('spinning');
+      el.btnRefresh.disabled = false;
+    }
+    toast('Rescanned.', 'ok', 1800);
   });
   el.btnSettings.addEventListener('click', openSettings);
 

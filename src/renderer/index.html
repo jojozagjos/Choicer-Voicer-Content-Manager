@@ -34,7 +34,7 @@
       <button type="button" data-theme-set="system" title="Match my system">◐</button>
       <button type="button" data-theme-set="dark" title="Dark mode">☾</button>
     </div>
-    <button id="btn-refresh" class="btn btn-ghost" title="Rescan the game folder (R)">Rescan</button>
+    <button id="btn-refresh" class="btn btn-ghost" title="Rescan the game folder (R)"><span class="refresh-mark">⟳</span> Rescan</button>
     <button id="btn-settings" class="btn btn-ghost">Settings</button>
     <button id="btn-about" class="btn btn-ghost" title="About, setup and credits">Help</button>
     <button id="version-badge" class="version-badge" title="Which version this is. Click for help and credits.">
@@ -62,7 +62,7 @@
         <p class="muted">Turn the dubs you record into videos, and build the packs you record them
            with. Nothing here changes the game; it only reads and writes the files beside it.</p>
         <p class="muted small">Made by <b>@jojozagjos</b>. Not made by, affiliated with, or endorsed
-           by <b>Yeah Maybe</b>, who make <em>The Choicer Voicer</em>.</p>
+           by <b>Yeah Maybe</b>, who made <em>The Choicer Voicer</em>.</p>
       </header>
 
       <div class="home-cards">
@@ -652,11 +652,11 @@
     </div>
 
     <nav class="help-tabs seg-tabs" role="tablist">
-      <button type="button" class="seg-tab on" data-help="start">Getting started</button>
-      <button type="button" class="seg-tab" data-help="editor">The editor</button>
-      <button type="button" class="seg-tab" data-help="packs">Pack types</button>
-      <button type="button" class="seg-tab" data-help="export">Exporting</button>
-      <button type="button" class="seg-tab" data-help="trouble">If something breaks</button>
+      <button type="button" class="seg-tab on" data-help="start">Getting Started</button>
+      <button type="button" class="seg-tab" data-help="editor">The Editor</button>
+      <button type="button" class="seg-tab" data-help="packs">Pack Types</button>
+      <button type="button" class="seg-tab" data-help="export">Export Dubs</button>
+      <button type="button" class="seg-tab" data-help="trouble">Troubleshooting</button>
       <button type="button" class="seg-tab" data-help="credits">Credits</button>
     </nav>
 
@@ -678,9 +678,9 @@
 
         <h4>Building a pack</h4>
         <ol class="steps">
-          <li><b>Content</b> then <b>Create new</b>. Pick a type and give it a name.</li>
-          <li>Drop in whatever files you have. Anything in the wrong format is converted for you.</li>
-          <li>Open it and fill it in. Dub packs get the full timeline editor.</li>
+          <li>Click <b>Content</b>, then <b>Create new</b>.</li>
+          <li>Open up the dub and fill it with content. Dub packs get the full timeline editor.
+              Go to <b>The Editor</b> tab to learn more.</li>
         </ol>
 
         <p class="help-tip"><b>Already have a pack someone sent you?</b> Unzip it and drop the
@@ -723,8 +723,8 @@
            inside an app like this. Instead, this uses something the pack already knows: exactly
            when every line speaks. It takes the video's audio and ducks those ranges.</p>
         <ul class="bullets">
-          <li><b>Muffle</b> rolls the top off and pulls it down, so the scene keeps its atmosphere
-              underneath your dub. This is usually what you want.</li>
+          <li><b>Muffle</b> dampens the audio so it still plays in the background, as if almost
+              muted, keeping the atmosphere of the clip. This is typically the better option.</li>
           <li><b>Silence</b> removes it completely, which is cleaner but can sound like the audio
               dropped out.</li>
         </ul>
@@ -758,7 +758,10 @@
       </section>
 
       <section class="help-panel" data-help-panel="packs" hidden>
-        <p class="help-lead">The game reads seven kinds of pack, each from its own folder.</p>
+        <p class="help-lead">Reference, not required reading. You do not need any of this for
+           general use: the app knows what each pack should contain and tells you when something
+           is missing. It is here for anyone who wants to know what the files mean.</p>
+        <p>The game reads seven kinds of pack, each from its own folder.</p>
         <dl class="help-defs">
           <div><dt>🎬 Voice and dub packs</dt>
                <dd><code>packs_voice</code>. A video plus the lines to dub over it. With a video it
@@ -813,14 +816,19 @@
           <li><b>Export failed.</b> Usually a full disk or a folder you do not have permission to write
               to. Try exporting somewhere like your Videos folder.</li>
           <li><b>Windows warned about the app on first run.</b> That is because the app is not signed
-              with a paid certificate. Click <i>More info</i> then <i>Run anyway</i>.</li>
+              with a paid certificate. Click <i>More info</i> then <i>Run anyway</i>.
+              <br />
+              Two things about this app look suspicious to Windows on their own: it reads files it
+              was not obviously given permission to read, and it writes files it was not obviously
+              given permission to write. That is the whole job, since the packs and recordings it
+              works on belong to the game rather than to it. Nothing leaves your computer.</li>
         </ul>
       </section>
 
       <section class="help-panel" data-help-panel="credits" hidden>
         <div class="help-tip">
           <b>This is an unofficial fan tool.</b> It is made by <b>@jojozagjos</b> and is not made
-          by, affiliated with, endorsed by, or supported by <b>Yeah Maybe</b>, who make
+          by, affiliated with, endorsed by, or supported by <b>Yeah Maybe</b>, who made
           <em>The Choicer Voicer</em>. Please do not ask them for help with it. If something here
           is wrong, it is my fault, not theirs.
         </div>

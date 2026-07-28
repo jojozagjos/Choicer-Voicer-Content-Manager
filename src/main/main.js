@@ -22,6 +22,15 @@ const convert = require('./convert');
 
 const execFileAsync = promisify(execFile);
 
+const APP_NAME = 'Choicer Voicer Content Manager';
+
+// Windows works out what to call a program in the volume mixer, the taskbar
+// and its notifications from these. Without them it falls back to the Electron
+// runtime's own name, so playing anything put "Electron" in the volume mixer,
+// which tells nobody anything and looks like a stray process.
+app.setName(APP_NAME);
+if (process.platform === 'win32') app.setAppUserModelId('com.jojozagjos.choicervoicercm');
+
 const MEDIA_SCHEME = 'cvmedia';
 
 // What counts as clip audio when probing a pack's lengths.

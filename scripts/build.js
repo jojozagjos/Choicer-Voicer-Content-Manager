@@ -131,30 +131,70 @@ function copyLicenses(appDir) {
   return copied;
 }
 
-/** Zips the built folder so it can be attached to a release. */
+/**
+ * Zips the built folder so it can be attached to a release.
+ *
+ * PowerShell's Compress-Archive is deliberately not used. Zip stores times in
+ * the old MS-DOS format, which cannot represent anything before 1980, and
+ * Electron dates all of its own files 1979-12-31 so its builds come out
+ * reproducible. Compress-Archive treats that as fatal, so it can never zip an
+ * Electron app. Worse, it fails as a non-terminating error, so PowerShell
+ * still exits 0 and the failure only surfaced later as a missing file.
+ *
+ * bsdtar has shipped in Windows as tar.exe since Windows 10 1803 and handles
+ * those timestamps without complaint. It is addressed by full path because Git
+ * for Windows puts GNU tar, which cannot write zips, earlier on PATH.
+ */
 function makeZip(appDir, zipPath) {
-  const sevenZip = path.join(ROOT, 'node_modules', '7zip-bin', 'win', 'x64', '7za.exe');
-  if (platform === 'win32' && fs.existsSync(sevenZip)) {
-    execFileSync(sevenZip, ['a', '-tzip', '-mx=5', zipPath, appDir], { stdio: 'ignore' });
-    return true;
-  }
+  const parent = path.dirname(appDir);
+  const name = path.basename(appDir);
 
-  // Fall back to whatever the platform provides.
-  try {
-    if (platform === 'win32') {
-      execFileSync('powershell', [
-        '-NoProfile', '-Command',
-        `Compress-Archive -Path "${appDir}" -DestinationPath "${zipPath}" -Force`,
-      ], { stdio: 'ignore' });
-    } else {
-      execFileSync('zip', ['-r', '-q', zipPath, path.basename(appDir)], {
-        cwd: path.dirname(appDir), stdio: 'ignore',
+  const attempts = [];
+
+  if (platform === 'win32') {
+    const bsdtar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+    if (fs.existsSync(bsdtar)) {
+      attempts.push({
+        what: 'tar',
+        run: () => execFileSync(bsdtar, ['-a', '-c', '-f', zipPath, '-C', parent, name],
+          { stdio: 'ignore' }),
       });
     }
-    return true;
-  } catch {
-    return false;
+    const sevenZip = path.join(ROOT, 'node_modules', '7zip-bin', 'win', 'x64', '7za.exe');
+    if (fs.existsSync(sevenZip)) {
+      attempts.push({
+        what: '7za',
+        run: () => execFileSync(sevenZip, ['a', '-tzip', '-mx=5', zipPath, appDir],
+          { stdio: 'ignore' }),
+      });
+    }
+  } else {
+    attempts.push({
+      what: 'zip',
+      run: () => execFileSync('zip', ['-r', '-q', zipPath, name], { cwd: parent, stdio: 'ignore' }),
+    });
+    attempts.push({
+      what: 'tar',
+      run: () => execFileSync('tar', ['-a', '-c', '-f', zipPath, '-C', parent, name],
+        { stdio: 'ignore' }),
+    });
   }
+
+  for (const attempt of attempts) {
+    fs.rmSync(zipPath, { force: true });
+    try {
+      attempt.run();
+    } catch (err) {
+      console.log(`\n  ${attempt.what} failed: ${err.message.split('\n')[0]}`);
+      continue;
+    }
+    // Exit code alone is not enough: the tool that used to be here reported
+    // success and produced nothing.
+    if (fs.existsSync(zipPath) && fs.statSync(zipPath).size > 0) return attempt.what;
+    console.log(`\n  ${attempt.what} exited cleanly but wrote no archive`);
+  }
+
+  return null;
 }
 
 async function main() {
@@ -207,14 +247,21 @@ async function main() {
     const zipPath = path.join(OUT, zipName);
     fs.rmSync(zipPath, { force: true });
     process.stdout.write('\nZipping for release... ');
-    if (makeZip(appDir, zipPath)) {
+
+    const used = makeZip(appDir, zipPath);
+    if (used) {
       const mb = (fs.statSync(zipPath).size / 1e6).toFixed(0);
-      console.log('done');
+      console.log(`done (${used})`);
       console.log(`  ${zipPath} (${mb} MB)`);
       console.log('\nAttach that zip to a GitHub release. Do not commit it: files');
       console.log('over 100 MB are rejected by git.');
     } else {
-      console.log('failed (zip it yourself)');
+      console.log('failed');
+      console.log('\nNothing available could write the archive. Zip the app folder yourself:');
+      console.log(`  ${appDir}`);
+      console.log('\nRight click it in Explorer and choose Send to, Compressed folder, will not');
+      console.log('work here: Electron dates its files 1979 and the built in zip refuses those.');
+      console.log('Use 7-Zip or WinRAR instead.');
     }
   }
 }

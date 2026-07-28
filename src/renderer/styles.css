@@ -2377,3 +2377,107 @@ input[type="range"]::-webkit-slider-thumb {
   .credit-sep { display: none; }
   .app-credit { flex-direction: column; gap: 2px; }
 }
+
+/* ---------------------------------------------------------------------------
+   Asking things in the app's own voice
+   --------------------------------------------------------------------------- */
+
+.confirm-head { display: flex; gap: 13px; align-items: flex-start; }
+.confirm-head h2 { font-size: 16px; margin-bottom: 5px; }
+.confirm-head p { white-space: pre-line; line-height: 1.5; }
+
+.confirm-mark {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--glow);
+  border: 1px solid var(--accent-dim);
+  color: var(--accent);
+  font-size: 16px;
+  font-weight: 700;
+}
+.confirm-mark.danger {
+  background: color-mix(in srgb, var(--bad) 14%, transparent);
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+/* The app's own icon, rather than a stock microphone. */
+.splash-mark {
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
+  border-radius: 18px;
+}
+.brand-mark-img {
+  background: none;
+  object-fit: contain;
+  border-radius: 9px;
+}
+
+/* First run: the usual location, offered rather than taken. */
+.setup-suggestion {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 13px;
+  border: 1px solid var(--accent-dim);
+  border-radius: var(--radius);
+  background: var(--glow);
+}
+.setup-suggestion > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.setup-suggestion em { font-style: normal; }
+
+/* Installing by drag and drop, said out loud rather than left to be found. */
+.drop-hint {
+  padding: 9px 13px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.drop-hint b { color: var(--text); }
+
+/* Working a pack is a real decision, so its buttons are not tiny. */
+.detail-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.detail-actions .btn { padding: 9px 16px; font-size: 13px; font-weight: 650; }
+
+/* Editing the timeline, spelled out rather than in one long sentence. */
+.editor-hint {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.editor-hint b { color: var(--text); font-weight: 650; }
+
+/* Trimming keeps the picture visible: you cannot pick a cut you cannot see. */
+.crop-layer.trimming {
+  background: none;
+  pointer-events: none;
+}
+.crop-layer.trimming .trim-panel {
+  pointer-events: auto;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  backdrop-filter: blur(6px);
+}
+
+/* Picture buttons on a line, always visible and named. Hidden icons that
+   appeared on hover were unreadable and gave no clue what they did. */
+.clip-pic-actions { display: flex; flex-direction: column; gap: 4px; flex: none; }
+.clip-pic-actions .btn { padding: 3px 8px; font-size: 11px; white-space: nowrap; }
+
+.clip-thumb-actions { display: none; }
+
+.create-file {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 8px;
+  align-items: center;
+}
+.create-file .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

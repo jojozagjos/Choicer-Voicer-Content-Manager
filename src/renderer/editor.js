@@ -80,10 +80,12 @@ export const EDITOR_KEYS = [
 ];
 
 export class PackEditor {
-  constructor(root, api, toast) {
+  constructor(root, api, toast, ask) {
     this.root = root;
     this.api = api;
     this.toast = toast;
+    // Asking questions is the app's job, not the operating system's.
+    this.ask = ask;
     this.pack = null;
     this.onClose = null;
     this.onChanged = null;
@@ -336,13 +338,19 @@ export class PackEditor {
         <button type="button" class="btn btn-small" data-act="captions" aria-pressed="true">Captions</button>
         <button type="button" class="btn btn-small" data-act="trim">Trim video</button>
         <button type="button" class="btn btn-small" data-act="backing">Backing track</button>
-        <button type="button" class="btn btn-small" data-act="play-backing" hidden>♪ Backing</button>
+        <button type="button" class="btn btn-small" data-act="play-backing" hidden
+                title="Plays the backing track from wherever the playhead is">
+          ♪ Play backing from playhead
+        </button>
         <button type="button" class="btn btn-small" data-act="zoom-fit">Fit</button>
       </div>
-      <p class="muted small editor-hint">
-        Click a clip to select it. Drag its grip to move it, or an edge to change its timing.
-        Hold still a moment then drag to cut a new clip. Right or middle drag pans.
-      </p>
+      <div class="editor-hint">
+        <span><b>Click</b> a clip to select it</span>
+        <span><b>Drag the grip</b>, the ribbed bar on top of a clip, to move it</span>
+        <span><b>Drag an edge</b> to change where it starts or ends</span>
+        <span><b>Hold still, then drag</b> empty space to cut a new clip</span>
+        <span><b>Right or middle drag</b> to pan &middot; <b>scroll</b> to zoom</span>
+      </div>
       <canvas class="timeline" data-role="timeline"></canvas>`;
     stage.append(controls);
     body.append(stage);
@@ -643,13 +651,27 @@ export class PackEditor {
       return;
     }
 
+    const replacing = Boolean(pack.backingPath);
+    const answer = await this.ask({
+      title: replacing ? 'Replace the backing track?' : 'Build a backing track?',
+      detail: `The video's own audio is used, quietened under each of the ${clips.length} lines `
+        + 'so your dub sits in front of it.\n\n'
+        + 'Muffle dulls it and pulls it down, keeping the room tone and music underneath. '
+        + 'Silence removes it completely, which is cleaner but can sound like the audio dropped '
+        + 'out.\n\n'
+        + 'Either way, music playing underneath a line is affected along with the voice.'
+        + (replacing ? '\n\nThe current backing track is overwritten.' : ''),
+      buttons: ['Muffle under lines', 'Silence under lines', 'Cancel'],
+      mark: '♪',
+    });
+    if (answer !== 0 && answer !== 1) return;
+
     const result = await this.run('Building the backing track…', () =>
       this.api.content.buildBacking({
         packDir: pack.dir,
         videoPath: pack.videoPath,
         ranges: clips.map((c) => ({ start: c.time, duration: c.duration })),
-        level: 0,
-        replacing: Boolean(pack.backingPath),
+        mode: answer === 1 ? 'silence' : 'muffle',
       }));
 
     if (result.cancelled) return;
@@ -671,6 +693,9 @@ export class PackEditor {
     }
     this.video.pause();
     button.classList.add('on');
+    // The panel sits at the bottom over the picture rather than covering it,
+    // because choosing where to cut means watching the frame you are cutting.
+    this.cropLayer.classList.add('trimming');
     this.trim = new TrimBar(this.cropLayer, {
       duration: this.video.duration,
       onPreview: (time) => { this.video.currentTime = time; },
@@ -682,7 +707,10 @@ export class PackEditor {
 
   endTrim() {
     if (this.trim) { this.trim.destroy(); this.trim = null; }
-    if (this.cropLayer) this.cropLayer.hidden = true;
+    if (this.cropLayer) {
+      this.cropLayer.hidden = true;
+      this.cropLayer.classList.remove('trimming');
+    }
     const button = this.root.querySelector('[data-act="trim"]');
     if (button) button.classList.remove('on');
   }
@@ -812,10 +840,11 @@ export class PackEditor {
 
   /** Plays the pack's backing track, so the ducking can be checked by ear. */
   playBacking(button) {
+    const idle = '♪ Play backing from playhead';
     if (this.backingAudio) {
       this.backingAudio.pause();
       this.backingAudio = null;
-      button.textContent = '♪ Backing';
+      button.textContent = idle;
       button.classList.remove('on');
       return;
     }
@@ -828,15 +857,17 @@ export class PackEditor {
     const audio = new Audio(this.pack.backingUrl);
     // Starts where the playhead is, so you can check one line rather than
     // sitting through the whole track.
-    audio.currentTime = this.video ? this.video.currentTime : 0;
+    const from = this.video ? this.video.currentTime : 0;
+    audio.currentTime = from;
     audio.addEventListener('ended', () => {
-      button.textContent = '♪ Backing';
+      button.textContent = idle;
       button.classList.remove('on');
       this.backingAudio = null;
     });
     audio.play().catch(() => this.toast('Could not play the backing track.', 'warn'));
 
-    button.textContent = '■ Backing';
+    this.toast(`Playing the backing track from ${fmt(from)}.`, 'info', 2500);
+    button.textContent = '■ Stop backing';
     button.classList.add('on');
     this.backingAudio = audio;
   }
@@ -1015,14 +1046,14 @@ export class PackEditor {
             ${picture
     ? `<img src="${picture}" alt="" />`
     : '<span>no picture</span>'}
-            <div class="clip-thumb-actions">
-              <button type="button" class="icon-btn" data-act="grab"
-                      title="Use the frame showing now">⧉</button>
-              <button type="button" class="icon-btn" data-act="upload"
-                      title="Choose a picture file">↑</button>
-              <button type="button" class="icon-btn" data-act="reuse"
-                      title="Reuse a picture already in this pack">⧉↺</button>
-            </div>
+          </div>
+          <div class="clip-pic-actions">
+            <button type="button" class="btn btn-small" data-act="grab"
+                    title="Take a picture from the video frame showing right now">Grab frame</button>
+            <button type="button" class="btn btn-small" data-act="upload"
+                    title="Choose a picture file from your computer">Upload</button>
+            <button type="button" class="btn btn-small" data-act="reuse"
+                    title="Point this line at a picture already in the pack">Reuse</button>
           </div>
           <div class="clip-fields">
             <input class="input" data-field="caption" placeholder="Caption" />

@@ -121,8 +121,15 @@ const el = {
 
   tabButtons: document.querySelectorAll('[data-tab]'),
   homeView: $('#home-view'),
+  confirmDialog: $('#confirm-dialog'),
+  confirmMark: $('#confirm-mark'),
+  confirmTitle: $('#confirm-title'),
+  confirmDetail: $('#confirm-detail'),
+  confirmButtons: $('#confirm-buttons'),
   setupDialog: $('#setup-dialog'),
   setupDefaultPath: $('#setup-default-path'),
+  setupSuggestion: $('#setup-suggestion'),
+  setupUseDefault: $('#setup-use-default'),
   setupDrop: $('#setup-drop'),
   setupBrowse: $('#setup-browse'),
   setupError: $('#setup-error'),
@@ -163,7 +170,6 @@ const el = {
   contentGrid: $('#content-grid'),
   contentDetail: $('#content-detail'),
   btnContentFolder: $('#btn-content-folder'),
-  btnContentGuide: $('#btn-content-guide'),
 
   toasts: $('#toasts'),
 };
@@ -199,7 +205,7 @@ const state = {
 };
 
 const player = new DubPlayer(el.video);
-const editor = new PackEditor(el.editorView, window.api, toast);
+const editor = new PackEditor(el.editorView, window.api, toast, askConfirm);
 
 // Utilities
 
@@ -516,11 +522,21 @@ function renderSetup() {
   openSetupDialog();
 }
 
-function openSetupDialog() {
+async function openSetupDialog() {
   el.setupError.hidden = true;
-  el.setupDefaultPath.textContent = (state.info && state.info.defaultGameDir)
-    || '%APPDATA%\\YeahMaybe\\ChoicerVoicer';
-  el.setupDialog.showModal();
+  const guess = (state.info && state.info.defaultGameDir) || '';
+  el.setupDefaultPath.textContent = guess || '%APPDATA%\\YeahMaybe\\ChoicerVoicer';
+
+  // If the usual place happens to hold a game folder, offer it as one click.
+  // Offering is not the same as taking it: nothing is read until it is chosen.
+  let looksRight = false;
+  if (guess) {
+    const check = await window.api.game.check(guess).catch(() => null);
+    looksRight = Boolean(check && check.ok);
+  }
+  el.setupSuggestion.hidden = !looksRight;
+
+  if (!el.setupDialog.open) el.setupDialog.showModal();
 }
 
 /** Takes a folder from the picker or a drop, and checks it before settling. */
@@ -534,6 +550,14 @@ async function useGameDir(dir) {
   if (state.model && state.model.packs) {
     el.setupDialog.close();
     toast('Game folder set. Everything else fills in from here.', 'ok', 4000);
+
+    // The first time this works, show what the app is for. Someone who has
+    // just pointed it at a folder has no idea what to do next, and the help
+    // is where that is answered.
+    if (state.settings.seenHelp !== true) {
+      state.settings = await window.api.settings.set({ seenHelp: true });
+      setTimeout(() => { if (!el.aboutDialog.open) el.aboutDialog.showModal(); }, 700);
+    }
     return true;
   }
 
@@ -623,6 +647,16 @@ async function refreshContent() {
   state.content = result;
   renderContentTypes();
   renderContentGrid();
+
+  // The detail panel holds a pack object, and its Edit button closes over it.
+  // Leaving it alone after a rescan meant editing a pack, closing the editor
+  // and opening it again handed back the pack as it was before the edits, so
+  // the work looked lost until something forced a full rescan.
+  if (state.contentPackId) {
+    const fresh = result.types.flatMap((t) => t.packs).find((p) => p.id === state.contentPackId);
+    if (fresh) renderContentDetail(fresh);
+    else el.contentDetail.hidden = true;
+  }
 }
 
 function renderContentTypes() {
@@ -767,9 +801,9 @@ function renderContentDetail(pack) {
     </div>
 
     <div class="detail-actions">
-      <button type="button" class="btn btn-primary btn-small" id="btn-detail-edit">Edit</button>
-      <button type="button" class="btn btn-small" id="btn-detail-open">Open folder</button>
-      <button type="button" class="btn btn-small btn-danger" id="btn-detail-delete">Delete</button>
+      <button type="button" class="btn btn-primary" id="btn-detail-edit">✎ Edit this pack</button>
+      <button type="button" class="btn" id="btn-detail-open">📂 Open folder</button>
+      <button type="button" class="btn btn-danger" id="btn-detail-delete">✕ Delete</button>
     </div>`;
 
   el.contentDetail.querySelector('#btn-detail-edit')
@@ -821,8 +855,11 @@ async function openEditorFor(pack) {
   editor.settings = state.settings;
   editor.open(pack);
 
-  editor.onClose = () => {
+  editor.onClose = async () => {
     el.contentView.hidden = state.tab !== 'content';
+    // Whatever was done in there has to be reflected behind it, or the tile
+    // and the detail panel still describe the pack as it was on the way in.
+    await refreshContent();
   };
 
   // Re-scan after a change so the editor sees its own edits.
@@ -935,6 +972,16 @@ async function importIntoPack(pack, paths) {
 }
 
 async function removePack(pack) {
+  const answer = await askConfirm({
+    title: `Delete "${pack.title}"?`,
+    detail: `The whole folder and everything in it is removed from ${pack.dir}. `
+      + 'This one cannot be undone.',
+    buttons: ['Delete it', 'Keep it'],
+    mark: '!',
+    danger: true,
+  });
+  if (answer !== 0) return;
+
   const result = await window.api.content.remove(pack.dir);
   if (result.cancelled) return;
   if (!result.ok) {
@@ -1074,25 +1121,57 @@ function chooseCreateType(type) {
 async function addCreateFiles(paths) {
   if (!paths || !paths.length) return;
   const described = await window.api.content.describe(paths);
+
   for (const file of described) {
     if (!file.kind) {
       toast(`${file.name || 'That file'} is not audio, video or an image.`, 'warn');
       continue;
     }
-    if (!createState.files.some((f) => f.path === file.path)) createState.files.push(file);
+    if (createState.files.some((f) => f.path === file.path)) continue;
+
+    // A pack has exactly one video, and it is always called dub_video, so a
+    // second one would only overwrite the first. Replacing is what someone
+    // adding another video means, so that is what happens.
+    if (file.kind === 'video') {
+      const existing = createState.files.find((f) => f.kind === 'video');
+      if (existing) {
+        createState.files = createState.files.filter((f) => f !== existing);
+        toast(`A pack has one video, so ${file.name} replaced ${existing.name}.`, 'info', 6000);
+      }
+    }
+    createState.files.push(file);
   }
   renderCreateFiles();
 }
 
 function renderCreateFiles() {
   el.createFiles.innerHTML = '';
+
+  if (!createState.files.length) {
+    el.createFiles.innerHTML = '<p class="muted small">Nothing added yet.</p>';
+    return;
+  }
+
   for (const file of createState.files) {
     const row = document.createElement('div');
     row.className = 'create-file';
+
     const tag = file.acceptable
       ? '<span class="badge badge-ok tag">ready</span>'
       : '<span class="badge badge-warn tag">will convert</span>';
-    row.innerHTML = `<span class="name">${escapeHtml(file.name)}</span>${tag}`;
+    const kind = file.kind === 'video' ? 'video' : file.kind === 'audio' ? 'sound' : 'picture';
+
+    row.innerHTML = `
+      <span class="name" title="${escapeHtml(file.path)}">${escapeHtml(file.name)}</span>
+      <span class="muted small">${kind}</span>
+      ${tag}
+      <button type="button" class="icon-btn danger" title="Take this one out">✕</button>`;
+
+    row.querySelector('button').addEventListener('click', () => {
+      createState.files = createState.files.filter((f) => f !== file);
+      renderCreateFiles();
+    });
+
     el.createFiles.append(row);
   }
 }
@@ -1301,7 +1380,12 @@ async function boot() {
   renderFfmpegStatus();
   applyExportDefaults();
   applyCaptionStyle();
-  await rescan(state.settings.gameDir || state.info.defaultGameDir);
+  // Only a folder the user actually chose. Reaching into %APPDATA% on a first
+  // run and helping itself to whatever it found there is the kind of thing
+  // that makes an unsigned app look like something you did not install on
+  // purpose, and it left people with no idea where the app was even pointing.
+  // The detected path is offered as a suggestion in the setup panel instead.
+  await rescan(state.settings.gameDir || null);
   wireEvents();
   await switchTab('home');
   requestAnimationFrame(tick);
@@ -1666,6 +1750,76 @@ function showLoading(visible, text) {
     el.loadingBar.hidden = true;
     el.loadingBar.firstElementChild.style.width = '0%';
   }
+}
+
+/**
+ * Asks a question in the app's own voice and waits for an answer.
+ *
+ * This used to go through the operating system's message box, which plays the
+ * Windows alert chime. That sound belongs to something having gone wrong, and
+ * hearing it because the app wanted to confirm a backing track was alarming
+ * out of all proportion to the question.
+ *
+ * Resolves with the index of the button pressed, or -1 for a cancel.
+ */
+function askConfirm({ title, detail, buttons, mark = '?', danger = false, cancelIndex = -1 }) {
+  return new Promise((resolve) => {
+    el.confirmMark.textContent = mark;
+    el.confirmMark.classList.toggle('danger', danger);
+    el.confirmTitle.textContent = title;
+    el.confirmDetail.textContent = detail || '';
+    el.confirmDetail.hidden = !detail;
+    el.confirmButtons.innerHTML = '';
+
+    let settled = false;
+    const finish = (index) => {
+      if (settled) return;
+      settled = true;
+      el.confirmDialog.removeEventListener('close', onClose);
+      el.confirmDialog.close();
+      resolve(index);
+    };
+    // Esc, or anything else that dismisses it, counts as declining.
+    const onClose = () => finish(cancelIndex);
+
+    buttons.forEach((label, index) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      const last = index === buttons.length - 1;
+      button.className = `btn btn-small${
+        danger && index === 0 ? ' btn-danger' : !danger && index === 0 ? ' btn-primary' : ''}`;
+      button.textContent = label;
+      button.addEventListener('click', () => finish(index));
+      // The way out sits apart from the ways forward.
+      if (last && buttons.length > 1) el.confirmButtons.append(spacer());
+      el.confirmButtons.append(button);
+    });
+
+    el.confirmDialog.addEventListener('close', onClose);
+    el.confirmDialog.showModal();
+    const first = el.confirmButtons.querySelector('button');
+    if (first) first.focus();
+  });
+}
+
+function spacer() {
+  const span = document.createElement('span');
+  span.className = 'grow';
+  return span;
+}
+
+/** Opens a link in the real browser, after asking. */
+async function openOutside(url, what) {
+  let host = url;
+  try { host = new URL(url).host; } catch { /* show it verbatim */ }
+
+  const answer = await askConfirm({
+    title: what ? `Open ${what}?` : 'Leave the app?',
+    detail: `This opens ${host} in your normal browser.`,
+    buttons: ['Open in my browser', 'Stay here'],
+    mark: '↗',
+  });
+  if (answer === 0) await window.api.shell.openExternalConfirmed(url);
 }
 
 /** Full screen wait for the one job long enough to need explaining. */
@@ -2364,8 +2518,11 @@ function wireEvents() {
   // do anything and gives no hint why.
   el.setupDialog.addEventListener('cancel', (event) => event.preventDefault());
   el.setupBrowse.addEventListener('click', async () => {
-    const dir = await window.api.game.pickFolder();
-    if (dir) await useGameDir(dir);
+    const picked = await window.api.game.pickFolder();
+    if (picked && picked.picked) await useGameDir(picked.resolved || picked.picked);
+  });
+  el.setupUseDefault.addEventListener('click', async () => {
+    await useGameDir(state.info.defaultGameDir);
   });
   el.setupHelp.addEventListener('click', () => {
     el.setupDialog.close();
@@ -2405,7 +2562,7 @@ function wireEvents() {
   // Everything that leaves the app asks first, so a click never dumps you into
   // a browser without warning.
   const links = (state.info && state.info.links) || {};
-  const leaveFor = (url, what) => () => window.api.shell.openExternalConfirmed(url, what);
+  const leaveFor = (url, what) => () => openOutside(url, what);
 
   el.btnAboutPage.addEventListener('click', leaveFor(links.game, 'the game on itch.io'));
   el.btnAboutDiscord.addEventListener('click', leaveFor(links.discord, "jojozagjos's Discord"));
@@ -2551,12 +2708,6 @@ function wireEvents() {
     const type = currentContentType();
     if (type) window.api.shell.openPath(type.dir);
   });
-  el.btnContentGuide.addEventListener('click', () => {
-    window.api.shell.openExternalConfirmed(
-      'https://thechoicervoicer.neocities.org/v2/content_guide',
-      "the game's official content guide"
-    );
-  });
 
   el.sessionSelect.addEventListener('change', () => {
     const session = state.pack.sessions.find((s) => s.id === el.sessionSelect.value);
@@ -2690,6 +2841,30 @@ function wireEvents() {
     }
   });
 
+  /**
+   * The mouse's back button. Browsers map it to history, which this app has
+   * none of, so it did nothing at all. It now means what it looks like it
+   * should mean: back out of whatever is open, innermost first.
+   */
+  window.addEventListener('mouseup', (event) => {
+    if (event.button !== 3) return;
+    event.preventDefault();
+
+    const openDialog = document.querySelector('dialog[open]');
+    if (openDialog && openDialog !== el.setupDialog) { openDialog.close(); return; }
+
+    const sheet = document.querySelector('.viewer-sheet, .picker-sheet');
+    if (sheet) { sheet.remove(); return; }
+
+    if (!el.editorView.hidden) { editor.close(); return; }
+    if (state.tab !== 'home') switchTab('home');
+  });
+  // Chromium fires its own navigation on these; without this the window can
+  // try to go back in history and blank itself.
+  window.addEventListener('mousedown', (event) => {
+    if (event.button === 3 || event.button === 4) event.preventDefault();
+  });
+
   document.addEventListener('keydown', (event) => {
     if (event.target.matches('input, select, textarea') || document.querySelector('dialog[open]')) return;
     // The editor has its own shortcuts. Without this, Space reached both and
@@ -2715,15 +2890,25 @@ async function setAllSources(source) {
 }
 
 async function pickGameDir() {
-  const dir = await window.api.game.pickFolder();
-  if (!dir) return;
-  state.settings = await window.api.settings.set({ gameDir: dir });
+  const picked = await window.api.game.pickFolder();
+  if (!picked || !picked.picked) return;
+
+  if (!picked.resolved) {
+    toast(
+      'That folder has no packs_voice inside it. Pick the folder that contains packs_voice, '
+      + 'not packs_voice itself.',
+      'warn', 9000
+    );
+    return;
+  }
+
+  state.settings = await window.api.settings.set({ gameDir: picked.resolved });
   state.pack = null;
   state.session = null;
   el.workspace.hidden = true;
   el.emptyState.hidden = false;
-  el.setGameDir.value = dir;
-  await rescan(dir);
+  el.setGameDir.value = picked.resolved;
+  await rescan(picked.resolved);
 }
 
 boot().catch((err) => {

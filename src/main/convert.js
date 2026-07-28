@@ -217,7 +217,11 @@ async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
   const {
     mode = 'muffle',      // 'muffle' keeps a dulled bed, 'silence' removes it
     level = null,         // overrides the mode's own attenuation
-    cutoff = 500,         // Hz, where the muffle rolls the top off
+    // Where the muffle rolls the top off. 500 Hz took nearly everything with
+    // it and left a barely audible rumble, which was not the point: the bed is
+    // meant to still be there, just behind the voice. 1.4 kHz keeps the body
+    // of music and room tone while taking the edge that competes with speech.
+    cutoff = 1400,
     fade = 0.08,          // seconds of ramp, so the duck does not click
     audioFormat = 'wav',
     baseName = '_backing_track',
@@ -247,7 +251,9 @@ async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
   // Silencing under a line leaves a hole where the room tone was, which sounds
   // like the audio dropped out. Muffling instead rolls the top off and pulls it
   // down, so the scene keeps its atmosphere and the dub still sits in front.
-  const gain = level != null ? level : (mode === 'silence' ? 0 : 0.22);
+  // 0.22 was about 13 dB down, which on top of the filtering left almost
+  // nothing. 0.45 is roughly 7 dB down: clearly behind the dub, still present.
+  const gain = level != null ? level : (mode === 'silence' ? 0 : 0.45);
   const chain = mode === 'silence'
     ? [`volume=${gain}:enable='${when}'`]
     : [`lowpass=f=${cutoff}:enable='${when}'`, `volume=${gain}:enable='${when}'`];

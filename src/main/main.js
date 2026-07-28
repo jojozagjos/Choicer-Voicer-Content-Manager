@@ -107,6 +107,8 @@ const DEFAULT_SETTINGS = {
   showSplash: true,
   showPreviewCaptions: true,
   showEditorCaptions: true,
+  // Set once the help has been shown after a successful first setup.
+  seenHelp: false,
   captionStyle: {},
   characterColors: {},
   // Donation prompt state. It only appears after the app has actually been
@@ -700,6 +702,65 @@ async function runTypeEditorChecks(win, gameDir, errors) {
     if (!r.sidePanel) errors.push(`${type} editor has no side panel`);
   }
 
+  // Delete one of them the way a person would, through the tile, the Delete
+  // button and the app's own confirmation. That path used to end in an
+  // operating system message box, so nothing exercised it.
+  let deleteCheck = null;
+  try {
+    deleteCheck = await win.webContents.executeJavaScript(`(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const root = document.getElementById('editor-view');
+      if (!root.hidden) {
+        const back = root.querySelector('.editor-head button');
+        if (back) back.click();
+        await wait(400);
+      }
+
+      document.querySelector('[data-tab="content"]').click();
+      await wait(300);
+      const typeBtn = [...document.querySelectorAll('#content-types button')]
+        .find((b) => b.dataset.type === 'studio');
+      if (!typeBtn) return { skipped: 'no studio type' };
+      typeBtn.click();
+      await wait(400);
+
+      const tile = [...document.querySelectorAll('.pack-tile')]
+        .find((t) => t.textContent.includes(${JSON.stringify(SPEC_PACK)}));
+      if (!tile) return { skipped: 'no pack to delete' };
+      tile.click();
+      await wait(300);
+
+      document.querySelector('#btn-detail-delete').click();
+      await wait(400);
+
+      const dialog = document.getElementById('confirm-dialog');
+      const asked = dialog.open;
+      const title = (document.getElementById('confirm-title') || {}).textContent || '';
+      if (!asked) return { asked: false };
+
+      // The first button is the one that goes ahead.
+      document.querySelector('#confirm-buttons button').click();
+      await wait(1500);
+
+      return {
+        asked,
+        title,
+        stillListed: [...document.querySelectorAll('.pack-tile')]
+          .some((t) => t.textContent.includes(${JSON.stringify(SPEC_PACK)})),
+        dialogClosed: !dialog.open,
+      };
+    })()`);
+
+    if (deleteCheck && !deleteCheck.skipped) {
+      if (!deleteCheck.asked) errors.push('deleting a pack did not ask first');
+      if (deleteCheck.dialogClosed === false) errors.push('the confirm dialog stayed open');
+      if (deleteCheck.stillListed) errors.push('the deleted pack is still listed');
+    }
+  } catch (err) {
+    deleteCheck = { error: err.message };
+    errors.push(`delete check threw: ${err.message}`);
+  }
+
   // Close the editor before the packs go, or it repaints against nothing.
   await win.webContents.executeJavaScript(`(async () => {
     const root = document.getElementById('editor-view');
@@ -722,7 +783,7 @@ async function runTypeEditorChecks(win, gameDir, errors) {
     }
   }
 
-  return { results, built: made.map((m) => m.type), removed };
+  return { results, deleteCheck, built: made.map((m) => m.type), removed };
 }
 
 function runSmokeTest(win) {
@@ -1698,17 +1759,17 @@ function registerIpc() {
     });
     if (res.canceled || !res.filePaths.length) return null;
 
+    // What was chosen and whether it worked. The app explains a bad choice in
+    // its own setup panel rather than through an operating system box, which
+    // arrives with the Windows alert chime attached.
     const resolved = gamedata.resolveGameDir(res.filePaths[0]);
-    if (!resolved) {
-      await dialog.showMessageBox(mainWindow, {
-        type: 'warning',
-        message: 'That folder does not look like Choicer Voicer game data.',
-        detail: 'Pick the folder that contains "packs_voice", usually '
-          + `${gamedata.defaultGameDir()}`,
-      });
-      return null;
-    }
-    return resolved;
+    return { picked: res.filePaths[0], resolved: resolved || null };
+  });
+
+  /** Whether a folder looks like game data, without committing to it. */
+  ipcMain.handle('game:check', (_e, dir) => {
+    const resolved = dir ? gamedata.resolveGameDir(dir) : null;
+    return { ok: Boolean(resolved), resolved: resolved || null };
   });
 
   ipcMain.handle('media:probe', (_e, files) => probeMany(files || []));
@@ -1927,16 +1988,8 @@ function registerIpc() {
     const gameDir = gamedata.resolveGameDir(settings.gameDir || gamedata.defaultGameDir());
     if (!gameDir) return { ok: false, error: 'No game folder found' };
 
-    const answer = await dialog.showMessageBox(mainWindow, {
-      type: 'warning',
-      buttons: ['Delete', 'Cancel'],
-      defaultId: 1,
-      cancelId: 1,
-      message: `Delete "${path.basename(packDir)}"?`,
-      detail: 'The whole folder and everything in it is removed. This cannot be undone.',
-    });
-    if (answer.response !== 0) return { ok: false, cancelled: true };
-
+    // Confirmed in the app before this is reached. deletePack still refuses
+    // anything outside the game folder, so a mistaken call cannot do damage.
     try {
       return { ok: true, ...deletePack(gameDir, packDir) };
     } catch (err) {
@@ -2078,30 +2131,14 @@ function registerIpc() {
    * See convert.buildBackingTrack for why this is done from the clip times
    * rather than by trying to separate the voice out.
    */
-  handleWrite('content:buildBacking', (p) => p.packDir, async (event, { packDir, videoPath, ranges, level, replacing }) => {
+  handleWrite('content:buildBacking', (p) => p.packDir, async (event, { packDir, videoPath, ranges, level, mode }) => {
     if (!isAllowed(packDir)) return { ok: false, error: 'That folder is outside the game folder' };
 
-    // Confirmed here rather than in the renderer, matching how deleting a pack
-    // asks, and so the one thing it cannot do is stated before it happens.
-    const answer = await dialog.showMessageBox(mainWindow, {
-      type: 'question',
-      buttons: ['Muffle under lines', 'Silence under lines', 'Cancel'],
-      defaultId: 0,
-      cancelId: 2,
-      message: replacing ? 'Replace the existing backing track?' : 'Build a backing track?',
-      detail: `The video's own audio is used, quietened under each of the ${(ranges || []).length} `
-        + 'lines so your dub sits in front of it.\n\n'
-        + 'Muffle rolls the top off and pulls it down, keeping the room tone and music underneath. '
-        + 'Silence removes it completely, which can sound like the audio dropped out.\n\n'
-        + 'Either way, music playing underneath a line is affected along with the voice. Separating '
-        + 'a voice out properly needs a trained model, which is far too large to ship in this app.'
-        + (replacing ? '\n\nThe current backing track is overwritten.' : ''),
-    });
-    if (answer.response === 2) return { ok: false, cancelled: true };
-
+    // Which of muffle or silence was chosen is decided in the app, where the
+    // difference can be explained properly.
     try {
       const result = await convert.buildBackingTrack(videoPath, ranges || [], packDir, {
-        mode: answer.response === 1 ? 'silence' : 'muffle',
+        mode: mode === 'silence' ? 'silence' : 'muffle',
         level: Number.isFinite(level) ? level : null,
         onProgress: ({ percent }) => {
           if (!event.sender.isDestroyed()) {
@@ -2143,20 +2180,8 @@ function registerIpc() {
    * Opens a link in the real browser, after asking. The app is offline apart
    * from its update check, so leaving it should never be a surprise.
    */
-  ipcMain.handle('shell:openExternalConfirmed', async (_e, { url, what }) => {
-    let host = url;
-    try { host = new URL(url).host; } catch { /* show it verbatim */ }
-
-    const answer = await dialog.showMessageBox(mainWindow, {
-      type: 'question',
-      buttons: ['Open in my browser', 'Cancel'],
-      defaultId: 0,
-      cancelId: 1,
-      message: what ? `Open ${what}?` : 'Leave the app?',
-      detail: `This opens ${host} in your normal browser.\n\n${url}`,
-    });
-    if (answer.response !== 0) return { ok: false, cancelled: true };
-
+  ipcMain.handle('shell:openExternalConfirmed', async (_e, { url }) => {
+    // Asked in the app first; this only carries it out.
     await shell.openExternal(url);
     return { ok: true };
   });

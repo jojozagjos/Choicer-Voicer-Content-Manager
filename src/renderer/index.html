@@ -10,7 +10,7 @@
 <body>
 
 <div id="splash" class="splash">
-  <div class="splash-mark">🎙️</div>
+  <img class="splash-mark" src="appicon.png" alt="" />
   <h1 class="splash-fade">Choicer Voicer Content Manager</h1>
   <p class="splash-by splash-fade">by <b>@jojozagjos</b></p>
   <p class="splash-note splash-fade">Turn your dubs into videos you can share</p>
@@ -211,9 +211,13 @@
         <div class="content-head-actions">
           <button id="btn-content-new" class="btn btn-primary btn-small">+ Create new</button>
           <button id="btn-content-folder" class="btn btn-small">Open folder</button>
-          <button id="btn-content-guide" class="btn btn-small">Format guide</button>
         </div>
       </header>
+
+      <p class="drop-hint">
+        <b>Got a pack someone sent you?</b> Unzip it and drag the folder anywhere on this list.
+        It works out what kind it is and installs it for you.
+      </p>
 
       <div id="content-grid" class="content-grid"></div>
     </div>
@@ -575,6 +579,22 @@
   </div>
 </div>
 
+<!-- Asking things in the app's own voice. Native message boxes play the Windows
+     system alert sound, which for "shall I build a backing track" reads as
+     something having gone badly wrong. -->
+<dialog id="confirm-dialog" class="dialog">
+  <div class="dialog-body">
+    <div class="confirm-head">
+      <span class="confirm-mark" id="confirm-mark">?</span>
+      <div>
+        <h2 id="confirm-title"></h2>
+        <p class="muted small" id="confirm-detail"></p>
+      </div>
+    </div>
+    <footer class="dialog-actions" id="confirm-buttons"></footer>
+  </div>
+</dialog>
+
 <!-- First run: nothing works until the app knows where the game keeps its files -->
 <dialog id="setup-dialog" class="dialog">
   <div class="dialog-body">
@@ -592,6 +612,14 @@
     <p class="muted small">Look for the folder that contains <code>packs_voice</code>. On Windows it
        is usually here:</p>
     <p class="path-sample"><code id="setup-default-path"></code></p>
+
+    <div id="setup-suggestion" class="setup-suggestion" hidden>
+      <div>
+        <b>That folder looks right.</b>
+        <em class="muted small">Nothing is read from it until you say so.</em>
+      </div>
+      <button type="button" class="btn btn-small btn-primary" id="setup-use-default">Use it</button>
+    </div>
 
     <div class="dropzone" id="setup-drop">
       <p><b>Drop that folder here</b></p>
@@ -613,7 +641,7 @@
 <dialog id="about-dialog" class="dialog dialog-wide">
   <form method="dialog" class="dialog-body dialog-body-tabbed">
     <div class="about-head">
-      <span class="brand-mark">🎙️</span>
+      <img class="brand-mark brand-mark-img" src="appicon.png" alt="" />
       <div class="about-lines">
         <h2>Choicer Voicer Content Manager</h2>
         <span class="muted small">
@@ -704,17 +732,24 @@
            the voice. That is the limit of doing this without a model.</p>
 
         <h4>Pictures</h4>
-        <p>Each clip can take a picture from the video frame showing at the time, or from a file.
-           Hover a clip's thumbnail for the three buttons.</p>
+        <p>Every line in the list has three buttons beside its picture:</p>
         <ul class="bullets">
-          <li><b>⧉</b> uses the frame showing right now.</li>
-          <li><b>↑</b> picks a picture file, converted to PNG on the way in.</li>
-          <li><b>⧉↺</b> reuses a picture already in the pack. The clip points at that same file
-              rather than getting a copy, so changing it later changes every line using it.</li>
+          <li><b>Grab frame</b> takes the video frame showing right now. Scrub to the moment you
+              want, then press it.</li>
+          <li><b>Upload</b> picks a picture file from your computer, converted to PNG on the way
+              in.</li>
+          <li><b>Reuse</b> lists the pictures already in this pack and points the line at one of
+              them. The line shares that file rather than getting a copy, so editing the picture
+              later changes every line using it.</li>
         </ul>
+        <p>Click any picture, anywhere in the app, to see it full size.</p>
         <p class="muted small">Lines are never given each other's pictures automatically, even when
            the character name matches, since two characters can share a name and look nothing
            alike. Reuse is always something you choose.</p>
+        <p class="muted small">To cover a lot of lines at once, put a picture called
+           <code>_pack_filler_image</code> in the pack folder. The game uses it for every clip with
+           no picture of its own, and lines using it are marked with a dashed edge here. It covers
+           the folder it sits in, so a pack sorted into subfolders wants one in each.</p>
 
         <h4>Undo</h4>
         <p><b>Ctrl + Z</b> covers everything: moving, retiming, captions, deleting a clip, and

@@ -307,15 +307,16 @@ function inspectPlayer(dir, files) {
     }
   }
 
-  // A reaction with no sound leaves the contestant silent at that moment,
-  // which plays as the game having broken rather than as a deliberate choice.
+  // Worth knowing about, but not a fault: the game itself leaves score_2 and
+  // score_3 empty by default, so a perfectly ordinary pack has gaps here. It
+  // is only an error when there is nothing at all.
   const silent = REACTIONS.filter((slot) => !assignment[slot]);
   if (silent.length === REACTIONS.length) {
     issues.push(issue(ERROR, 'No reaction sounds at all, so this contestant never speaks'));
   } else if (silent.length) {
-    issues.push(issue(ERROR,
-      `${silent.length} reaction${silent.length > 1 ? 's have' : ' has'} no sound: `
-      + `${silent.join(', ')}`));
+    issues.push(issue(WARN,
+      `${silent.length} reaction${silent.length > 1 ? 's have' : ' has'} no sound, so `
+      + `${silent.length > 1 ? 'those moments are' : 'that moment is'} silent: ${silent.join(', ')}`));
   }
 
   if (!data.name) issues.push(issue(WARN, 'No name set, so the game will show the folder name'));

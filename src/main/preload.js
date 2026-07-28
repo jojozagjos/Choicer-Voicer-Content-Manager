@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld('api', {
   game: {
     scan: (dir) => ipcRenderer.invoke('game:scan', dir),
     pickFolder: () => ipcRenderer.invoke('game:pickFolder'),
+    check: (dir) => ipcRenderer.invoke('game:check', dir),
   },
 
   content: {

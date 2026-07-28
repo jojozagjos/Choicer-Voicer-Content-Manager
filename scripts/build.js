@@ -176,13 +176,17 @@ async function main() {
     // Windows shows these in the file properties and in SmartScreen prompts,
     // which for an unsigned app is often the first thing anyone reads about
     // it. Saying plainly that it is a fan tool belongs there too.
+    //
+    // The copyright is its own top level option rather than part of
+    // win32metadata; putting it in the latter is silently ignored and leaves
+    // Electron's own copyright on the file.
+    appCopyright: `Copyright (c) ${new Date().getFullYear()} jojozagjos. MIT licensed. `
+      + 'Unofficial fan tool, not affiliated with or endorsed by Yeah Maybe. '
+      + 'Includes FFmpeg under the GPL v3, see the licenses folder.',
     win32metadata: {
       CompanyName: 'jojozagjos',
       FileDescription: pkg.description,
       ProductName: APP_NAME,
-      LegalCopyright: `Copyright (c) ${new Date().getFullYear()} jojozagjos. MIT licensed. `
-        + 'Unofficial fan tool, not affiliated with or endorsed by Yeah Maybe. '
-        + 'Includes FFmpeg under the GPL v3, see the licenses folder.',
     },
   });
 

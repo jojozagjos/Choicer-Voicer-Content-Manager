@@ -628,6 +628,7 @@ function renderContentTypes() {
     const errors = type.packs.reduce((n, p) => n + p.counts.error, 0);
     const button = document.createElement('button');
     button.className = 'type-btn';
+    button.dataset.type = type.id;
     button.classList.toggle('on', type.id === state.contentType);
     button.innerHTML = `
       <span>${TYPE_ICONS[type.id] || '📦'}</span>

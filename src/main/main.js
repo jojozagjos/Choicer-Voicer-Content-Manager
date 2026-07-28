@@ -16,6 +16,7 @@ const { ensureProxy } = require('./proxy');
 const { scanContent } = require('./content');
 const {
   createPack, installPack, deletePack, trashClip, restoreClip, writeClipMeta, saveImage, writeIni,
+  writeIniSections,
 } = require('./create');
 const convert = require('./convert');
 
@@ -480,6 +481,174 @@ function removeSmokePack(gameDir) {
   } catch {
     return false;
   }
+}
+
+// Named so they are obvious in the game folder and easy to sweep up.
+const SPEC_PACK = '__smoke_spec';
+
+/**
+ * Makes one pack of a type, built the way the game documents it, so the type's
+ * editor has something real to open. Returns the folder, or null for a type
+ * with nothing to build.
+ */
+function makeSpecPack(gameDir, type) {
+  const dirs = {
+    host: 'packs_host', judges: 'packs_judges', studio: 'packs_studio',
+    menu: 'packs_menu', chatter: 'packs_chatter',
+  };
+  if (!dirs[type]) return null;
+
+  const dir = path.join(gameDir, dirs[type], SPEC_PACK);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+
+  const PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64'
+  );
+  const png = (n) => fs.writeFileSync(path.join(dir, `${n}.png`), PNG);
+  const wav = (n) => fs.writeFileSync(path.join(dir, `${n}.wav`), Buffer.alloc(128));
+  const json = (n, d) => fs.writeFileSync(path.join(dir, n), JSON.stringify(d, null, '\t'));
+
+  if (type === 'host') {
+    png('host');
+    // The host's name becomes the pack's displayed title, so it has to carry
+    // the scratch name or the tile cannot be found again.
+    json('config_host.json', {
+      name: SPEC_PACK,
+      match_singleplayer: { intro: ['Hello <player>'] },
+    });
+  } else if (type === 'judges') {
+    for (let n = 1; n <= 5; n++) { png(`judge${n}`); wav(`scoreblip${n}`); }
+    png('success');
+    json('config_judges.json', { judge1: { name: 'Ann' }, play_voices_with_blips: true });
+  } else if (type === 'studio') {
+    fs.writeFileSync(path.join(dir, 'model.glb'), Buffer.alloc(128));
+    wav('music_studio');
+  } else if (type === 'menu') {
+    png('background');
+    wav('music_menu');
+    json('config_menu.json', {});
+  } else if (type === 'chatter') {
+    wav('clap');
+    wav('yes1');
+    writeIniSections(path.join(dir, 'config_chatter.ini'), {
+      data: { title: SPEC_PACK, authors: [], volume: 1 },
+      exact_keywords: {},
+      broad_keywords: { 'clap.wav': ['clap'] },
+    });
+  }
+  return dir;
+}
+
+/**
+ * Opens every non-dub pack type's editor against a pack built to spec, and
+ * checks the editor renders the slots that type actually has. Without this the
+ * only types with any coverage were the two the user happens to own.
+ */
+async function runTypeEditorChecks(win, gameDir, errors) {
+  const TYPES = ['host', 'judges', 'studio', 'menu', 'chatter'];
+  const made = [];
+  for (const type of TYPES) {
+    try { made.push({ type, dir: makeSpecPack(gameDir, type) }); } catch (err) {
+      errors.push(`could not build a ${type} pack: ${err.message}`);
+    }
+  }
+
+  // One rescan picks all of them up.
+  await win.webContents.executeJavaScript(`(async () => {
+    document.querySelector('[data-tab="content"]').click();
+    await new Promise((r) => setTimeout(r, 300));
+    document.getElementById('btn-refresh').click();
+    await new Promise((r) => setTimeout(r, 2500));
+  })()`).catch(() => {});
+
+  const results = {};
+  for (const { type } of made) {
+    try {
+      results[type] = await win.webContents.executeJavaScript(`(async () => {
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        const root = document.getElementById('editor-view');
+        if (!root.hidden) {
+          const back = root.querySelector('.editor-head button');
+          if (back) back.click();
+          await wait(300);
+        }
+
+        document.querySelector('[data-tab="content"]').click();
+        await wait(300);
+
+        // Pick the type on the left, then its spec pack.
+        const typeBtn = [...document.querySelectorAll('#content-types button')]
+          .find((b) => b.dataset.type === ${JSON.stringify(type)});
+        if (!typeBtn) return { skipped: 'no type button' };
+        typeBtn.click();
+        await wait(400);
+
+        const tile = [...document.querySelectorAll('.pack-tile')]
+          .find((t) => t.textContent.includes(${JSON.stringify(SPEC_PACK)}));
+        if (!tile) return { skipped: 'pack not listed' };
+        tile.click();
+        await wait(300);
+
+        const edit = document.querySelector('#btn-detail-edit');
+        if (!edit) return { skipped: 'no edit button' };
+        edit.click();
+        await wait(900);
+
+        return {
+          opened: !root.hidden,
+          slots: root.querySelectorAll('.slot-card').length,
+          filledSlots: root.querySelectorAll('.slot-card.filled').length,
+          chatterRows: root.querySelectorAll('.chatter-row').length,
+          sidePanel: Boolean(root.querySelector('.editor-side h3')),
+          sideTitle: (root.querySelector('.editor-side h3') || {}).textContent || '',
+          configFields: root.querySelectorAll('.editor-side [data-cfg]').length,
+          fellBackToDropzone: Boolean(root.querySelector('.editor-empty')),
+        };
+      })()`);
+    } catch (err) {
+      results[type] = { error: err.message };
+    }
+  }
+
+  // Assertions. A type reaching the generic drop zone means its editor did not
+  // load, which is the exact thing this check exists to catch.
+  for (const [type, r] of Object.entries(results)) {
+    if (!r || r.skipped || r.error) continue;
+    if (!r.opened) errors.push(`${type} editor did not open`);
+    if (r.fellBackToDropzone) errors.push(`${type} fell back to the generic drop zone`);
+    if (type === 'chatter') {
+      if (!r.chatterRows) errors.push('chatter editor listed no sounds');
+    } else if (!r.slots) {
+      errors.push(`${type} editor rendered no slots`);
+    }
+    if (!r.sidePanel) errors.push(`${type} editor has no side panel`);
+  }
+
+  // Close the editor before the packs go, or it repaints against nothing.
+  await win.webContents.executeJavaScript(`(async () => {
+    const root = document.getElementById('editor-view');
+    if (!root.hidden) {
+      const back = root.querySelector('.editor-head button');
+      if (back) back.click();
+    }
+    await new Promise((r) => setTimeout(r, 400));
+  })()`).catch(() => {});
+
+  const removed = [];
+  for (const { type, dir } of made) {
+    if (!dir) continue;
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      removed.push(type);
+      if (fs.existsSync(dir)) errors.push(`the ${type} spec pack was left behind`);
+    } catch (err) {
+      errors.push(`could not remove the ${type} spec pack: ${err.message}`);
+    }
+  }
+
+  return { results, built: made.map((m) => m.type), removed };
 }
 
 function runSmokeTest(win) {
@@ -1347,6 +1516,16 @@ function runSmokeTest(win) {
       errors.push(`editor tools check threw: ${err.message}`);
     }
 
+    // The other pack types. The user has no judges, studio or chatter packs,
+    // so these are made to spec, opened, edited, and removed.
+    let typesCheck = null;
+    try {
+      typesCheck = await runTypeEditorChecks(win, gameDir, errors);
+    } catch (err) {
+      typesCheck = { error: err.message };
+      errors.push(`pack type editors threw: ${err.message}`);
+    }
+
     // The scratch pack goes whatever happened above, and its absence is
     // asserted rather than assumed.
     const scratchRemoved = scratch && gameDir ? removeSmokePack(gameDir) : null;
@@ -1354,8 +1533,8 @@ function runSmokeTest(win) {
 
     console.log('SMOKE ' + JSON.stringify(
       { report, scratch, scratchRemoved, videoCheck, captionCheck, editorCheck, homeCheck,
-        contentCheck, createCheck, sessionCheck, staleCheck, packCheck, toolsCheck, queueCheck,
-        errors },
+        contentCheck, createCheck, sessionCheck, staleCheck, packCheck, toolsCheck, typesCheck,
+        queueCheck, errors },
       null, 2));
     app.exit(errors.length ? 1 : 0);
   });
@@ -1475,6 +1654,14 @@ function registerIpc() {
           // packs show no portrait.
           clip.imagePath = findClipImage(pack.dir, clip);
           clip.imageUrl = clip.imagePath ? mediaUrl(clip.imagePath) : null;
+        }
+        // Filename to URL for everything in the pack. The slot editors work
+        // from names the game defines, so they need to be able to look one up
+        // whatever extension it was saved with.
+        if (pack.fileNames) {
+          pack.fileUrls = Object.fromEntries(
+            pack.fileNames.map((name) => [name, mediaUrl(path.join(pack.dir, name))])
+          );
         }
         if (pack.slotFiles) {
           pack.slotUrls = Object.fromEntries(
@@ -1747,6 +1934,20 @@ function registerIpc() {
       const merged = { ...current, ...(patch || {}) };
       writeIni(target, merged);
       return { ok: true, info: merged, file: target };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  /** Writes a multi-section ini, which is what a chatter config is. */
+  ipcMain.handle('content:writeIniSections', (_e, { dir, file, sections }) => {
+    if (!isAllowed(dir)) return { ok: false, error: 'That folder is outside the game folder' };
+    try {
+      const existing = fs.readdirSync(dir)
+        .find((f) => f.toLowerCase() === file.toLowerCase()
+          || f.toLowerCase() === file.replace(/\.ini$/i, '.cfg').toLowerCase());
+      writeIniSections(path.join(dir, existing || file), sections || {});
+      return { ok: true };
     } catch (err) {
       return { ok: false, error: err.message };
     }

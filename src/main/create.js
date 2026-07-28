@@ -69,6 +69,32 @@ function writeIni(file, data) {
   fs.writeFileSync(file, `${lines.join('\n')}\n`, 'utf8');
 }
 
+/**
+ * Writes a multi-section ini, which chatter configs need: they carry `[data]`
+ * alongside `[exact_keywords]` and `[broad_keywords]`. Empty sections are kept
+ * so the file still shows what it is for once every keyword is cleared out.
+ *
+ * Chatter keys are full filenames, extension included. The game writes those
+ * bare, dot and all (`lets_go.wav = [...]`), so they are written bare here
+ * too. Quoting them makes the quotes part of the key name, which then matches
+ * no file on disk. Only a key holding something that would genuinely break
+ * parsing gets quoted.
+ */
+const BARE_KEY = /^[A-Za-z0-9_.\-+#]+$/;
+
+function writeIniSections(file, sections) {
+  const chunks = [];
+  for (const [name, entries] of Object.entries(sections)) {
+    const lines = [`[${name}]`, ''];
+    for (const [key, value] of Object.entries(entries || {})) {
+      if (value === undefined || value === null) continue;
+      lines.push(`${BARE_KEY.test(key) ? key : iniString(key)}=${iniValue(value)}`);
+    }
+    chunks.push(lines.join('\n'));
+  }
+  fs.writeFileSync(file, `${chunks.join('\n\n')}\n`, 'utf8');
+}
+
 // ---------------------------------------------------------------------------
 // Default configs
 // ---------------------------------------------------------------------------
@@ -433,5 +459,6 @@ module.exports = {
   saveImage,
   TYPE_DIRS,
   writeIni,
+  writeIniSections,
   safeFolderName,
 };

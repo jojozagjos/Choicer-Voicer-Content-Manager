@@ -11,6 +11,7 @@
 
 import { attachRecorder } from './recorder.js';
 import { Timeline, computePeaks } from './timeline.js';
+import { specFor, KIND_ACCEPTS } from './packspec.js';
 
 const el = (tag, className, html) => {
   const node = document.createElement(tag);
@@ -242,6 +243,8 @@ export class PackEditor {
 
     if (pack.type === 'voice') this.renderDubEditor(body);
     else if (pack.type === 'player') this.renderPlayerEditor(body);
+    else if (pack.type === 'chatter') this.renderChatterEditor(body);
+    else if (specFor(pack.type)) this.renderSlotEditor(body, specFor(pack.type));
     else this.renderGenericEditor(body);
   }
 
@@ -432,14 +435,22 @@ export class PackEditor {
       q('time').textContent = fmt(video.currentTime);
     });
 
-    // Captions have to keep up with the playhead, not with timeupdate, or a
-    // line appears a fifth of a second after the voice starts.
+    // Captions keep up with the playhead rather than with timeupdate, which
+    // only fires a few times a second and made a line appear noticeably after
+    // the voice started.
     const trackCaption = () => {
       if (this.root.hidden) return;
       this.paintCaption(video.currentTime);
       this._captionRaf = requestAnimationFrame(trackCaption);
     };
     this._captionRaf = requestAnimationFrame(trackCaption);
+
+    // rAF stops when the window is hidden or occluded, so on its own it leaves
+    // whatever caption was last drawn frozen on screen. These cover the cases
+    // where the time changed but no frame was painted.
+    for (const event of ['seeked', 'timeupdate', 'play', 'pause']) {
+      video.addEventListener(event, () => this.paintCaption(video.currentTime));
+    }
 
     this.setCaptionsVisible(!this.settings || this.settings.showEditorCaptions !== false);
     this.renderClipList(clipList);
@@ -1401,6 +1412,532 @@ export class PackEditor {
     button.textContent = '■';
     this.slotAudio = audio;
     this.slotButton = button;
+  }
+
+  // Slot editors: host, judges, studio, menu
+
+  /**
+   * Builds an editor from a pack type's file structure.
+   *
+   * Every type except dubs and chatter is the same job wearing different
+   * clothes: the game looks for particular filenames, and each one either
+   * exists or does not. Rather than five editors that each invent their own
+   * idea of what a pack holds, this renders whatever packspec.js says the type
+   * contains, so adding a file the game supports is a one line change there.
+   */
+  renderSlotEditor(body, spec) {
+    const pack = this.pack;
+
+    const main = el('div', 'editor-stage');
+    main.append(el('div', 'slot-intro', `
+      <h3>${escapeHtml(pack.title)}</h3>
+      <p class="muted">${escapeHtml(spec.blurb)}</p>
+      <p class="muted small">Drop a file on a slot, or click it to choose one. Anything in the
+         wrong format is converted and named the way the game expects.</p>`));
+
+    for (const group of spec.groups) {
+      const section = el('section', 'slot-group');
+      section.innerHTML = `
+        <h4>${escapeHtml(group.title)}</h4>
+        ${group.note ? `<p class="muted small">${escapeHtml(group.note)}</p>` : ''}
+        <div class="slot-grid"></div>`;
+      const grid = section.querySelector('.slot-grid');
+      for (const slot of group.slots) grid.append(this.buildSlot(slot));
+      main.append(section);
+    }
+
+    body.append(main);
+
+    const side = el('aside', 'editor-side');
+    body.append(side);
+    this.renderTypeConfig(side, spec);
+  }
+
+  /** Finds whichever file fills a slot, whatever extension it uses. */
+  slotFile(key) {
+    const names = this.pack.fileNames || [];
+    const lower = key.toLowerCase();
+    return names.find((n) => n.slice(0, n.lastIndexOf('.')).toLowerCase() === lower) || null;
+  }
+
+  buildSlot(slot) {
+    const file = this.slotFile(slot.key);
+    const url = file && this.pack.fileUrls ? this.pack.fileUrls[file] : null;
+
+    const card = el('div', `slot-card slot-${slot.kind}`);
+    card.dataset.slot = slot.key;
+    card.classList.toggle('filled', Boolean(file));
+    if (slot.required && !file) card.classList.add('missing');
+
+    const preview = slot.kind === 'image' && url
+      ? `<img src="${url}" alt="" />`
+      : `<span class="slot-glyph">${
+        slot.kind === 'audio' ? '♪' : slot.kind === 'video' ? '▶' : slot.kind === 'model' ? '◈' : '🖼'
+      }</span>`;
+
+    card.innerHTML = `
+      <div class="slot-preview">${preview}</div>
+      <div class="slot-info">
+        <b>${escapeHtml(slot.label)}</b>
+        <span class="slot-filename ${file ? '' : 'muted'}">${
+  escapeHtml(file || `${slot.key} (not set)`)}</span>
+        ${slot.note ? `<em class="muted small">${escapeHtml(slot.note)}</em>` : ''}
+      </div>
+      <div class="slot-buttons">
+        ${slot.kind === 'audio' && url
+    ? '<button type="button" class="icon-btn" data-act="play" title="Play this">▶</button>' : ''}
+        <button type="button" class="icon-btn" data-act="pick" title="Choose a file">↑</button>
+        ${file
+    ? '<button type="button" class="icon-btn danger" data-act="clear" title="Remove this file">✕</button>'
+    : ''}
+      </div>`;
+
+    card.querySelector('[data-act="pick"]').addEventListener('click', () => this.fillSlot(slot));
+
+    const playBtn = card.querySelector('[data-act="play"]');
+    if (playBtn) playBtn.addEventListener('click', () => this.playFile(url, playBtn));
+
+    const clearBtn = card.querySelector('[data-act="clear"]');
+    if (clearBtn) clearBtn.addEventListener('click', () => this.clearSlot(slot, file));
+
+    for (const event of ['dragenter', 'dragover']) {
+      card.addEventListener(event, (e) => { e.preventDefault(); card.classList.add('over'); });
+    }
+    for (const event of ['dragleave', 'drop']) {
+      card.addEventListener(event, () => card.classList.remove('over'));
+    }
+    card.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const paths = [...(e.dataTransfer.files || [])]
+        .map((f) => this.api.pathForFile(f))
+        .filter(Boolean);
+      if (paths.length) this.fillSlot(slot, paths[0]);
+    });
+
+    return card;
+  }
+
+  /** Puts a file into a slot, converted and named the way the game wants. */
+  async fillSlot(slot, sourcePath) {
+    let source = sourcePath;
+    if (!source) {
+      const picked = await this.api.dialog.pickFiles({
+        title: slot.label,
+        kind: KIND_ACCEPTS[slot.kind] || 'all',
+      });
+      if (!picked.length) return;
+      source = picked[0];
+    }
+
+    // A 3D model is the one thing here ffmpeg cannot touch, so it is copied
+    // rather than converted and has to already be the right format.
+    if (slot.kind === 'model' && !/\.(glb|gltf)$/i.test(source)) {
+      this.toast('A studio model has to be a .glb or .gltf file.', 'error', 7000);
+      return;
+    }
+
+    const ok = await this.run(`Adding ${slot.label.toLowerCase()}…`, () => this.importFiles([source], {
+      baseName: slot.key,
+      kind: slot.kind === 'model' ? undefined : slot.kind,
+      overwrite: true,
+      audioFormat: 'wav',
+    }));
+    if (!ok) return;
+
+    if (this.onChanged) await this.onChanged(this.pack.id, { keepEditor: true });
+    this.refreshSlots();
+  }
+
+  /** Removes a slot's file, keeping it so the removal can be undone. */
+  async clearSlot(slot, file) {
+    const base = file.slice(0, file.lastIndexOf('.'));
+    const result = await this.run('Removing…', () =>
+      this.api.content.trashClip({ packDir: this.pack.dir, base }));
+
+    if (!result.ok) {
+      this.toast(`Could not remove it: ${result.error}`, 'error', 7000);
+      return;
+    }
+
+    this.toast(`Removed ${file}.`, 'ok', 2500);
+    const refresh = async () => {
+      if (this.onChanged) await this.onChanged(this.pack.id, { keepEditor: true });
+      this.refreshSlots();
+    };
+    this.push({
+      label: `remove ${file}`,
+      undo: async () => { await this.api.content.restoreClip({ moved: result.moved }); await refresh(); },
+      redo: async () => {
+        await this.api.content.trashClip({ packDir: this.pack.dir, base });
+        await refresh();
+      },
+    });
+    await refresh();
+  }
+
+  /** Repaints every slot from the pack's current files. */
+  refreshSlots() {
+    const spec = specFor(this.pack.type);
+    if (!spec) return;
+    for (const group of spec.groups) {
+      for (const slot of group.slots) {
+        const old = this.root.querySelector(`.slot-card[data-slot="${CSS.escape(slot.key)}"]`);
+        if (old) old.replaceWith(this.buildSlot(slot));
+      }
+    }
+  }
+
+  /** Plays any audio file, used by the slot editors. */
+  playFile(url, button) {
+    if (this.slotAudio) {
+      this.slotAudio.pause();
+      if (this.slotButton) this.slotButton.textContent = '▶';
+      const same = this.slotAudio.dataset.url === url;
+      this.slotAudio = null;
+      this.slotButton = null;
+      if (same) return;
+    }
+    if (!url) return;
+
+    const audio = new Audio(url);
+    audio.dataset.url = url;
+    audio.addEventListener('ended', () => { button.textContent = '▶'; this.slotAudio = null; });
+    audio.play().catch(() => this.toast('Could not play that.', 'warn'));
+    button.textContent = '■';
+    this.slotAudio = audio;
+    this.slotButton = button;
+  }
+
+  // The JSON config beside a slot editor
+
+  renderTypeConfig(side, spec) {
+    const type = this.pack.type;
+    if (type === 'host') return this.renderHostConfig(side);
+    if (type === 'judges') return this.renderJudgeConfig(side);
+    if (type === 'menu') return this.renderMenuConfig(side);
+    return this.renderPlainConfig(side, spec);
+  }
+
+  /** Writes a patch into the pack's JSON config and keeps the local copy in step. */
+  async patchConfig(file, patch) {
+    const result = await this.api.content.writeConfig({ dir: this.pack.dir, file, patch });
+    if (!result.ok) {
+      this.toast(`Could not save that: ${result.error}`, 'error', 7000);
+      return false;
+    }
+    this.pack.config = result.config;
+    return true;
+  }
+
+  renderHostConfig(side) {
+    const config = this.pack.config || {};
+    side.innerHTML = `
+      <h3>The host</h3>
+      <label class="field"><span>Name</span>
+        <input class="input" data-cfg="name" placeholder="Shae" /></label>
+      <p class="muted small">The host does not take the pack's name. Left blank they are called
+         <b>Shae</b>.</p>
+
+      <h4 class="side-heading">Writing dialogue</h4>
+      <p class="muted small">These stand in for things that change during a session:</p>
+      <dl class="token-list">
+        <div><dt>&lt;host_name&gt;</dt><dd>the name above</dd></div>
+        <div><dt>&lt;player&gt;</dt><dd>whoever is up</dd></div>
+        <div><dt>&lt;round&gt;</dt><dd>the round now or next</dd></div>
+        <div><dt>&lt;points&gt;</dt><dd>points earned this round</dd></div>
+      </dl>
+      <p class="muted small">In the config file each dialogue event is a list, and every entry in
+         it is one text box. Use <code>\\n</code> for a line break, and do not use
+         <code>&lt;/next&gt;</code>; that is only for the in game editor.</p>
+
+      <h4 class="side-heading">Dialogue</h4>
+      <p class="muted small" data-role="line-count"></p>
+      <button type="button" class="btn btn-small" data-act="open-config">Edit config_host.json</button>
+      <p class="muted small">Dialogue is a deep structure and the game has its own editor for it,
+         under Extras. This app checks it and leaves the wording to you.</p>`;
+
+    const name = side.querySelector('[data-cfg="name"]');
+    name.value = config.name || '';
+    name.addEventListener('change', async () => {
+      if (await this.patchConfig('config_host.json', { name: name.value.trim() })) {
+        this.toast('Saved.', 'ok', 1500);
+        if (this.onChanged) await this.onChanged(this.pack.id, { keepEditor: true });
+      }
+    });
+
+    let lines = 0;
+    const walk = (node) => {
+      if (Array.isArray(node)) lines += node.filter((v) => typeof v === 'string').length;
+      else if (node && typeof node === 'object') Object.values(node).forEach(walk);
+    };
+    walk(config);
+    side.querySelector('[data-role="line-count"]').textContent =
+      `${lines} line${lines === 1 ? '' : 's'} of dialogue in this pack.`;
+
+    side.querySelector('[data-act="open-config"]').addEventListener('click', () =>
+      this.api.shell.openPath(`${this.pack.dir}\\config_host.json`));
+  }
+
+  renderJudgeConfig(side) {
+    const config = this.pack.config || {};
+    side.innerHTML = `
+      <h3>Judges</h3>
+      <p class="muted small">Names shown under each judge.</p>
+      <div class="judge-names"></div>
+      <label class="option-row">
+        <input type="checkbox" data-cfg="play_voices_with_blips" />
+        <span>
+          <b>Play score blips for judges who have their own voice</b>
+          <em>Off means a judge with their own voice plays only that.</em>
+        </span>
+      </label>`;
+
+    const list = side.querySelector('.judge-names');
+    for (let n = 1; n <= 5; n++) {
+      const key = `judge${n}`;
+      const row = el('label', 'field');
+      row.innerHTML = `<span>Judge ${n}</span><input class="input" />`;
+      const input = row.querySelector('input');
+      input.value = (config[key] && config[key].name) || '';
+      input.placeholder = `Judge ${n}`;
+      input.addEventListener('change', async () => {
+        const patch = { [key]: { ...(config[key] || {}), name: input.value.trim() } };
+        if (await this.patchConfig('config_judges.json', patch)) {
+          this.toast('Saved.', 'ok', 1500);
+        }
+      });
+      list.append(row);
+    }
+
+    const blips = side.querySelector('[data-cfg="play_voices_with_blips"]');
+    blips.checked = config.play_voices_with_blips !== false;
+    blips.addEventListener('change', async () => {
+      if (await this.patchConfig('config_judges.json', {
+        play_voices_with_blips: blips.checked,
+      })) this.toast('Saved.', 'ok', 1500);
+    });
+  }
+
+  renderMenuConfig(side) {
+    const config = this.pack.config || {};
+    const audio = config.audio || {};
+    const hasVideo = Boolean(this.slotFile('video'));
+
+    side.innerHTML = `
+      <h3>Menu options</h3>
+      <label class="field"><span>Background fitting</span>
+        <select class="select" data-cfg="stretch">
+          <option value="false">Tile at its own size</option>
+          <option value="true">Stretch to the window</option>
+        </select>
+      </label>
+      <label class="option-row">
+        <input type="checkbox" data-cfg="use_video" ${hasVideo ? '' : 'disabled'} />
+        <span>
+          <b>Use the video's own audio</b>
+          <em>${hasVideo
+    ? 'Off plays the menu music instead and mutes the video.'
+    : 'Only applies once this pack has a background video.'}</em>
+        </span>
+      </label>`;
+
+    const stretch = side.querySelector('[data-cfg="stretch"]');
+    stretch.value = String(Boolean(config.stretch_background));
+    stretch.addEventListener('change', async () => {
+      if (await this.patchConfig('config_menu.json', {
+        stretch_background: stretch.value === 'true',
+      })) this.toast('Saved.', 'ok', 1500);
+    });
+
+    const useVideo = side.querySelector('[data-cfg="use_video"]');
+    useVideo.checked = audio.use_video !== false;
+    useVideo.addEventListener('change', async () => {
+      if (await this.patchConfig('config_menu.json', {
+        audio: { ...audio, use_video: useVideo.checked },
+      })) this.toast('Saved.', 'ok', 1500);
+    });
+  }
+
+  /** For types whose config has nothing worth a dedicated form yet. */
+  renderPlainConfig(side, spec) {
+    side.innerHTML = `
+      <h3>Config</h3>
+      <p class="muted small">This pack's settings live in <code>${escapeHtml(spec.config)}</code>.
+         Nothing in it needs a form yet, and the app checks it is valid whenever the pack is
+         scanned.</p>
+      <button type="button" class="btn btn-small" data-act="open">Open the pack folder</button>`;
+    side.querySelector('[data-act="open"]').addEventListener('click', () =>
+      this.api.shell.openPath(this.pack.dir));
+  }
+
+  // Chatter
+
+  /**
+   * Chatter packs map keywords to sounds, so the editor is a table rather than
+   * a set of slots. Two kinds of match, which behave differently enough to be
+   * worth keeping visibly apart:
+   *
+   *   exact  the whole word, capitalisation included, for Twitch emote names
+   *   broad  found anywhere in the word, ignoring case
+   */
+  renderChatterEditor(body) {
+    const pack = this.pack;
+    const sections = (pack.config && pack.config.sections) || {};
+
+    const main = el('div', 'editor-stage');
+    main.innerHTML = `
+      <div class="slot-intro">
+        <h3>${escapeHtml(pack.title)}</h3>
+        <p class="muted">Sounds triggered by Twitch chat. The first word of a message is checked
+           against the keywords below.</p>
+      </div>
+      <div class="chatter-legend">
+        <span><b>Exact</b> matches the whole word including capitals. "Clap" fires only for
+          "Clap". Use it for emote names.</span>
+        <span><b>Broad</b> matches anywhere in the word and ignores capitals. "clap" fires for
+          "CLAP", "clapping", "LeftClap".</span>
+      </div>
+      <div class="chatter-list" data-role="chatter"></div>
+      <div class="chatter-add">
+        <button type="button" class="btn btn-small" data-act="add-sounds">Add sounds…</button>
+        <span class="muted small">Any WAV, MP3 or OGG. Several sounds can share a keyword and one
+          is picked at random.</span>
+      </div>`;
+    body.append(main);
+
+    const side = el('aside', 'editor-side');
+    side.innerHTML = `
+      <h3>Pack details</h3>
+      <label class="field"><span>Title</span>
+        <input class="input" data-cfg="title" placeholder="What the pack is called" /></label>
+      <label class="field"><span>Author</span>
+        <input class="input" data-cfg="authors" placeholder="Who made it" /></label>
+      <label class="field"><span>Volume</span>
+        <div class="slider-field wide">
+          <input type="range" data-cfg="volume" min="0" max="2" step="0.05" />
+          <b class="slider-read" data-role="vol-read"></b>
+        </div>
+      </label>
+      <p class="muted small">Applies to every sound in this pack. 1.00 leaves them as recorded.</p>
+      <p class="muted small">Saved into <code>config_chatter.ini</code>, which is what the game
+         reads. Keys there are full filenames including the extension, unlike other pack types.</p>`;
+    body.append(side);
+
+    this.chatterSections = {
+      data: { ...(sections.data || {}) },
+      exact_keywords: { ...(sections.exact_keywords || {}) },
+      broad_keywords: { ...(sections.broad_keywords || {}) },
+    };
+
+    const title = side.querySelector('[data-cfg="title"]');
+    const authors = side.querySelector('[data-cfg="authors"]');
+    const volume = side.querySelector('[data-cfg="volume"]');
+    const volRead = side.querySelector('[data-role="vol-read"]');
+
+    title.value = this.chatterSections.data.title || '';
+    authors.value = [].concat(this.chatterSections.data.authors || []).join(', ');
+    volume.value = String(
+      typeof this.chatterSections.data.volume === 'number' ? this.chatterSections.data.volume : 1
+    );
+    const showVolume = () => { volRead.textContent = Number(volume.value).toFixed(2); };
+    showVolume();
+
+    const saveData = async () => {
+      this.chatterSections.data = {
+        ...this.chatterSections.data,
+        title: title.value.trim(),
+        authors: authors.value.split(',').map((s) => s.trim()).filter(Boolean),
+        volume: Number(volume.value),
+      };
+      await this.saveChatter();
+    };
+    title.addEventListener('change', saveData);
+    authors.addEventListener('change', saveData);
+    volume.addEventListener('input', showVolume);
+    volume.addEventListener('change', saveData);
+
+    main.querySelector('[data-act="add-sounds"]').addEventListener('click', async () => {
+      const picked = await this.api.dialog.pickFiles({ title: 'Chatter sounds', kind: 'audio' });
+      if (!picked.length) return;
+      await this.run(`Adding ${picked.length} sound${picked.length > 1 ? 's' : ''}…`, () =>
+        this.importFiles(picked, { audioFormat: 'wav' }));
+      if (this.onChanged) await this.onChanged(this.pack.id, { keepEditor: true });
+      this.renderChatterList();
+    });
+
+    this.renderChatterList();
+  }
+
+  renderChatterList() {
+    const container = this.root.querySelector('[data-role="chatter"]');
+    if (!container) return;
+
+    const AUDIO = /\.(wav|mp3|ogg|opus)$/i;
+    const sounds = (this.pack.fileNames || []).filter((f) => AUDIO.test(f)).sort();
+    container.innerHTML = '';
+
+    if (!sounds.length) {
+      container.innerHTML = '<p class="muted small">No sounds yet. Add some to start mapping them.</p>';
+      return;
+    }
+
+    for (const file of sounds) {
+      const url = (this.pack.fileUrls || {})[file];
+      const exact = [].concat(this.chatterSections.exact_keywords[file] || []).join(', ');
+      const broad = [].concat(this.chatterSections.broad_keywords[file] || []).join(', ');
+
+      const row = el('div', 'chatter-row');
+      row.classList.toggle('unmapped', !exact && !broad);
+      row.innerHTML = `
+        <button type="button" class="icon-btn" data-act="play" title="Play this sound">▶</button>
+        <span class="chatter-file">${escapeHtml(file)}</span>
+        <label class="chatter-field">
+          <span>Exact</span>
+          <input class="input" data-kind="exact_keywords" placeholder="Clap, PogChamp" />
+        </label>
+        <label class="chatter-field">
+          <span>Broad</span>
+          <input class="input" data-kind="broad_keywords" placeholder="clap, yes" />
+        </label>`;
+
+      // Through the property: keywords can contain quotes and emoji.
+      const [exactInput, broadInput] = row.querySelectorAll('input');
+      exactInput.value = exact;
+      broadInput.value = broad;
+
+      const playBtn = row.querySelector('[data-act="play"]');
+      playBtn.addEventListener('click', () => this.playFile(url, playBtn));
+
+      for (const input of [exactInput, broadInput]) {
+        input.addEventListener('change', async () => {
+          const words = input.value.split(',').map((s) => s.trim()).filter(Boolean);
+          const section = this.chatterSections[input.dataset.kind];
+          if (words.length) section[file] = words;
+          else delete section[file];
+
+          row.classList.toggle('unmapped',
+            !this.chatterSections.exact_keywords[file] && !this.chatterSections.broad_keywords[file]);
+          await this.saveChatter();
+        });
+      }
+
+      container.append(row);
+    }
+  }
+
+  /** Writes the whole chatter config back as Godot ini. */
+  async saveChatter() {
+    const result = await this.api.content.writeIniSections({
+      dir: this.pack.dir,
+      file: 'config_chatter.ini',
+      sections: this.chatterSections,
+    });
+    if (!result.ok) {
+      this.toast(`Could not save that: ${result.error}`, 'error', 7000);
+      return;
+    }
+    this.toast('Saved.', 'ok', 1200);
+    if (this.onChanged) await this.onChanged(this.pack.id, { keepEditor: true });
   }
 
   // Everything else, for now

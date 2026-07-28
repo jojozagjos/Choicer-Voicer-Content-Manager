@@ -2053,3 +2053,130 @@ input[type="range"]::-webkit-slider-thumb {
 /* A clip showing the pack's filler image rather than one of its own. */
 .clip-thumb.filler { border-style: dashed; }
 .clip-thumb.filler img { opacity: 0.7; }
+
+/* ---------------------------------------------------------------------------
+   Slot editors: host, judges, studio, menu
+   --------------------------------------------------------------------------- */
+
+.slot-intro { display: flex; flex-direction: column; gap: 6px; }
+.slot-intro h3 { font-size: 17px; }
+
+.slot-group { display: flex; flex-direction: column; gap: 8px; }
+.slot-group h4 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.slot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+  gap: 9px;
+}
+
+.slot-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  min-width: 0;
+}
+.slot-card.filled { border-color: var(--accent-dim); }
+.slot-card.missing { border-color: var(--warn); }
+.slot-card.over { border-color: var(--accent); background: var(--glow); }
+
+.slot-preview {
+  width: 52px;
+  height: 52px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+.slot-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.slot-glyph { font-size: 19px; color: var(--muted); }
+.slot-card.filled .slot-glyph { color: var(--accent); }
+
+.slot-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.slot-info b { font-size: 12.5px; }
+.slot-filename {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+.slot-info em { font-style: normal; line-height: 1.35; }
+
+.slot-buttons { display: flex; flex-direction: column; gap: 3px; }
+
+.side-heading {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+.token-list { display: flex; flex-direction: column; gap: 3px; margin: 0; }
+.token-list > div { display: grid; grid-template-columns: 108px 1fr; gap: 7px; font-size: 11.5px; }
+.token-list dt { font-family: ui-monospace, Consolas, monospace; color: var(--accent); }
+.token-list dd { margin: 0; color: var(--muted); }
+
+.judge-names { display: flex; flex-direction: column; gap: 7px; }
+
+/* Chatter */
+
+.chatter-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+  font-size: 12px;
+  color: var(--muted);
+}
+.chatter-legend b { color: var(--text); }
+
+.chatter-list { display: flex; flex-direction: column; gap: 7px; }
+.chatter-row {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 1fr) minmax(150px, 1.2fr) minmax(150px, 1.2fr);
+  gap: 9px;
+  align-items: center;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.chatter-row.unmapped { border-style: dashed; }
+.chatter-file {
+  font-size: 11.5px;
+  font-family: ui-monospace, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chatter-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.chatter-field span { font-size: 10.5px; color: var(--muted); font-weight: 650; }
+.chatter-field .input { font-size: 12px; padding: 4px 7px; }
+
+.chatter-add { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+
+.slider-field.wide { width: 100%; }
+.slider-field.wide input[type="range"] { flex: 1; width: auto; }
+
+@media (max-width: 900px) {
+  .chatter-row { grid-template-columns: auto 1fr; }
+  .chatter-field { grid-column: span 2; }
+}

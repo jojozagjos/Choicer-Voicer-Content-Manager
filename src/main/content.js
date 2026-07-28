@@ -326,23 +326,36 @@ function inspectJudges(dir, files) {
   let portraits = 0;
   let voices = 0;
   let blips = 0;
+  let panels = 0;
   for (let n = 1; n <= 5; n++) {
     if (findFile(files, `judge${n}`, IMAGE_EXTS)) portraits++;
     if (findFile(files, `judge${n}_voice`, AUDIO_EXTS)) voices++;
+    if (findFile(files, `judge${n}_success`, IMAGE_EXTS)) panels++;
     if (findFile(files, `scoreblip${n}`, AUDIO_EXTS)) blips++;
   }
+  const success = findFile(files, 'success', IMAGE_EXTS);
 
   if (!portraits) issues.push(issue(ERROR, 'No judge pictures. They should be judge1 through judge5'));
   else if (portraits < 5) issues.push(issue(WARN, `Only ${portraits} of 5 judge pictures`));
 
-  if (voices && voices < 5) issues.push(issue(WARN, `Only ${voices} of 5 judge voices`));
-  if (blips && blips < 5) issues.push(issue(WARN, `Only ${blips} of 5 score blips`));
+  if (voices && voices < 5) issues.push(issue(INFO, `${voices} of 5 judges have their own voice`));
+  // Blips play in sequence for however many points were earned, so a gap in
+  // the middle of the run is a real problem rather than a partial set.
+  if (blips && blips < 5) {
+    issues.push(issue(WARN,
+      `Only ${blips} of 5 score blips. They play in sequence, so a run of 5 points needs all five`));
+  }
   if (!voices && !blips) issues.push(issue(INFO, 'No judge voices or score blips'));
+  if (panels && !success) {
+    issues.push(issue(INFO, `${panels} judge${panels > 1 ? 's have' : ' has'} their own success panel`));
+  }
 
   const configName = findFile(files, 'config_judges', ['.json']);
+  let config = null;
   if (configName) {
-    const config = readJson(path.join(dir, configName));
-    if (!config.ok) issues.push(issue(ERROR, `config_judges.json is not valid JSON: ${config.error}`));
+    const read = readJson(path.join(dir, configName));
+    if (!read.ok) issues.push(issue(ERROR, `config_judges.json is not valid JSON: ${read.error}`));
+    else config = read.data;
   }
 
   return {
@@ -350,6 +363,7 @@ function inspectJudges(dir, files) {
     title: null,
     subtitle: '',
     icon: findFile(files, 'judge1', IMAGE_EXTS),
+    config: config || {},
     summary: `${portraits} of 5 judges`,
     issues,
   };
@@ -403,25 +417,53 @@ function inspectMenu(dir, files) {
   if (!configName) issues.push(issue(ERROR, 'No config_menu.json'));
   else if (!config.ok) issues.push(issue(ERROR, `config_menu.json is not valid JSON: ${config.error}`));
 
-  const background = findFile(files, 'Background', IMAGE_EXTS);
+  // Everything a menu pack can override. All of it is optional: the game falls
+  // back to its own for anything missing.
+  const background = findFile(files, 'background', IMAGE_EXTS);
+  const overlay = findFile(files, 'overlay', IMAGE_EXTS);
+  const unseen = findFile(files, 'unseen_image', IMAGE_EXTS);
+  const noImage = findFile(files, 'no_image', IMAGE_EXTS);
   const music = findFile(files, 'music_menu', AUDIO_EXTS);
+  const video = findFile(files, 'video', VIDEO_EXTS);
 
-  const SFX = ['button_sfx_back', 'button_sfx_decrease', 'button_sfx_hover', 'button_sfx_select'];
-  const missingSfx = SFX.filter((s) => !findFile(files, s, AUDIO_EXTS));
+  const SFX = ['button_sfx_select', 'button_sfx_back', 'button_sfx_hover', 'button_sfx_decrease'];
+  const presentSfx = SFX.filter((s) => findFile(files, s, AUDIO_EXTS));
 
-  if (!background) issues.push(issue(WARN, 'No Background image'));
-  if (!music) issues.push(issue(INFO, 'No menu music'));
-  if (missingSfx.length && missingSfx.length < SFX.length) {
-    issues.push(issue(WARN, `Missing button sounds: ${missingSfx.join(', ')}`));
+  if (!background && !video) {
+    issues.push(issue(WARN, 'No background image or video, so the menu keeps the default one'));
   }
+  if (presentSfx.length && presentSfx.length < SFX.length) {
+    issues.push(issue(INFO,
+      `${SFX.length - presentSfx.length} button sound${SFX.length - presentSfx.length > 1 ? 's' : ''} `
+      + 'not set, so those keep the default'));
+  }
+  // A video replaces the music by default, so having both is worth mentioning.
+  if (video && music) {
+    issues.push(issue(INFO,
+      'Both a video and music_menu are here. The video\'s own audio wins unless '
+      + 'audio.use_video is false in config_menu'));
+  }
+  if (files.some((f) => FOREIGN_VIDEO.includes(extOf(f)))) {
+    issues.push(issue(ERROR, 'The menu video must be video.ogv', 'convert-video'));
+  }
+
+  const parts = [
+    video && 'video', background && 'background', overlay && 'overlay',
+    music && 'music', presentSfx.length && `${presentSfx.length} button sounds`,
+  ].filter(Boolean);
 
   return {
     kind: 'menu',
     title: null,
     subtitle: '',
-    icon: background,
-    summary: [background && 'background', music && 'music',
-      missingSfx.length < SFX.length && 'button sounds'].filter(Boolean).join(', ') || 'empty',
+    icon: background || unseen || noImage,
+    background,
+    overlay,
+    unseenImage: unseen,
+    noImage,
+    video,
+    music,
+    summary: parts.length ? parts.join(', ') : 'empty',
     issues,
   };
 }
@@ -437,30 +479,63 @@ function inspectChatter(dir, files, { parseIniSections }) {
     return { kind: 'chatter', title: null, subtitle: '', icon: null, summary: 'empty', issues };
   }
 
+  // Three sections, none of them required for the pack to work:
+  //   [data]            title, icon, authors, volume
+  //   [exact_keywords]  case-sensitive whole-word matches
+  //   [broad_keywords]  case-insensitive substring matches
+  const KNOWN = ['data', 'exact_keywords', 'broad_keywords'];
   const sections = parseIniSections(path.join(dir, configName));
+  const data = sections.data || {};
+
+  const samples = files.filter((f) => AUDIO_EXTS.includes(extOf(f)));
+  const mapped = new Set();
   let mappings = 0;
+
   for (const [name, entries] of Object.entries(sections)) {
-    if (!['broad_keywords', 'exact_keywords'].includes(name)) {
+    if (name === 'data') continue;
+    if (!KNOWN.includes(name)) {
       issues.push(issue(WARN, `Unknown section [${name}] in config_chatter`));
       continue;
     }
-    for (const key of Object.keys(entries)) {
+    for (const [key, words] of Object.entries(entries)) {
       mappings++;
-      // Keys here are filenames including the extension.
+      mapped.add(key.toLowerCase());
+      // Keys here are full filenames, extension included, unlike every other
+      // config in the game.
       if (!findFile(files, key, []) && !findFile(files, baseOf(key), AUDIO_EXTS)) {
-        issues.push(issue(ERROR, `${key} is listed but not in this folder`));
+        issues.push(issue(ERROR, `${key} is listed in config_chatter but not in this folder`));
+      }
+      const list = Array.isArray(words) ? words : [words];
+      if (!list.filter((w) => typeof w === 'string' && w.trim()).length) {
+        issues.push(issue(WARN, `${key} has no keywords, so nothing will trigger it`));
       }
     }
   }
 
+  const unmapped = samples.filter((f) => !mapped.has(f.toLowerCase()));
+  if (unmapped.length) {
+    issues.push(issue(INFO,
+      `${unmapped.length} sound${unmapped.length > 1 ? 's have' : ' has'} no keyword yet`));
+  }
   if (!mappings) issues.push(issue(WARN, 'No keywords mapped to sounds yet'));
+
+  const volume = typeof data.volume === 'number' ? data.volume : 1;
+  if (volume < 0 || volume > 4) {
+    issues.push(issue(WARN, `Volume of ${volume} looks wrong. 1.0 is normal`));
+  }
 
   return {
     kind: 'chatter',
-    title: null,
+    title: typeof data.title === 'string' && data.title ? data.title : null,
     subtitle: '',
-    icon: null,
-    summary: `${mappings} keyword${mappings === 1 ? '' : 's'}`,
+    authors: Array.isArray(data.authors) ? data.authors
+      : typeof data.authors === 'string' && data.authors ? [data.authors] : [],
+    icon: findFile(files, data.icon || '_icon', IMAGE_EXTS),
+    volume,
+    sampleCount: samples.length,
+    config: { file: configName, sections },
+    summary: `${samples.length} sound${samples.length === 1 ? '' : 's'}, `
+      + `${mappings} keyword${mappings === 1 ? '' : 's'}`,
     issues,
   };
 }
@@ -521,6 +596,9 @@ function scanContent(gameDir, helpers) {
         // folder name rather than showing "null".
         title: detail.title || name,
         fileCount: files.length,
+        // Every file in the pack, so an editor can resolve a named slot to
+        // whatever extension it happens to use without another scan.
+        fileNames: files,
         iconPath: detail.icon ? path.join(dir, detail.icon) : null,
         counts,
       });

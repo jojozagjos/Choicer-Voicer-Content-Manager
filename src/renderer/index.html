@@ -147,7 +147,6 @@
           <div id="loading-overlay" class="loading-overlay" hidden>
             <div class="spinner"></div>
             <p id="loading-text">Loading audio…</p>
-            <div class="prep-bar" id="loading-bar" hidden><i></i></div>
           </div>
         </div>
 
@@ -574,7 +573,6 @@
       The game stores video in a format browsers cannot play, so a preview copy is made.
       This happens once per pack.
     </p>
-    <div class="prep-bar"><i id="prep-fill"></i></div>
     <p class="prep-pct" id="prep-pct">0%</p>
   </div>
 </div>
@@ -715,7 +713,18 @@
               so nothing goes out of sync, and <b>Ctrl + Z</b> puts both back.</li>
           <li><b>Backing track</b> builds the music and atmosphere track from the video's own audio
               by quietening it under each line.</li>
-          <li><b>♪ Backing</b> plays that track from the playhead so you can hear what it did.</li>
+        </ul>
+
+        <h4>The backing track lane</h4>
+        <p>Once a pack has a backing track, a second lane appears under the timeline showing its
+           waveform against the same stretch of time. It plays along with the video rather than on
+           its own, so you hear the mix you are actually building.</p>
+        <ul class="bullets">
+          <li>The waveform lines up with the clips above it, so you can see the dip under each
+              line and check the ducking landed where you meant.</li>
+          <li><b>🔊 On</b> drops the backing track out, to hear the video by itself.</li>
+          <li>The slider sets how loud it is <i>here</i>. It changes nothing in the pack; that is
+              set in the game, and on export by the Music slider.</li>
         </ul>
 
         <h4>About the backing track</h4>

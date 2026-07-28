@@ -437,6 +437,9 @@ function startupBackground() {
 // came up clean, and exits. Used to verify changes without stealing focus.
 const SMOKE = process.env.CVE_SMOKE === '1';
 
+// Capturing the README's screenshots. Also runs hidden, for the same reason.
+const SHOTS = process.env.CVE_SHOTS === '1';
+
 function createWindow() {
   // The packager bakes the icon into the exe, so a packaged build already has
   // it. Running from source has no exe to carry one, hence this.
@@ -461,9 +464,14 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
-  mainWindow.once('ready-to-show', () => { if (!SMOKE) mainWindow.show(); });
+  mainWindow.once('ready-to-show', () => { if (!SMOKE && !SHOTS) mainWindow.show(); });
 
   if (SMOKE) runSmokeTest(mainWindow);
+  if (SHOTS) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => runScreenshots(mainWindow), 4500);
+    });
+  }
 
   if (process.argv.includes('--dev')) {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
@@ -793,6 +801,143 @@ async function runTypeEditorChecks(win, gameDir, errors) {
   }
 
   return { results, deleteCheck, built: made.map((m) => m.type), removed };
+}
+
+/**
+ * Captures the screenshots the README shows, into docs/images.
+ *
+ * Driven through the real window, hidden, so the pictures are of the app as it
+ * actually is rather than a mock up, and taking them never steals focus or
+ * catches anything else on screen.
+ */
+async function runScreenshots(win) {
+  const OUT = path.join(__dirname, '..', '..', 'docs', 'images');
+  fs.mkdirSync(OUT, { recursive: true });
+
+  const SHOTS = [
+    {
+      name: 'library',
+      settle: 1200,
+      js: `
+        document.querySelector('[data-tab="content"]').click();
+        await wait(700);
+        const voice = document.querySelector('#content-types button');
+        if (voice) voice.click();
+        await wait(600);
+        const tile = document.querySelector('.pack-tile');
+        if (!tile) return 'no packs installed';
+        tile.click();
+        await wait(600);
+      `,
+    },
+    {
+      name: 'editor',
+      settle: 2200,
+      js: `
+        document.querySelector('[data-tab="content"]').click();
+        await wait(600);
+        const voice = document.querySelector('#content-types button');
+        if (voice) voice.click();
+        await wait(500);
+
+        // The pack with the most lines makes the best picture of a timeline.
+        const tiles = [...document.querySelectorAll('.pack-tile')];
+        const best = tiles
+          .map((t) => ({ t, n: parseInt((t.textContent.match(/(\\d+)\\s+lines/) || [0, 0])[1], 10) }))
+          .sort((a, b) => b.n - a.n)[0];
+        if (!best || !best.n) return 'no dub pack with lines';
+        best.t.click();
+        await wait(600);
+
+        const edit = document.querySelector('#btn-detail-edit');
+        if (!edit) return 'nothing to edit';
+        edit.click();
+        for (let i = 0; i < 160; i++) {
+          await wait(500);
+          if (document.querySelector('canvas.timeline')) break;
+        }
+
+        // Sit inside a line so a caption is showing over the video.
+        const stamp = document.querySelector('.clip-row .line-time');
+        if (stamp) stamp.click();
+        await wait(1000);
+        const video = document.querySelector('.editor-video video');
+        if (video) video.currentTime += 0.35;
+        await wait(1000);
+      `,
+    },
+    {
+      name: 'export',
+      settle: 2000,
+      js: `
+        document.querySelector('[data-tab="export"]').click();
+        await wait(700);
+        const cards = [...document.querySelectorAll('.pack-card')];
+        if (!cards.length) return 'no packs';
+
+        const withTakes = cards.find((c) => !/no dubs/i.test(c.textContent)) || cards[0];
+        withTakes.click();
+
+        const overlay = document.getElementById('loading-overlay');
+        for (let i = 0; i < 240; i++) {
+          await wait(500);
+          if (overlay.hidden && document.querySelectorAll('.line-row').length) break;
+        }
+        await wait(900);
+      `,
+    },
+    {
+      name: 'help',
+      settle: 900,
+      js: `
+        for (const d of document.querySelectorAll('dialog[open]')) d.close();
+        document.querySelector('[data-tab="home"]').click();
+        await wait(500);
+        document.getElementById('btn-about').click();
+        await wait(800);
+        const tab = [...document.querySelectorAll('[data-help]')]
+          .find((b) => b.dataset.help === 'editor');
+        if (tab) tab.click();
+        await wait(500);
+      `,
+    },
+  ];
+
+  // Nothing to photograph behind the splash or the first run panel.
+  await win.webContents.executeJavaScript(`
+    const s = document.getElementById('splash');
+    if (s) s.hidden = true;
+    const setup = document.getElementById('setup-dialog');
+    if (setup && setup.open) setup.close();
+    true;
+  `).catch(() => {});
+
+  for (const shot of SHOTS) {
+    let skipped = null;
+    try {
+      skipped = await win.webContents.executeJavaScript(`(async () => {
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        ${shot.js}
+        return null;
+      })()`);
+    } catch (err) {
+      skipped = err.message;
+    }
+
+    if (skipped) {
+      console.log(`  ${shot.name.padEnd(9)} skipped: ${skipped}`);
+      continue;
+    }
+
+    await new Promise((r) => setTimeout(r, shot.settle));
+    const image = await win.webContents.capturePage();
+    const file = path.join(OUT, `${shot.name}.png`);
+    fs.writeFileSync(file, image.toPNG());
+    console.log(`  ${shot.name.padEnd(9)} ${(fs.statSync(file).size / 1024).toFixed(0)} KB`);
+  }
+
+  console.log(`\nWritten to ${OUT}`);
+  app.exit(0);
 }
 
 function runSmokeTest(win) {
@@ -1175,24 +1320,18 @@ function runSmokeTest(win) {
           detailIssues: before,
         };
       })()`);
-      // The clip is cut into a real pack, so it has to be removed or every run
-      // would leave another one behind.
-      const gameDir = gamedata.resolveGameDir(settings.gameDir || gamedata.defaultGameDir());
-      if (gameDir && editorCheck && editorCheck.clipsAfter > editorCheck.clipsBefore) {
-        const voiceRoot = path.join(gameDir, 'packs_voice');
-        let removed = 0;
-        for (const pack of fs.readdirSync(voiceRoot)) {
-          const packDir = path.join(voiceRoot, pack);
-          if (!fs.statSync(packDir).isDirectory()) continue;
-          for (const file of fs.readdirSync(packDir)) {
-            if (/_clip_\d+\.(wav|ini|png)$/i.test(file)) {
-              fs.unlinkSync(path.join(packDir, file));
-              removed++;
-            }
-          }
-        }
-        editorCheck.cleanedUpFiles = removed;
-      }
+      // Nothing is cleaned up here on purpose.
+      //
+      // This used to sweep every voice pack deleting anything matching
+      // `_clip_<digits>`, from back when the check cut its clip into whichever
+      // real pack sorted first. That is exactly how the editor names a clip it
+      // cuts, so the sweep destroyed real work: it quietly deleted a clip a
+      // person had made, on every single run, and the only symptom was the
+      // pack looking untouched afterwards.
+      //
+      // The check works on the scratch copy now, and that whole folder is
+      // removed at the end of the run, so there is nothing left to tidy and no
+      // reason to go looking through anyone else's packs.
     } catch (err) {
       editorCheck = { error: err.message };
     }

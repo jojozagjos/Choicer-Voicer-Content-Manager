@@ -107,6 +107,15 @@ export function attachRecorder(button, readout, onSaved, options = {}) {
       return;
     }
 
+    // A chance to ask before the microphone opens, for a slot that already
+    // holds a sound. Answering no leaves everything as it was.
+    if (options.beforeStart) {
+      button.disabled = true;
+      let go = false;
+      try { go = await options.beforeStart(); } finally { button.disabled = false; }
+      if (!go) return;
+    }
+
     try {
       await recorder.start();
       button.textContent = busyLabel;

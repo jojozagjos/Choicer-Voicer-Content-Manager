@@ -73,10 +73,10 @@ what actually counts.
 ```ini
 [data]
 
-caption="I- I don't understand Bubble."
-image="cainenormal.png"
+caption="Wait, that was not the plan."
+image="narrator_shocked.png"
 dub_timestamps=[1.866]
-dub_characters=["Caine"]
+dub_characters=["Narrator"]
 ```
 
 | Key | Type | Notes |
@@ -91,11 +91,11 @@ dub_characters=["Caine"]
 ```ini
 [data]
 
-title="Caine's Crashout"
-subtitle="Humans... They only think about modding choicer voicer..."
-icon="cainehumans.png"
-authors=["Randaj", "Randayo"]
-readme="obviously made by glitch"
+title="My First Dub"
+subtitle="A short scene to practise on"
+icon="_icon.png"
+authors=["Your name here"]
+readme="Recorded in one afternoon."
 ```
 
 ### Real-world variations the reader must tolerate
@@ -120,7 +120,7 @@ packs_player/<Name>/
 
 ```json
 {
-  "name": "JoJo",
+  "name": "Alex",
   "introduction": "The best voicer in the land:",
   "color1": "accbd1",
   "color2": "ffffff",
@@ -153,7 +153,7 @@ packs_host/<Name>/
 
 ```json
 {
-  "name": "Rouxls Kaard",
+  "name": "The Announcer",
   "host_type": "basic",
   "match_singleplayer": { "intro": {...}, "round": {...}, "judging": {...}, "end": {...} },
   "match_multiplayer":  { "intro": {...}, "round": {...}, "judging": {...}, "end": {...} },
@@ -305,7 +305,7 @@ extension, and one file can be reused across several slots. Real packs mix `.wav
 freely, so the lookup has to ignore the extension.
 
 `introduction` is shown followed by the contestant's name, so *"The best voicer in the land:"*
-with the name Tommy reads as *"The best voicer in the land: Tommy!"*.
+with the name Alex reads as *"The best voicer in the land: Alex!"*.
 
 ---
 

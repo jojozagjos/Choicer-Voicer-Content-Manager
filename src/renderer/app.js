@@ -59,11 +59,9 @@ const el = {
   videoWrap: $('#video-wrap'),
   loadingOverlay: $('#loading-overlay'),
   loadingText: $('#loading-text'),
-  loadingBar: $('#loading-bar'),
   prepOverlay: $('#prep-overlay'),
   prepTitle: $('#prep-title'),
   prepNote: $('#prep-note'),
-  prepFill: $('#prep-fill'),
   prepPct: $('#prep-pct'),
 
   btnPlay: $('#btn-play'),
@@ -1746,10 +1744,7 @@ function showLoading(visible, text) {
   }
   el.videoWrap.classList.toggle('busy', visible);
 
-  if (!visible) {
-    el.loadingBar.hidden = true;
-    el.loadingBar.firstElementChild.style.width = '0%';
-  }
+
 }
 
 /**
@@ -1828,8 +1823,7 @@ function showPrep(visible, packTitle) {
   if (!visible) return;
 
   el.prepTitle.textContent = packTitle ? `Preparing ${packTitle}` : 'Preparing the video';
-  el.prepFill.style.width = '0%';
-  el.prepPct.textContent = '0%';
+  el.prepPct.textContent = 'starting…';
 }
 
 /**
@@ -2835,13 +2829,12 @@ function wireEvents() {
 
     // The editor's own overlay when it is up, the export player's otherwise.
     if (!el.prepOverlay.hidden) {
-      el.prepFill.style.width = `${percent.toFixed(1)}%`;
       el.prepPct.textContent = `${percent.toFixed(0)}%`;
       return;
     }
-    el.loadingText.textContent = 'Preparing preview…';
-    el.loadingBar.hidden = false;
-    el.loadingBar.firstElementChild.style.width = `${percent.toFixed(1)}%`;
+    // A figure, not a bar. The bar carried no number, so all it said was that
+    // something was happening, which the spinner beside it already said.
+    el.loadingText.textContent = `Preparing preview… ${percent.toFixed(0)}%`;
   });
 
   window.api.exporter.on('export:started', ({ id }) => { state.runningExportId = id; });

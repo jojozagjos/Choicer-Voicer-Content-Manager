@@ -111,6 +111,16 @@ export class PackEditor {
       this.video.pause();
       this.video = null;
     }
+    if (this.backingAudio) {
+      this.backingAudio.pause();
+      this.backingAudio.src = '';
+      this.backingAudio = null;
+    }
+    if (this._backingSync) { clearInterval(this._backingSync); this._backingSync = null; }
+    this.backingCanvas = null;
+    this.backingPeaks = null;
+    this.backingDuration = 0;
+
     this.captionBox = null;
     this.cropLayer = null;
     this.timeline = null;
@@ -338,10 +348,6 @@ export class PackEditor {
         <button type="button" class="btn btn-small" data-act="captions" aria-pressed="true">Captions</button>
         <button type="button" class="btn btn-small" data-act="trim">Trim video</button>
         <button type="button" class="btn btn-small" data-act="backing">Backing track</button>
-        <button type="button" class="btn btn-small" data-act="play-backing" hidden
-                title="Plays the backing track from wherever the playhead is">
-          ♪ Play backing from playhead
-        </button>
         <button type="button" class="btn btn-small" data-act="zoom-fit">Fit</button>
       </div>
       <div class="editor-hint">
@@ -351,7 +357,26 @@ export class PackEditor {
         <span><b>Hold still, then drag</b> empty space to cut a new clip</span>
         <span><b>Right or middle drag</b> to pan &middot; <b>scroll</b> to zoom</span>
       </div>
-      <canvas class="timeline" data-role="timeline"></canvas>`;
+      <canvas class="timeline" data-role="timeline"></canvas>
+
+      <div class="backing-lane" data-role="backing-lane" hidden>
+        <div class="backing-head">
+          <span class="backing-title">Backing track</span>
+          <button type="button" class="btn btn-small" data-act="backing-mute"
+                  title="Hear the video and the backing track together, or just the video">
+            🔊 On
+          </button>
+          <label class="slider-field" title="How loud the backing track is here">
+            <input type="range" data-role="backing-volume" min="0" max="1" step="0.01" value="0.8" />
+            <b class="slider-read" data-role="backing-read">80%</b>
+          </label>
+          <span class="grow"></span>
+          <span class="muted small" data-role="backing-note">
+            Plays along with the video, from wherever the playhead is
+          </span>
+        </div>
+        <canvas class="backing-wave" data-role="backing-wave"></canvas>
+      </div>`;
     stage.append(controls);
     body.append(stage);
 
@@ -428,14 +453,12 @@ export class PackEditor {
         this.toggleTrim(event.target);
       } else if (act === 'backing') {
         this.makeBackingTrack();
-      } else if (act === 'play-backing') {
-        this.playBacking(event.target);
+      } else if (act === 'backing-mute') {
+        this.toggleBacking(event.target);
       }
     });
 
-    // Only offered once there is something to play.
-    const backingBtn = controls.querySelector('[data-act="play-backing"]');
-    if (backingBtn) backingBtn.hidden = !this.pack.backingUrl;
+    this.setupBackingLane(controls, video);
 
     // Preview volume only. It never touches what is written into the pack, so
     // it is deliberately not saved anywhere.
@@ -455,6 +478,14 @@ export class PackEditor {
     };
     if (video.readyState >= 1) ready();
     else video.addEventListener('loadedmetadata', ready, { once: true });
+
+    // The backing lane shares the timeline's view window and playhead, so it
+    // repaints whenever the timeline does rather than tracking anything itself.
+    const drawTimeline = timeline.draw.bind(timeline);
+    timeline.draw = () => {
+      drawTimeline();
+      this.drawBackingWave();
+    };
 
     // The playhead follows the video every frame; the readout only needs to
     // keep up with what a person can read.
@@ -838,38 +869,168 @@ export class PackEditor {
     if (field) { field.focus(); field.scrollIntoView({ block: 'nearest' }); }
   }
 
-  /** Plays the pack's backing track, so the ducking can be checked by ear. */
-  playBacking(button) {
-    const idle = '♪ Play backing from playhead';
-    if (this.backingAudio) {
-      this.backingAudio.pause();
-      this.backingAudio = null;
-      button.textContent = idle;
-      button.classList.remove('on');
-      return;
-    }
-    if (!this.pack.backingUrl) {
+  /**
+   * The backing track as a second lane under the timeline.
+   *
+   * It used to be a button that played the track on its own, which told you
+   * what the track sounded like but not how it sat against the dub. Here it
+   * follows the video: same playhead, same view window, playing together, so
+   * you hear the mix you are actually building and can see where the ducking
+   * landed against the lines above it.
+   */
+  setupBackingLane(controls, video) {
+    const lane = controls.querySelector('[data-role="backing-lane"]');
+    if (!lane) return;
+
+    lane.hidden = !this.pack.backingUrl;
+    if (!this.pack.backingUrl) return;
+
+    const canvas = controls.querySelector('[data-role="backing-wave"]');
+    const volume = controls.querySelector('[data-role="backing-volume"]');
+    const read = controls.querySelector('[data-role="backing-read"]');
+
+    const audio = new Audio(this.pack.backingUrl);
+    audio.preload = 'auto';
+    audio.volume = Number(volume.value);
+    this.backingAudio = audio;
+    this.backingCanvas = canvas;
+    this.backingOn = true;
+
+    const applyVolume = () => {
+      audio.volume = this.backingOn ? Number(volume.value) : 0;
+      read.textContent = `${Math.round(Number(volume.value) * 100)}%`;
+    };
+    volume.addEventListener('input', applyVolume);
+    applyVolume();
+
+    // The video is the clock. The track chases it rather than running its own
+    // timeline, because two independent players drift apart within seconds.
+    const DRIFT = 0.25;
+    const sync = () => {
+      if (Math.abs(audio.currentTime - video.currentTime) > DRIFT) {
+        audio.currentTime = Math.min(video.currentTime, audio.duration || video.currentTime);
+      }
+    };
+
+    video.addEventListener('play', () => {
+      sync();
+      if (this.backingOn) audio.play().catch(() => {});
+    });
+    video.addEventListener('pause', () => audio.pause());
+    video.addEventListener('seeked', sync);
+    video.addEventListener('ratechange', () => { audio.playbackRate = video.playbackRate; });
+
+    // A gentle correction while playing, rather than a jump every frame.
+    this._backingSync = setInterval(() => {
+      if (!video.paused) sync();
+    }, 1000);
+
+    this.drawBackingWave();
+    new ResizeObserver(() => this.drawBackingWave()).observe(canvas);
+    this.loadBackingPeaks();
+  }
+
+  /** Turns the backing track on or off without losing where it is. */
+  toggleBacking(button) {
+    if (!this.backingAudio) {
       this.toast('This pack has no backing track yet.', 'warn');
       return;
     }
+    this.backingOn = !this.backingOn;
+    button.textContent = this.backingOn ? '🔊 On' : '🔇 Off';
+    button.classList.toggle('on', this.backingOn);
 
-    if (this.video) this.video.pause();
-    const audio = new Audio(this.pack.backingUrl);
-    // Starts where the playhead is, so you can check one line rather than
-    // sitting through the whole track.
-    const from = this.video ? this.video.currentTime : 0;
-    audio.currentTime = from;
-    audio.addEventListener('ended', () => {
-      button.textContent = idle;
-      button.classList.remove('on');
-      this.backingAudio = null;
-    });
-    audio.play().catch(() => this.toast('Could not play the backing track.', 'warn'));
+    const slider = this.root.querySelector('[data-role="backing-volume"]');
+    this.backingAudio.volume = this.backingOn && slider ? Number(slider.value) : 0;
 
-    this.toast(`Playing the backing track from ${fmt(from)}.`, 'info', 2500);
-    button.textContent = '■ Stop backing';
-    button.classList.add('on');
-    this.backingAudio = audio;
+    if (!this.backingOn) this.backingAudio.pause();
+    else if (this.video && !this.video.paused) this.backingAudio.play().catch(() => {});
+  }
+
+  /** Decodes the backing track once, for the waveform under the timeline. */
+  async loadBackingPeaks() {
+    try {
+      const res = await fetch(this.pack.backingUrl);
+      const bytes = await res.arrayBuffer();
+      const ctx = new AudioContext();
+      const buffer = await ctx.decodeAudioData(bytes);
+      this.backingPeaks = computePeaks(buffer);
+      this.backingDuration = buffer.duration;
+      ctx.close();
+      this.drawBackingWave();
+    } catch {
+      // The lane still works as a control strip without its picture.
+    }
+  }
+
+  /**
+   * Draws the backing waveform across the same window the timeline is showing,
+   * so the two line up and a duck can be seen under the clip that caused it.
+   */
+  drawBackingWave() {
+    const canvas = this.backingCanvas;
+    const timeline = this.timeline;
+    if (!canvas || !timeline) return;
+
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== Math.round(rect.width * dpr)) {
+      canvas.width = Math.round(rect.width * dpr);
+      canvas.height = Math.round(rect.height * dpr);
+    }
+
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, rect.width, rect.height);
+
+    const css = getComputedStyle(document.documentElement);
+    const colour = (name, fallback) => (css.getPropertyValue(name) || fallback).trim();
+
+    ctx.fillStyle = colour('--bg-sunken', '#08111a');
+    ctx.fillRect(0, 0, rect.width, rect.height);
+
+    const peaks = this.backingPeaks;
+    const duration = this.backingDuration || timeline.duration;
+
+    if (peaks && peaks.length && duration) {
+      const mid = rect.height / 2;
+      ctx.fillStyle = colour('--ok', '#4ade80');
+      ctx.globalAlpha = 0.65;
+
+      for (let x = 0; x < rect.width; x++) {
+        const t0 = timeline.xToTime(x);
+        const t1 = timeline.xToTime(x + 1);
+        if (t1 < 0 || t0 > duration) continue;
+
+        const i0 = Math.floor((t0 / duration) * peaks.length);
+        const i1 = Math.max(i0 + 1, Math.floor((t1 / duration) * peaks.length));
+
+        let peak = 0;
+        for (let i = Math.max(0, i0); i < Math.min(peaks.length, i1); i++) {
+          if (peaks[i] > peak) peak = peaks[i];
+        }
+        const h = Math.max(0.5, peak * (rect.height / 2) * 0.9);
+        ctx.fillRect(x, mid - h, 1, h * 2);
+      }
+      ctx.globalAlpha = 1;
+    } else {
+      ctx.fillStyle = colour('--muted', '#8ea9c0');
+      ctx.font = '11px system-ui, sans-serif';
+      ctx.fillText('Reading the backing track…', 8, rect.height / 2 + 4);
+    }
+
+    // The same playhead as the timeline above, so they read as one view.
+    const x = Math.round(timeline.timeToX(timeline.playhead)) + 0.5;
+    if (x >= 0 && x <= rect.width) {
+      ctx.strokeStyle = colour('--bad', '#f87171');
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, rect.height);
+      ctx.stroke();
+    }
   }
 
   /** Decodes the preview audio once and hands the timeline its peaks. */
@@ -1410,7 +1571,23 @@ export class PackEditor {
       card.querySelector('[data-act="rec"]'),
       card.querySelector('.slot-timer'),
       async (take) => { if (take) await this.saveSlotRecording(key, take, card); },
-      { maxSeconds: 30, onError: (err) => this.toast(err.message, 'error', 7000) }
+      {
+        maxSeconds: 30,
+        onError: (err) => this.toast(err.message, 'error', 7000),
+        // Recording writes over whatever is there under the same name, so a
+        // slot that already has a sound asks before it starts rather than
+        // after the take is already lost.
+        beforeStart: assigned
+          ? async () => (await this.ask({
+            title: `Record over "${assigned}"?`,
+            detail: `${label} already has a sound. Recording a new one replaces it, and that `
+              + 'cannot be undone.',
+            buttons: ['Record over it', 'Keep what is there'],
+            mark: '●',
+            danger: true,
+          })) === 0
+          : null,
+      }
     );
 
     card.querySelector('[data-act="pick"]').addEventListener('click', async () => {

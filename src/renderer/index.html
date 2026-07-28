@@ -14,6 +14,9 @@
   <h1 class="splash-fade">Choicer Voicer Content Manager</h1>
   <p class="splash-by splash-fade">by <b>@jojozagjos</b></p>
   <p class="splash-note splash-fade">Turn your dubs into videos you can share</p>
+  <p class="splash-unofficial splash-fade">
+    An unofficial fan tool. Not made by or affiliated with Yeah Maybe.
+  </p>
 </div>
 
 <header class="topbar">
@@ -52,9 +55,14 @@
     <div class="home-inner">
 
       <header class="home-hero">
-        <h1>Choicer Voicer Content Manager</h1>
+        <div class="hero-top">
+          <h1>Choicer Voicer Content Manager</h1>
+          <span class="chip chip-plain">Unofficial fan tool</span>
+        </div>
         <p class="muted">Turn the dubs you record into videos, and build the packs you record them
            with. Nothing here changes the game; it only reads and writes the files beside it.</p>
+        <p class="muted small">Made by <b>@jojozagjos</b>. Not made by, affiliated with, or endorsed
+           by <b>Yeah Maybe</b>, who make <em>The Choicer Voicer</em>.</p>
       </header>
 
       <div class="home-cards">
@@ -217,9 +225,12 @@
   <section class="editor-view" id="editor-view" hidden></section>
 </main>
 
-<!-- Shown on every tab, so the credit is never only on one screen. -->
+<!-- Shown on every tab, so the credit and the disclaimer are never only on one
+     screen. Someone should not have to open Help to learn this is fan made. -->
 <footer class="app-credit">
   <span>The Choicer Voicer Content Manager, made by <b>@jojozagjos</b></span>
+  <span class="credit-sep" aria-hidden="true">·</span>
+  <span class="credit-unofficial">Unofficial. Not made by or affiliated with Yeah Maybe.</span>
 </footer>
 
 <!-- Docked below the layout rather than floated over it, so a long export
@@ -772,19 +783,33 @@
       </section>
 
       <section class="help-panel" data-help-panel="credits" hidden>
-        <p>Made by <b>@jojozagjos</b>.</p>
+        <div class="help-tip">
+          <b>This is an unofficial fan tool.</b> It is made by <b>@jojozagjos</b> and is not made
+          by, affiliated with, endorsed by, or supported by <b>Yeah Maybe</b>, who make
+          <em>The Choicer Voicer</em>. Please do not ask them for help with it. If something here
+          is wrong, it is my fault, not theirs.
+        </div>
+
         <p id="donate-blurb" class="muted small" hidden>
           This app is free and always will be. If it saved you some time, a donation helps me keep
           working on it, but nothing here is locked behind one.
         </p>
+
+        <h4>What belongs to whom</h4>
         <p class="muted small">
-          <em>The Choicer Voicer</em> is a game by <b>Yeah Maybe</b> and is not affiliated with this
-          app, nor has it endorsed it. Voice packs and their audio, art and captions belong to whoever
-          made them. Check with a pack's author before publishing videos made from their work.
+          <em>The Choicer Voicer</em>, its name and its artwork belong to <b>Yeah Maybe</b>. No part
+          of the game is included in or redistributed by this app.
         </p>
         <p class="muted small">
-          This app only reads files the game has already written on your own computer. It does not
-          modify the game, its files, or your recordings.
+          Content packs, and the audio, art and captions inside them, belong to whoever made them.
+          Check with a pack's author before publishing videos built from their work, and credit them
+          when you do.
+        </p>
+        <p class="muted small">
+          Whatever you record is yours. This app only reads and writes files beside the game on your
+          own computer. It does not modify the game, its files, or your recordings, and it sends
+          nothing anywhere. The one time it uses the network is to ask GitHub whether a newer
+          version of this app exists.
         </p>
         <p class="muted small">
           The app itself is MIT licensed. The download also carries <b>FFmpeg</b>, which does the

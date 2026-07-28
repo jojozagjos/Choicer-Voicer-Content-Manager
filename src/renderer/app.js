@@ -685,7 +685,7 @@ function renderContentGrid() {
     const icon = pack.iconUrl
       ? `<img class="tile-icon" src="${pack.iconUrl}" alt="" loading="lazy" />`
       : CHARACTER_TYPES.has(type.id)
-        ? '<img class="tile-icon" src="placeholder.svg" alt="No picture yet" />'
+        ? '<img class="tile-icon" src="placeholder.png" alt="No picture yet" />'
         : `<div class="tile-icon tile-icon-blank">${TYPE_ICONS[type.id] || '📦'}</div>`;
 
     const job = state.converting.get(pack.dir);
@@ -734,7 +734,7 @@ function renderContentDetail(pack) {
   const icon = pack.iconUrl
     ? `<img src="${pack.iconUrl}" alt="" />`
     : CHARACTER_TYPES.has(pack.type)
-      ? '<img src="placeholder.svg" alt="No picture yet" />'
+      ? '<img src="placeholder.png" alt="No picture yet" />'
       : '';
   const issues = (pack.issues || []).length
     ? `<div class="issue-list">${pack.issues.map((i) => `

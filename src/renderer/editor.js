@@ -1529,7 +1529,7 @@ export class PackEditor {
     const pack = this.pack;
     const icon = pack.iconUrl
       ? `<img src="${pack.iconUrl}" alt="" />`
-      : '<img src="placeholder.svg" alt="No picture yet" class="placeholder-art" />';
+      : '<img src="placeholder.png" alt="No picture yet" class="placeholder-art" />';
 
     const head = el('div', 'pack-head');
     head.innerHTML = `
@@ -1717,7 +1717,7 @@ export class PackEditor {
     const preview = slot.kind === 'image' && url
       ? `<img src="${url}" alt="" />`
       : isCharacter
-        ? '<img src="placeholder.svg" alt="No picture yet" class="placeholder-art" />'
+        ? '<img src="placeholder.png" alt="No picture yet" class="placeholder-art" />'
         : `<span class="slot-glyph">${
           slot.kind === 'audio' ? '♪' : slot.kind === 'video' ? '▶' : slot.kind === 'model' ? '◈' : '🖼'
         }</span>`;

@@ -385,8 +385,10 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
   flex: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  /* Centred rather than spread: the credit and the disclaimer read as one
+     sentence, and space-between pushed them to opposite ends of the window. */
+  justify-content: center;
+  gap: 8px;
   padding: 5px 16px;
   border-top: 1px solid var(--line);
   background: var(--bg-raised);
@@ -2345,4 +2347,33 @@ input[type="range"]::-webkit-slider-thumb {
   line-height: 1.4;
   resize: vertical;
   min-height: 42px;
+}
+
+/* This being a fan tool is stated where people actually look, not only in the
+   credits tab: the splash, the home page, and the strip on every screen. */
+.splash-unofficial {
+  margin-top: 14px;
+  font-size: 11.5px;
+  color: var(--muted);
+  opacity: 0.8;
+}
+
+.hero-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.chip-plain {
+  align-self: center;
+  border: 1px solid var(--line);
+  background: var(--bg-sunken);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  padding: 3px 9px;
+  border-radius: 999px;
+}
+
+.credit-sep { opacity: 0.4; }
+.credit-unofficial { opacity: 0.75; }
+
+@media (max-width: 640px) {
+  .credit-sep { display: none; }
+  .app-credit { flex-direction: column; gap: 2px; }
 }

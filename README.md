@@ -1,5 +1,9 @@
 # Choicer Voicer Content Manager
 
+> **Unofficial fan tool.** Made by [@jojozagjos](https://discord.com/users/jojozagjos). Not made by,
+> affiliated with, endorsed by, or supported by **Yeah Maybe**, who make *The Choicer Voicer*.
+> Please do not ask them for help with it.
+
 A desktop companion for [The Choicer Voicer](https://yeahmaybe.itch.io/the-choicer-voicer).
 It does two jobs: it turns the dubs you record into video files, and it builds the content packs
 you record them with.
@@ -249,10 +253,18 @@ Packs in the wild are inconsistent, so the reader copes with all of these:
 
 ## Notes
 
+**This is an unofficial fan tool.** It is not made by, affiliated with, endorsed by or supported by
+Yeah Maybe. Bugs here are mine; please report them on this repo rather than to them.
+
+*The Choicer Voicer*, its name and its artwork belong to **Yeah Maybe**. No part of the game is
+included in or redistributed by this repo or its releases.
+
 This tool only reads and writes files beside the game on your own computer. It does not modify the
-game itself. It is not affiliated with or endorsed by the developers of The Choicer Voicer. Content
-packs, and the audio, art and captions inside them, belong to whoever made them, so check with a
-pack's author before publishing anything made from their work.
+game itself, and it sends nothing anywhere; the one time it uses the network is to ask GitHub
+whether a newer version of this app exists.
+
+Content packs, and the audio, art and captions inside them, belong to whoever made them. Check with
+a pack's author before publishing anything built from their work, and credit them when you do.
 
 ## Licensing
 

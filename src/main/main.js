@@ -815,7 +815,13 @@ function runSmokeTest(win) {
         footIsSunken: getComputedStyle(document.querySelector('#export-dialog .dialog-foot')).backgroundColor,
         discordButtonGone: !document.getElementById('btn-discord'),
         donateVisible: !document.getElementById('btn-about-donate').hidden,
-        creditStrip: document.querySelector('.app-credit span') ? document.querySelector('.app-credit span').textContent.trim() : null,
+        creditStrip: document.querySelector('.app-credit') ? document.querySelector('.app-credit').textContent.replace(/\s+/g, ' ').trim() : null,
+        // Being a fan tool has to be visible without opening anything, so it
+        // is checked on the splash, the home page and the strip on every tab.
+        unofficialOnStrip: /unofficial/i.test((document.querySelector('.app-credit') || {}).textContent || ''),
+        unofficialOnSplash: /unofficial/i.test((document.querySelector('.splash') || {}).textContent || ''),
+        unofficialOnHome: /unofficial/i.test((document.querySelector('.home-hero') || {}).textContent || ''),
+        unofficialInHelp: /unofficial/i.test((document.querySelector('[data-help-panel="credits"]') || {}).textContent || ''),
         tabOrder: [...document.querySelectorAll('[data-tab]')].map((b) => b.textContent.trim()).join(' > '),
         donateBlurbVisible: !document.getElementById('donate-blurb').hidden,
         palettes: (() => {
@@ -830,6 +836,16 @@ function runSmokeTest(win) {
           return out;
         })(),
       }))()`);
+
+      // Somewhere obvious, on more than one screen, without opening anything.
+      for (const [where, seen] of [
+        ['the credit strip', report.unofficialOnStrip],
+        ['the splash', report.unofficialOnSplash],
+        ['the home page', report.unofficialOnHome],
+        ['the credits in Help', report.unofficialInHelp],
+      ]) {
+        if (!seen) errors.push(`no unofficial notice on ${where}`);
+      }
     } catch (err) {
       errors.push(`probe failed: ${err.message}`);
     }

@@ -1,7 +1,7 @@
 {
   "name": "choicer-voicer-content-manager",
   "version": "1.0.0",
-  "description": "Preview and export your The Choicer Voicer dubs as video, and manage custom content packs",
+  "description": "Unofficial fan tool for The Choicer Voicer: export your dubs as video and manage custom content packs",
   "main": "src/main/main.js",
   "author": "jojozagjos",
   "license": "MIT",
@@ -18,7 +18,8 @@
     "start": "electron .",
     "dev": "electron . --dev",
     "build": "node scripts/build.js",
-    "build:zip": "node scripts/build.js --zip"
+    "build:zip": "node scripts/build.js --zip",
+    "icon": "electron scripts/make-icon.js"
   },
   "devDependencies": {
     "@electron/packager": "^20.0.4",

@@ -98,6 +98,21 @@ async function render(win, size, scratch, box) {
         const sctx = src.getContext('2d', { willReadFrequently: true });
         sctx.drawImage(art, 0, 0);
 
+        // A square source was already drawn as an icon, so it is used whole.
+        // Trimming and insetting it would shave off a deliberate edge and put
+        // a border of background colour around a design meant to fill the tile.
+        if (src.width === src.height) {
+          const whole = document.createElement('canvas');
+          whole.width = ${size};
+          whole.height = ${size};
+          const wctx = whole.getContext('2d');
+          wctx.imageSmoothingQuality = 'high';
+          wctx.drawImage(src, 0, 0, ${size}, ${size});
+          document.getElementById('tile').append(whole);
+          document.title = 'ready';
+          return;
+        }
+
         const px = sctx.getImageData(0, 0, src.width, src.height).data;
         const at = (x, y) => (y * src.width + x) * 4;
         const [br, bg, bb, ba] = [px[0], px[1], px[2], px[3]];

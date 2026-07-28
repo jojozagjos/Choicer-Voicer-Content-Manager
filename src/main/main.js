@@ -819,8 +819,13 @@ function runSmokeTest(win) {
   } catch (err) {
     errors.push(`could not make the scratch pack: ${err.message}`);
   }
+  // Level 3 is an error; 2 is a warning. Warnings were counted as failures,
+  // which meant a pack with one dangling file, something the app reports
+  // properly and carries on from, failed the whole run.
+  const warnings = [];
   win.webContents.on('console-message', (_e, level, message) => {
-    if (level >= 2) errors.push(message);
+    if (level >= 3) errors.push(message);
+    else if (level === 2) warnings.push(message);
   });
   win.webContents.on('render-process-gone', (_e, details) => {
     errors.push(`renderer gone: ${details.reason}`);
@@ -1694,7 +1699,7 @@ function runSmokeTest(win) {
     console.log('SMOKE ' + JSON.stringify(
       { report, scratch, scratchRemoved, videoCheck, captionCheck, editorCheck, homeCheck,
         contentCheck, createCheck, sessionCheck, staleCheck, packCheck, toolsCheck, typesCheck,
-        queueCheck, errors },
+        queueCheck, warnings, errors },
       null, 2));
     app.exit(errors.length ? 1 : 0);
   });

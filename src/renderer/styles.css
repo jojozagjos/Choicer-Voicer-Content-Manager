@@ -2474,3 +2474,31 @@ input[type="range"]::-webkit-slider-thumb {
 /* The first line of a help panel sat flush against the tabs above it. */
 .help-panel { padding-top: 14px; }
 .help-panel > :first-child { margin-top: 0; }
+
+/* The icon carries its own artwork and its own transparency, so nothing should
+   sit behind it. The gradient tile below it was drawn for the emoji this
+   replaced and showed as a coloured box around the logo. */
+.brand-mark-img,
+.splash-mark {
+  background: none !important;
+  box-shadow: none;
+  border: none;
+}
+.brand-mark-img { width: 40px; height: 40px; }
+
+/* Recording pushed its own button out of shape: the timer and the dot are
+   wider than the icon that was there before. The button sizes to its content
+   while recording rather than staying a fixed square. */
+.slot-card .icon-btn[data-act="rec"] { width: auto; min-width: 24px; padding: 0 5px; }
+.slot-card .icon-btn[data-act="rec"].recording {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+.slot-timer {
+  font-variant-numeric: tabular-nums;
+  min-height: 1em;
+}
+
+/* The buttons column must not be squeezed by a long filename beside it. */
+.slot-buttons { flex: none; }
+.slot-info { overflow: hidden; }

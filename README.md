@@ -17,6 +17,25 @@ game will actually load and telling you what is wrong before the game quietly ig
 
 Made by **@jojozagjos** — [Discord](https://discord.com/users/jojozagjos)
 
+**[Download the latest release →](https://github.com/jojozagjos/Choicer-Voicer-Content-Manager/releases/latest)**
+
+---
+
+## Screenshots
+
+<!--
+  To fill these in: run the app, press Win+Shift+S for each shot, save the PNGs
+  into docs/screenshots/ with the names below, then delete this comment.
+  Around 1400px wide is plenty. The alt text matters more than the file.
+-->
+
+|  |  |
+| --- | --- |
+| ![The dub timeline editor](docs/screenshots/editor.png) | ![Exporting a finished dub](docs/screenshots/export.png) |
+| **The dub editor.** Mark a range on the video and the clip and its timestamp come out together. | **Exporting.** Every line has its own take, volume and timing. |
+| ![The content library](docs/screenshots/library.png) | ![A pack being checked](docs/screenshots/checks.png) |
+| **Your library.** Everything installed, of every type, with what needs fixing. | **Checks.** Each pack measured against what the game will actually load. |
+
 ---
 
 ## What it does

@@ -86,7 +86,10 @@ export class Recorder {
  */
 export function attachRecorder(button, readout, onSaved, options = {}) {
   const recorder = new Recorder();
-  const idleLabel = options.label || '● Record';
+  // A compact button gets compact labels. The reaction slots use a 24 pixel
+  // icon button, and putting the words in it pushed it out of its own row.
+  const idleLabel = options.label || (button.classList.contains('icon-btn') ? '●' : '● Record');
+  const busyLabel = options.stopLabel || (button.classList.contains('icon-btn') ? '■' : '■ Stop');
 
   recorder.onTick = (seconds) => {
     if (readout) readout.textContent = `${seconds.toFixed(1)}s`;
@@ -106,7 +109,7 @@ export function attachRecorder(button, readout, onSaved, options = {}) {
 
     try {
       await recorder.start();
-      button.textContent = '■ Stop';
+      button.textContent = busyLabel;
       button.classList.add('recording');
     } catch (err) {
       button.textContent = idleLabel;

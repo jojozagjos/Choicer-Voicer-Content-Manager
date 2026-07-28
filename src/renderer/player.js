@@ -182,6 +182,18 @@ export class DubPlayer {
         }
       } catch (err) {
         if (err.name === 'AbortError' || loadSignal.aborted) throw abortError();
+
+        // A pack whose metadata names a file that is not there is a real
+        // situation, and the library already reports it as a problem with the
+        // pack. Here it just means the line has nothing to play, so it is
+        // marked as such and the rest of the dub still loads.
+        const item = this.items.find((i) => i.id === job.id);
+        if (item) {
+          if (job.kind === 'take') item.takeUrl = null;
+          else item.originalUrl = null;
+          item.missing = true;
+          if (item.source !== 'none' && !item.takeUrl && !item.originalUrl) item.source = 'none';
+        }
         console.warn('Could not decode', job.url, err.message);
       }
       done++;

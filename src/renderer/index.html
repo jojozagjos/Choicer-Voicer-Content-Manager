@@ -54,8 +54,6 @@
            with. Nothing here changes the game; it only reads and writes the files beside it.</p>
       </header>
 
-      <div id="home-setup" class="setup" hidden></div>
-
       <div class="home-cards">
         <button class="home-card" id="card-export">
           <span class="home-card-icon">🎬</span>
@@ -457,6 +455,14 @@
                 video is set in the export window.</em>
           </span>
         </label>
+        <label class="option-row">
+          <input type="checkbox" id="set-editor-captions" />
+          <span>
+            <b>Show captions while editing</b>
+            <em>Draws each line over the video in the dub editor as it plays, so you can check
+                the wording and timing without leaving the editor.</em>
+          </span>
+        </label>
       </section>
 
       <section class="settings-group">
@@ -537,6 +543,40 @@
       </menu>
     </footer>
   </form>
+</dialog>
+
+<!-- First run: nothing works until the app knows where the game keeps its files -->
+<dialog id="setup-dialog" class="dialog">
+  <div class="dialog-body">
+    <div class="about-head">
+      <span class="brand-mark">📂</span>
+      <div class="about-lines">
+        <h2>Find your game files</h2>
+        <span class="muted small">This is the only thing the app needs before it can do anything.</span>
+      </div>
+    </div>
+
+    <p>The Choicer Voicer keeps its packs and recordings in a folder separate from the game itself.
+       Point this app at it and everything else fills in on its own.</p>
+
+    <p class="muted small">Look for the folder that contains <code>packs_voice</code>. On Windows it
+       is usually here:</p>
+    <p class="path-sample"><code id="setup-default-path"></code></p>
+
+    <div class="dropzone" id="setup-drop">
+      <p><b>Drop that folder here</b></p>
+      <p class="muted small">Or pick it yourself.</p>
+      <button type="button" class="btn btn-small" id="setup-browse">Choose folder…</button>
+    </div>
+
+    <p class="setup-error" id="setup-error" hidden></p>
+
+    <footer class="dialog-actions">
+      <button type="button" class="btn btn-ghost" id="setup-help">What am I looking for?</button>
+      <span class="grow"></span>
+      <button type="button" class="btn" id="setup-later">Skip for now</button>
+    </footer>
+  </div>
 </dialog>
 
 <!-- Help, setup and credits -->

@@ -9,6 +9,7 @@ const el = {
   setTheme: $('#set-theme'),
   setSplash: $('#set-splash'),
   setPreviewCaptions: $('#set-preview-captions'),
+  setEditorCaptions: $('#set-editor-captions'),
   btnAbout: $('#btn-about'),
   aboutDialog: $('#about-dialog'),
   aboutVersion: $('#about-version'),
@@ -111,7 +112,13 @@ const el = {
 
   tabButtons: document.querySelectorAll('[data-tab]'),
   homeView: $('#home-view'),
-  homeSetup: $('#home-setup'),
+  setupDialog: $('#setup-dialog'),
+  setupDefaultPath: $('#setup-default-path'),
+  setupDrop: $('#setup-drop'),
+  setupBrowse: $('#setup-browse'),
+  setupError: $('#setup-error'),
+  setupHelp: $('#setup-help'),
+  setupLater: $('#setup-later'),
   homeStats: $('#home-stats'),
   homeRecent: $('#home-recent'),
   homeExportNote: $('#home-export-note'),
@@ -169,6 +176,8 @@ const state = {
   loadAbort: null,
   loadingVideoPath: null,
   loading: false,
+  // Set when the setup overlay is dismissed, so it stays dismissed.
+  setupSkipped: false,
   // Content manager
   tab: 'dubs',
   content: null,
@@ -473,58 +482,50 @@ async function renderHome() {
 }
 
 /**
- * A fresh install has an empty game folder and nothing recorded, so the first
- * thing anyone sees would otherwise be three empty lists. This walks them
- * through it instead, and disappears once there is nothing left to do.
+ * Finding the game folder is the one thing nothing else works without, so it
+ * gets an overlay rather than a step in a checklist that can be scrolled past.
+ * Everything that used to be listed alongside it (make a pack, record a dub)
+ * is either a card on this page already or something that happens in the game,
+ * so listing it here only made the first screen look like homework.
  */
 function renderSetup() {
   const foundGame = Boolean(state.model && state.model.packs);
-  const hasContent = Boolean(state.content && state.content.totals.packs);
-  const hasRecordings = Boolean(state.model && state.model.packs.some((p) => p.sessions.length));
 
-  if (foundGame && hasContent && hasRecordings) {
-    el.homeSetup.hidden = true;
+  if (foundGame) {
+    if (el.setupDialog.open) el.setupDialog.close();
     return;
   }
+  // Skipping is allowed, but it should not then reappear on every repaint.
+  if (state.setupSkipped || el.setupDialog.open || !el.splash.hidden) return;
+  openSetupDialog();
+}
 
-  const step = (done, title, detail, action, onClick) => `
-    <div class="setup-step">
-      <span class="tick">${done ? '✅' : '⬜'}</span>
-      <span class="setup-step-body">
-        <b>${escapeHtml(title)}</b>
-        <em>${detail}</em>
-        ${!done && action ? `<button type="button" class="btn btn-small setup-action"
-          data-action="${onClick}">${escapeHtml(action)}</button>` : ''}
-      </span>
-    </div>`;
+function openSetupDialog() {
+  el.setupError.hidden = true;
+  el.setupDefaultPath.textContent = (state.info && state.info.defaultGameDir)
+    || '%APPDATA%\\YeahMaybe\\ChoicerVoicer';
+  el.setupDialog.showModal();
+}
 
-  el.homeSetup.hidden = false;
-  el.homeSetup.innerHTML = `
-    <h2>Let's get you set up</h2>
-    ${step(foundGame, 'Find your game files',
-    foundGame
-      ? 'Found them. You can change this in Settings.'
-      : 'Point the app at the folder containing <code>packs_voice</code>.',
-    'Choose folder', 'pick-game')}
-    ${step(hasContent, 'Get some content',
-    hasContent
-      ? `${state.content.totals.packs} packs installed.`
-      : 'The game ships almost empty. Make a pack here, or download one from the community.',
-    'Make one', 'create')}
-    ${step(hasRecordings, 'Record a dub in the game',
-    hasRecordings
-      ? 'You have recordings ready to export.'
-      : 'Play a voice pack in The Choicer Voicer and record your lines. They show up here automatically.',
-    'How it works', 'help')}`;
+/** Takes a folder from the picker or a drop, and checks it before settling. */
+async function useGameDir(dir) {
+  state.settings = await window.api.settings.set({ gameDir: dir });
+  state.pack = null;
+  state.session = null;
+  el.setGameDir.value = dir;
+  await rescan(dir);
 
-  for (const button of el.homeSetup.querySelectorAll('.setup-action')) {
-    button.addEventListener('click', () => {
-      const action = button.dataset.action;
-      if (action === 'pick-game') pickGameDir();
-      else if (action === 'create') openCreateDialog();
-      else el.aboutDialog.showModal();
-    });
+  if (state.model && state.model.packs) {
+    el.setupDialog.close();
+    toast('Game folder set. Everything else fills in from here.', 'ok', 4000);
+    return true;
   }
+
+  el.setupError.hidden = false;
+  el.setupError.textContent =
+    `That folder has no packs_voice inside it. Pick the folder that contains packs_voice, `
+    + 'not packs_voice itself.';
+  return false;
 }
 
 function renderHomeStats() {
@@ -767,6 +768,9 @@ async function openEditorFor(pack) {
     else toast(`Could not prepare the video: ${proxy.error}`, 'error', 8000);
   }
 
+  // The editor reads the caption toggle and the character colours from here,
+  // so they match what the export draws.
+  editor.settings = state.settings;
   editor.open(pack);
 
   editor.onClose = () => {
@@ -1185,7 +1189,12 @@ const SPLASH_MIN_MS = 1700;
 function dismissSplash() {
   if (el.splash.hidden) return;
   el.splash.classList.add('out');
-  setTimeout(() => { el.splash.hidden = true; }, 500);
+  setTimeout(() => {
+    el.splash.hidden = true;
+    // Held back until now: a modal draws in the top layer, so opening it during
+    // the splash would put it in front of the logo.
+    renderSetup();
+  }, 500);
 }
 
 // Boot
@@ -1587,6 +1596,7 @@ function renderLines() {
 
     row.innerHTML = `
       <button class="line-time" title="Jump to this line">${formatTime(item.time)}</button>
+      ${item.imageUrl ? `<img class="line-portrait" src="${item.imageUrl}" alt="" />` : ''}
       <div class="line-body">
         <div class="line-top">
           <span class="line-char" style="color:${characterColor(item.character)}">${escapeHtml(item.character || 'Unknown')}</span>
@@ -2174,6 +2184,7 @@ function openSettings() {
   el.setTheme.value = state.settings.theme || 'system';
   el.setSplash.checked = state.settings.showSplash !== false;
   el.setPreviewCaptions.checked = state.settings.showPreviewCaptions !== false;
+  el.setEditorCaptions.checked = state.settings.showEditorCaptions !== false;
   renderFfmpegStatus();
   el.settingsDialog.showModal();
 }
@@ -2208,8 +2219,46 @@ function wireEvents() {
   el.setPreviewCaptions.addEventListener('change', async () => {
     state.settings = await window.api.settings.set({ showPreviewCaptions: el.setPreviewCaptions.checked });
   });
+  el.setEditorCaptions.addEventListener('change', async () => {
+    state.settings = await window.api.settings.set({ showEditorCaptions: el.setEditorCaptions.checked });
+    if (editor) editor.setCaptionsVisible(el.setEditorCaptions.checked);
+  });
   el.setSplash.addEventListener('change', async () => {
     state.settings = await window.api.settings.set({ showSplash: el.setSplash.checked });
+  });
+
+  // The setup overlay. It has no close button of its own beyond Skip, and Esc
+  // is cancelled, because dismissing it by accident leaves an app that cannot
+  // do anything and gives no hint why.
+  el.setupDialog.addEventListener('cancel', (event) => event.preventDefault());
+  el.setupBrowse.addEventListener('click', async () => {
+    const dir = await window.api.game.pickFolder();
+    if (dir) await useGameDir(dir);
+  });
+  el.setupHelp.addEventListener('click', () => {
+    el.setupDialog.close();
+    el.aboutDialog.showModal();
+  });
+  el.setupLater.addEventListener('click', () => {
+    state.setupSkipped = true;
+    el.setupDialog.close();
+  });
+
+  for (const event of ['dragenter', 'dragover']) {
+    el.setupDrop.addEventListener(event, (e) => {
+      e.preventDefault();
+      el.setupDrop.classList.add('over');
+    });
+  }
+  for (const event of ['dragleave', 'drop']) {
+    el.setupDrop.addEventListener(event, () => el.setupDrop.classList.remove('over'));
+  }
+  el.setupDrop.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    const dropped = [...(e.dataTransfer.files || [])]
+      .map((f) => window.api.pathForFile(f))
+      .filter(Boolean);
+    if (dropped.length) await useGameDir(dropped[0]);
   });
 
   el.btnAbout.addEventListener('click', () => el.aboutDialog.showModal());

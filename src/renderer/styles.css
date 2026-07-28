@@ -1107,8 +1107,10 @@ input[type="range"]::-webkit-slider-thumb {
 
 .line-row {
   display: grid;
-  grid-template-columns: auto 1fr;
-  grid-template-areas: "time body" "controls controls";
+  /* The portrait column collapses to nothing when a line has no picture, so
+     lines with and without one still line up. */
+  grid-template-columns: auto auto 1fr;
+  grid-template-areas: "time portrait body" "controls controls controls";
   gap: 4px 10px;
   padding: 8px 10px;
   border-radius: var(--radius);
@@ -1591,3 +1593,225 @@ input[type="range"]::-webkit-slider-thumb {
   }
   .lines { border-left: none; border-top: 1px solid var(--line); }
 }
+
+/* ---------------------------------------------------------------------------
+   Editor: captions, cropping, sliders, thumbnails and pack details
+   --------------------------------------------------------------------------- */
+
+.grow { flex: 1; min-width: 0; }
+
+/* The video is a grid with place-items:center, so the overlays have to be
+   pinned to the same cell rather than positioned against the page. */
+.editor-video { position: relative; }
+.editor-video > video { grid-area: 1 / 1; }
+
+.editor-caption {
+  grid-area: 1 / 1;
+  align-self: end;
+  justify-self: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  max-width: 88%;
+  margin-bottom: 14px;
+  padding: 7px 13px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.68);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1.35;
+  text-align: center;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
+}
+.editor-caption-line { display: block; }
+
+.slider-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg-sunken);
+}
+.slider-field input[type="range"] { width: 92px; }
+.slider-icon { font-size: 13px; }
+.slider-read {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  min-width: 32px;
+  text-align: right;
+}
+
+.editor-hint { margin: 0; }
+.editor-transport .btn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--glow);
+}
+
+/* Cropping */
+
+.crop-layer {
+  grid-area: 1 / 1;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.crop-rect {
+  position: absolute;
+  border: 1px solid var(--accent);
+  /* One huge shadow dims everything outside the rectangle without needing
+     four mask elements kept in sync with it. */
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55);
+  cursor: move;
+}
+.crop-rect::before,
+.crop-rect::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-color: rgba(255, 255, 255, 0.28);
+  border-style: solid;
+}
+.crop-rect::before { border-width: 0 1px; margin: 0 33.33%; }
+.crop-rect::after { border-width: 1px 0; margin: 33.33% 0; }
+
+.crop-handle {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border: 2px solid var(--accent-ink);
+  border-radius: 3px;
+}
+.crop-handle.nw { top: -7px; left: -7px; cursor: nwse-resize; }
+.crop-handle.ne { top: -7px; right: -7px; cursor: nesw-resize; }
+.crop-handle.sw { bottom: -7px; left: -7px; cursor: nesw-resize; }
+.crop-handle.se { bottom: -7px; right: -7px; cursor: nwse-resize; }
+
+.crop-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45);
+  white-space: nowrap;
+  cursor: default;
+}
+.crop-size { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.crop-aspect { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.crop-aspect .select { padding: 3px 6px; font-size: 12px; }
+
+/* Clip rows */
+
+.clip-main { display: flex; gap: 8px; align-items: flex-start; }
+.clip-length { flex: none; font-variant-numeric: tabular-nums; }
+
+.clip-thumb {
+  position: relative;
+  flex: none;
+  width: 68px;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-sunken);
+  display: grid;
+  place-items: center;
+}
+.clip-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.clip-thumb.blank span { font-size: 9.5px; color: var(--muted); text-align: center; }
+
+.clip-thumb-actions {
+  position: absolute;
+  inset: auto 0 0 0;
+  display: flex;
+  justify-content: center;
+  gap: 3px;
+  padding: 2px;
+  background: rgba(0, 0, 0, 0.62);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.clip-thumb:hover .clip-thumb-actions,
+.clip-thumb:focus-within .clip-thumb-actions { opacity: 1; }
+.clip-thumb-actions .icon-btn { width: 20px; height: 20px; font-size: 11px; }
+
+.line-portrait {
+  grid-area: portrait;
+  width: 34px;
+  height: 34px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  display: block;
+}
+
+/* Side panel tabs and pack details */
+
+.side-tabs { display: flex; gap: 3px; border-bottom: 1px solid var(--line); flex: none; }
+.side-tabs .seg-tab { padding: 7px 12px; font-size: 12.5px; }
+
+[data-side-panel="pack"] { display: flex; flex-direction: column; gap: 10px; }
+
+.pack-detail-icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+}
+.pack-detail-icon img {
+  width: 92px;
+  height: 92px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+.editor-portrait-blank.small {
+  width: 92px;
+  height: 92px;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+}
+
+/* Setup overlay */
+
+.path-sample {
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  overflow-x: auto;
+}
+.path-sample code { font-size: 12px; white-space: nowrap; }
+
+.setup-error {
+  padding: 9px 11px;
+  border-radius: 7px;
+  border: 1px solid var(--bad);
+  background: color-mix(in srgb, var(--bad) 12%, transparent);
+  font-size: 12.5px;
+}
+
+.dialog-actions { display: flex; align-items: center; gap: 8px; }

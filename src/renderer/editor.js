@@ -47,8 +47,10 @@ export const EDITOR_KEYS = [
   ['Space', 'Play or pause'],
   ['← →', 'Step 2 seconds'],
   ['Shift + ← →', 'Step a frame'],
+  ['Drag anywhere', 'Pan the timeline'],
+  ['Drag a clip grip', 'Move that clip'],
+  ['Drag a clip edge', 'Change where it starts or ends'],
   ['Hold then drag', 'Cut a new clip'],
-  ['Right or middle drag', 'Pan the timeline'],
   ['Delete', 'Delete the selected clip'],
   ['Ctrl + Z', 'Undo'],
   ['Ctrl + Y', 'Redo'],
@@ -77,12 +79,17 @@ export class PackEditor {
   close() {
     this.root.hidden = true;
     if (this.timeline) this.timeline.destroy();
+    if (this._captionRaf) cancelAnimationFrame(this._captionRaf);
+    this._captionRaf = null;
+    this._captionKey = null;
     this.root.innerHTML = '';
     document.removeEventListener('keydown', this._keyHandler);
     if (this.video) {
       this.video.pause();
       this.video = null;
     }
+    this.captionBox = null;
+    this.cropLayer = null;
     this.timeline = null;
     this.undoStack = [];
     this.redoStack = [];
@@ -270,6 +277,19 @@ export class PackEditor {
     video.preload = 'auto';
     video.controls = false;
     videoWrap.append(video);
+
+    // Captions sit over the video so wording and timing can be checked without
+    // leaving the editor. Off is a setting, not a per-pack choice.
+    const captionBox = el('div', 'editor-caption');
+    captionBox.hidden = true;
+    videoWrap.append(captionBox);
+    this.captionBox = captionBox;
+
+    const cropLayer = el('div', 'crop-layer');
+    cropLayer.hidden = true;
+    videoWrap.append(cropLayer);
+    this.cropLayer = cropLayer;
+
     stage.append(videoWrap);
     this.video = video;
 
@@ -281,21 +301,52 @@ export class PackEditor {
         <button type="button" class="btn btn-icon" data-act="fwd">⟳</button>
         <span class="time" data-role="time">0:00.00</span>
 
-        <span class="muted small" data-role="hint">
-          Click a clip to select it. Drag it to move, or its edge to retime.
-          Drag empty space to pan, or hold still a moment then drag to cut a new clip.
-        </span>
+        <label class="slider-field" title="How loud the video plays here. This does not change the pack.">
+          <span class="slider-icon" data-role="vol-icon">🔊</span>
+          <input type="range" data-role="volume" min="0" max="1" step="0.01" value="1" />
+          <b class="slider-read" data-role="vol-read">100%</b>
+        </label>
+
+        <span class="grow"></span>
+
+        <button type="button" class="btn btn-small" data-act="captions" aria-pressed="true">Captions</button>
+        <button type="button" class="btn btn-small" data-act="crop">Crop video</button>
+        <button type="button" class="btn btn-small" data-act="backing">Make backing track</button>
         <button type="button" class="btn btn-small" data-act="zoom-fit">Fit</button>
       </div>
+      <p class="muted small editor-hint">
+        Click a clip to select it. Drag its grip to move it, or an edge to change its timing.
+        Dragging anywhere else pans. Hold still a moment then drag to cut a new clip.
+      </p>
       <canvas class="timeline" data-role="timeline"></canvas>`;
     stage.append(controls);
     body.append(stage);
 
-    const clipPanel = el('aside', 'editor-side');
-    clipPanel.innerHTML = '<h3>Clips</h3><div class="clip-list" data-role="clips"></div>';
-    body.append(clipPanel);
+    const side = el('aside', 'editor-side');
+    side.innerHTML = `
+      <div class="side-tabs" role="tablist">
+        <button type="button" class="seg-tab on" data-side-tab="clips">Clips</button>
+        <button type="button" class="seg-tab" data-side-tab="pack">Pack details</button>
+      </div>
+      <div data-side-panel="clips">
+        <div class="clip-list" data-role="clips"></div>
+      </div>
+      <div data-side-panel="pack" hidden></div>`;
+    body.append(side);
 
-    this.wireDubControls(controls, clipPanel, video);
+    side.querySelector('.side-tabs').addEventListener('click', (event) => {
+      const which = event.target.dataset.sideTab;
+      if (!which) return;
+      for (const tab of side.querySelectorAll('[data-side-tab]')) {
+        tab.classList.toggle('on', tab.dataset.sideTab === which);
+      }
+      for (const panel of side.querySelectorAll('[data-side-panel]')) {
+        panel.hidden = panel.dataset.sidePanel !== which;
+      }
+    });
+
+    this.renderPackDetails(side.querySelector('[data-side-panel="pack"]'));
+    this.wireDubControls(controls, side, video);
   }
 
   wireDubControls(controls, clipPanel, video) {
@@ -335,8 +386,27 @@ export class PackEditor {
         timeline.viewStart = 0;
         timeline.viewEnd = timeline.duration;
         timeline.draw();
+      } else if (act === 'captions') {
+        this.setCaptionsVisible(this.captionsOn === false);
+        this.api.settings.set({ showEditorCaptions: this.captionsOn });
+      } else if (act === 'crop') {
+        this.toggleCrop(event.target);
+      } else if (act === 'backing') {
+        this.makeBackingTrack();
       }
     });
+
+    // Preview volume only. It never touches what is written into the pack, so
+    // it is deliberately not saved anywhere.
+    const volume = q('volume');
+    const applyVolume = () => {
+      const value = Number(volume.value);
+      video.volume = value;
+      q('vol-read').textContent = `${Math.round(value * 100)}%`;
+      q('vol-icon').textContent = value === 0 ? '🔇' : value < 0.5 ? '🔉' : '🔊';
+    };
+    volume.addEventListener('input', applyVolume);
+    applyVolume();
 
     const ready = () => {
       timeline.setDuration(video.duration || 0);
@@ -352,7 +422,252 @@ export class PackEditor {
       q('time').textContent = fmt(video.currentTime);
     });
 
+    // Captions have to keep up with the playhead, not with timeupdate, or a
+    // line appears a fifth of a second after the voice starts.
+    const trackCaption = () => {
+      if (this.root.hidden) return;
+      this.paintCaption(video.currentTime);
+      this._captionRaf = requestAnimationFrame(trackCaption);
+    };
+    this._captionRaf = requestAnimationFrame(trackCaption);
+
+    this.setCaptionsVisible(!this.settings || this.settings.showEditorCaptions !== false);
     this.renderClipList(clipList);
+  }
+
+  // Captions over the video
+
+  setCaptionsVisible(on) {
+    this.captionsOn = Boolean(on);
+    const button = this.root.querySelector('[data-act="captions"]');
+    if (button) {
+      button.classList.toggle('on', this.captionsOn);
+      button.setAttribute('aria-pressed', String(this.captionsOn));
+    }
+    if (this.captionBox) {
+      this.captionBox.hidden = true;
+      if (this.captionsOn && this.video) this.paintCaption(this.video.currentTime);
+    }
+  }
+
+  /**
+   * Shows whichever lines are speaking at `time`. Clips that share a timestamp
+   * are two people talking over each other, so they stack rather than one
+   * winning, which is how the export draws them too.
+   */
+  paintCaption(time) {
+    const box = this.captionBox;
+    if (!box) return;
+    if (!this.captionsOn) { box.hidden = true; return; }
+
+    const live = (this.pack.clips || []).filter((c) =>
+      c.caption && time >= c.time && time < c.time + Math.max(c.duration || 0, 0.4));
+
+    if (!live.length) {
+      if (!box.hidden) box.hidden = true;
+      return;
+    }
+
+    const key = live.map((c) => c.base).join('|');
+    if (key === this._captionKey) { box.hidden = false; return; }
+    this._captionKey = key;
+
+    box.innerHTML = live.map((c) => {
+      const colour = this.characterColour(c.character);
+      const who = c.character
+        ? `<b style="color:${colour}">${escapeHtml(c.character)}:</b> `
+        : '';
+      return `<span class="editor-caption-line">${who}${escapeHtml(c.caption)}</span>`;
+    }).join('');
+    box.hidden = false;
+  }
+
+  /** The same colour the export and the line list give this character. */
+  characterColour(name) {
+    const set = (this.settings && this.settings.characterColors) || {};
+    if (name && set[name]) return set[name];
+    return 'var(--accent)';
+  }
+
+  // Pack details
+
+  /**
+   * The fields the game shows in its Customize menu. These used to be settable
+   * only when a pack was first created, which meant a typo in a title was
+   * permanent unless you opened the ini by hand.
+   */
+  renderPackDetails(panel) {
+    const pack = this.pack;
+    panel.innerHTML = `
+      <div class="pack-detail-icon">
+        ${pack.iconUrl ? `<img src="${pack.iconUrl}" alt="" />`
+    : '<div class="editor-portrait-blank small">No icon</div>'}
+        <button type="button" class="btn btn-small" data-act="pick-icon">Choose an icon…</button>
+        <button type="button" class="btn btn-small" data-act="grab-icon">Use this frame</button>
+      </div>
+      <label class="field"><span>Title</span>
+        <input class="input" data-info="title" placeholder="What the pack is called" /></label>
+      <label class="field"><span>Subtitle</span>
+        <input class="input" data-info="subtitle" placeholder="A short line under the title" /></label>
+      <label class="field"><span>Author</span>
+        <input class="input" data-info="authors" placeholder="Who made it" /></label>
+      <label class="field"><span>Notes</span>
+        <textarea class="input" rows="3" data-info="readme"
+                  placeholder="Anything worth telling whoever installs this"></textarea></label>
+      <p class="muted small">Saved into _pack_info.ini, which is what the game reads.</p>`;
+
+    // Set as properties, not attributes: titles and notes contain quotes.
+    const fields = {};
+    for (const input of panel.querySelectorAll('[data-info]')) {
+      fields[input.dataset.info] = input;
+    }
+    fields.title.value = pack.title || '';
+    fields.subtitle.value = pack.subtitle || '';
+    fields.authors.value = (pack.authors || []).join(', ');
+    fields.readme.value = pack.readme || '';
+
+    const save = async () => {
+      const patch = {
+        title: fields.title.value.trim(),
+        subtitle: fields.subtitle.value.trim(),
+        authors: fields.authors.value.split(',').map((s) => s.trim()).filter(Boolean),
+        readme: fields.readme.value.trim(),
+      };
+      const result = await this.api.content.writePackInfo({ dir: this.pack.dir, patch });
+      if (!result.ok) {
+        this.toast(`Could not save that: ${result.error}`, 'error', 7000);
+        return;
+      }
+      Object.assign(this.pack, patch);
+      const heading = this.root.querySelector('.editor-title h2');
+      if (heading && patch.title) heading.textContent = patch.title;
+      if (this.onChanged) await this.onChanged(this.pack.id, { keepEditor: true });
+      this.toast('Pack details saved.', 'ok', 1500);
+    };
+    for (const input of Object.values(fields)) input.addEventListener('change', save);
+
+    panel.querySelector('[data-act="pick-icon"]').addEventListener('click', async () => {
+      const picked = await this.api.dialog.pickFiles({ title: 'Pack icon', kind: 'image' });
+      if (!picked.length) return;
+      await this.importFiles([picked[0]], { baseName: '_icon', kind: 'image', overwrite: true });
+      if (this.onChanged) await this.onChanged(this.pack.id);
+    });
+
+    panel.querySelector('[data-act="grab-icon"]').addEventListener('click', async () => {
+      const frame = this.video && this.captureFrame(this.video);
+      if (!frame) { this.toast('Nothing to grab yet. Let the video load first.', 'warn'); return; }
+      const result = await this.api.content.saveImage({
+        destDir: this.pack.dir, base: '_icon', dataUrl: frame,
+      });
+      if (!result.ok) { this.toast(`Could not save it: ${result.error}`, 'error', 7000); return; }
+      this.toast('Icon set from the video.', 'ok');
+      if (this.onChanged) await this.onChanged(this.pack.id);
+    });
+  }
+
+  // Backing track
+
+  /**
+   * Builds the pack's backing track from the video by quietening it under every
+   * line. See convert.buildBackingTrack for why it works this way rather than
+   * trying to separate the voice out.
+   */
+  async makeBackingTrack() {
+    const pack = this.pack;
+    const clips = (pack.clips || []).filter((c) => Number.isFinite(c.time) && c.duration > 0);
+
+    if (!pack.videoPath) { this.toast('This pack has no video to work from.', 'warn', 6000); return; }
+    if (!clips.length) {
+      this.toast('Cut some clips first. The backing track is built from where they sit.', 'warn', 7000);
+      return;
+    }
+
+    const result = await this.run('Building the backing track…', () =>
+      this.api.content.buildBacking({
+        packDir: pack.dir,
+        videoPath: pack.videoPath,
+        ranges: clips.map((c) => ({ start: c.time, duration: c.duration })),
+        level: 0,
+        replacing: Boolean(pack.backingPath),
+      }));
+
+    if (result.cancelled) return;
+    if (!result.ok) {
+      this.toast(`Could not build it: ${result.error}`, 'error', 8000);
+      return;
+    }
+    this.toast(`Backing track built, quietened under ${result.ducked} lines.`, 'ok', 5000);
+    if (this.onChanged) await this.onChanged(pack.id, { keepEditor: true });
+  }
+
+  // Cropping
+
+  toggleCrop(button) {
+    if (this.crop) { this.endCrop(); return; }
+    if (!this.video || !this.video.videoWidth) {
+      this.toast('Let the video load first.', 'warn');
+      return;
+    }
+    this.video.pause();
+    button.classList.add('on');
+    this.crop = new CropBox(this.cropLayer, {
+      onApply: (rect) => this.applyCrop(rect),
+      onCancel: () => this.endCrop(),
+      size: { width: this.video.videoWidth, height: this.video.videoHeight },
+    });
+    this.cropLayer.hidden = false;
+  }
+
+  endCrop() {
+    if (this.crop) { this.crop.destroy(); this.crop = null; }
+    if (this.cropLayer) this.cropLayer.hidden = true;
+    const button = this.root.querySelector('[data-act="crop"]');
+    if (button) button.classList.remove('on');
+  }
+
+  /**
+   * Crops the pack's video. The original is kept aside so this can be undone,
+   * which matters because cropping re-encodes and is otherwise one way.
+   */
+  async applyCrop(rect) {
+    const pack = this.pack;
+    this.endCrop();
+
+    const result = await this.run('Cropping the video…', () => this.api.content.cropVideo({
+      packDir: pack.dir,
+      videoPath: pack.videoPath,
+      crop: rect,
+    }));
+
+    if (!result.ok) {
+      this.toast(`Could not crop it: ${result.error}`, 'error', 8000);
+      return;
+    }
+
+    this.toast(`Cropped to ${result.to.width}×${result.to.height}.`, 'ok', 4000);
+
+    // Undo puts the original file back. Both directions reopen the editor,
+    // since the proxy the editor plays has to be rebuilt from the new file.
+    const reopen = async () => {
+      if (this.onChanged) await this.onChanged(pack.id);
+    };
+    this.push({
+      label: 'crop video',
+      undo: async () => {
+        await this.api.content.restoreClip({ moved: result.moved });
+        await reopen();
+      },
+      redo: async () => {
+        const again = await this.api.content.cropVideo({
+          packDir: pack.dir, videoPath: pack.videoPath, crop: rect,
+        });
+        if (!again.ok) throw new Error(again.error);
+        result.moved = again.moved;
+        await reopen();
+      },
+    });
+
+    await reopen();
   }
 
   /** Decodes the preview audio once and hands the timeline its peaks. */
@@ -513,14 +828,31 @@ export class PackEditor {
         <div class="clip-head">
           <button type="button" class="line-time">${fmt(clip.time)}</button>
           <span class="clip-name">${escapeHtml(clip.base)}</span>
+          <span class="clip-length muted small">${(clip.duration || 0).toFixed(2)}s</span>
           <button type="button" class="icon-btn" data-act="play" title="Play this clip"
                   ${hasAudio ? '' : 'disabled'}>▶</button>
           <button type="button" class="icon-btn danger" data-act="delete" title="Delete this clip">✕</button>
         </div>
-        <div class="clip-fields">
-          <input class="input" data-field="caption" placeholder="Caption" />
-          <input class="input" data-field="character" placeholder="Who says it" />
+        <div class="clip-main">
+          <div class="clip-thumb ${clip.imageUrl ? '' : 'blank'}">
+            ${clip.imageUrl
+    ? `<img src="${clip.imageUrl}" alt="" />`
+    : '<span>no picture</span>'}
+            <div class="clip-thumb-actions">
+              <button type="button" class="icon-btn" data-act="grab"
+                      title="Use the frame showing now">⧉</button>
+              <button type="button" class="icon-btn" data-act="upload"
+                      title="Choose a picture file">↑</button>
+            </div>
+          </div>
+          <div class="clip-fields">
+            <input class="input" data-field="caption" placeholder="Caption" />
+            <input class="input" data-field="character" placeholder="Who says it" />
+          </div>
         </div>`;
+
+      row.querySelector('[data-act="grab"]').addEventListener('click', () => this.grabClipImage(clip));
+      row.querySelector('[data-act="upload"]').addEventListener('click', () => this.uploadClipImage(clip));
 
       // Set through the property, never through the attribute: captions are
       // full of double quotes and putting one in value="" ends the attribute,
@@ -570,6 +902,60 @@ export class PackEditor {
 
       container.append(row);
     }
+  }
+
+  /**
+   * Takes a clip's picture from the video.
+   *
+   * The file is always named after the clip, so the game, the editor and the
+   * export all find it the same way without anything having to be pointed at
+   * anything else.
+   */
+  async grabClipImage(clip) {
+    if (!this.video || !this.video.videoWidth) {
+      this.toast('Let the video load first.', 'warn');
+      return;
+    }
+    const frame = this.captureFrame(this.video);
+    const result = await this.api.content.saveImage({
+      destDir: this.pack.dir, base: clip.base, dataUrl: frame,
+    });
+    if (!result.ok) { this.toast(`Could not save it: ${result.error}`, 'error', 7000); return; }
+
+    await this.writeImageRef(clip);
+    this.toast(`Picture set for ${clip.base}.`, 'ok', 2000);
+    if (this.onChanged) await this.onChanged(this.pack.id, { keepEditor: true });
+    this.refreshClips();
+  }
+
+  /** Same, from a file, converted to PNG on the way in. */
+  async uploadClipImage(clip) {
+    const picked = await this.api.dialog.pickFiles({ title: `Picture for ${clip.base}`, kind: 'image' });
+    if (!picked.length) return;
+
+    const ok = await this.importFiles([picked[0]], {
+      baseName: clip.base, kind: 'image', overwrite: true,
+    });
+    if (!ok) return;
+
+    await this.writeImageRef(clip);
+    if (this.onChanged) await this.onChanged(this.pack.id, { keepEditor: true });
+    this.refreshClips();
+  }
+
+  /** Points a clip's metadata at its picture, keeping the name in step. */
+  async writeImageRef(clip) {
+    clip.image = `${clip.base}.png`;
+    await this.api.content.writeClipMeta({
+      destDir: this.pack.dir,
+      base: clip.base,
+      meta: {
+        caption: clip.caption || '',
+        character: clip.character || '',
+        image: clip.image,
+        timestamp: clip.time,
+      },
+    });
   }
 
   /** Plays a single clip so you can hear what you cut. */
@@ -831,5 +1217,196 @@ export class PackEditor {
     if (failed.length) this.toast(`${failed.length} file(s) failed.`, 'warn', 7000);
     else this.toast('Added.', 'ok');
     return true;
+  }
+}
+
+/**
+ * The crop rectangle drawn over the video.
+ *
+ * It works in fractions of the frame rather than pixels, so it survives the
+ * window being resized and does not care what size the video is displayed at.
+ * Only the corners resize; dragging inside moves the whole rectangle, which is
+ * what people reach for first.
+ */
+const HANDLES = ['nw', 'ne', 'sw', 'se'];
+
+class CropBox {
+  constructor(layer, { onApply, onCancel, size }) {
+    this.layer = layer;
+    this.onApply = onApply;
+    this.onCancel = onCancel;
+    this.size = size;
+
+    // Starts as the whole frame, so the first drag pulls an edge in rather
+    // than having to find an invisible rectangle first.
+    this.rect = { x: 0, y: 0, width: 1, height: 1 };
+    this.aspect = null;
+
+    layer.innerHTML = `
+      <div class="crop-rect">
+        ${HANDLES.map((h) => `<i class="crop-handle ${h}" data-handle="${h}"></i>`).join('')}
+      </div>
+      <div class="crop-bar">
+        <span class="crop-size" data-role="size"></span>
+        <label class="crop-aspect">
+          <span>Shape</span>
+          <select class="select" data-role="aspect">
+            <option value="">Free</option>
+            <option value="16:9">16:9 wide</option>
+            <option value="4:3">4:3</option>
+            <option value="1:1">Square</option>
+            <option value="9:16">9:16 tall</option>
+          </select>
+        </label>
+        <button type="button" class="btn btn-small" data-role="reset">Reset</button>
+        <button type="button" class="btn btn-small" data-role="cancel">Cancel</button>
+        <button type="button" class="btn btn-small btn-primary" data-role="apply">Crop</button>
+      </div>`;
+
+    this.box = layer.querySelector('.crop-rect');
+    this._onResize = () => this.paint();
+    window.addEventListener('resize', this._onResize);
+
+    this._bind();
+    this.paint();
+  }
+
+  destroy() {
+    window.removeEventListener('resize', this._onResize);
+    this.layer.innerHTML = '';
+  }
+
+  /**
+   * Where the picture actually is inside the layer. The video is object-fit:
+   * contain, so on a wide window there are black bars either side that are not
+   * part of the frame and must not be croppable.
+   */
+  contentBox() {
+    const outer = this.layer.getBoundingClientRect();
+    const scale = Math.min(outer.width / this.size.width, outer.height / this.size.height);
+    const width = this.size.width * scale;
+    const height = this.size.height * scale;
+    return {
+      left: (outer.width - width) / 2,
+      top: (outer.height - height) / 2,
+      width,
+      height,
+    };
+  }
+
+  paint() {
+    const content = this.contentBox();
+    const r = this.rect;
+    Object.assign(this.box.style, {
+      left: `${content.left + r.x * content.width}px`,
+      top: `${content.top + r.y * content.height}px`,
+      width: `${r.width * content.width}px`,
+      height: `${r.height * content.height}px`,
+    });
+
+    const even = (n) => Math.max(2, Math.round(n / 2) * 2);
+    const w = even(this.size.width * r.width);
+    const h = even(this.size.height * r.height);
+    this.layer.querySelector('[data-role="size"]').textContent =
+      `${w} × ${h}  (from ${this.size.width} × ${this.size.height})`;
+  }
+
+  /** Keeps a rectangle inside the frame and above the minimum useful size. */
+  clampRect(r) {
+    const minW = 16 / this.size.width;
+    const minH = 16 / this.size.height;
+    const width = Math.min(1, Math.max(minW, r.width));
+    const height = Math.min(1, Math.max(minH, r.height));
+    return {
+      width,
+      height,
+      x: Math.min(Math.max(0, r.x), 1 - width),
+      y: Math.min(Math.max(0, r.y), 1 - height),
+    };
+  }
+
+  /** Forces a rectangle to a chosen shape, anchored on its centre. */
+  applyAspect(r) {
+    if (!this.aspect) return r;
+    const target = this.aspect;
+    const frame = this.size.width / this.size.height;
+    // The rectangle is in fractions of a frame that is not itself square, so
+    // the ratio has to be expressed in frame units before it means anything.
+    const wanted = target / frame;
+
+    let { width, height } = r;
+    if (width / height > wanted) width = height * wanted;
+    else height = width / wanted;
+
+    const cx = r.x + r.width / 2;
+    const cy = r.y + r.height / 2;
+    return this.clampRect({ x: cx - width / 2, y: cy - height / 2, width, height });
+  }
+
+  _bind() {
+    const layer = this.layer;
+
+    layer.querySelector('[data-role="cancel"]').addEventListener('click', () => this.onCancel());
+    layer.querySelector('[data-role="apply"]').addEventListener('click', () => {
+      this.onApply(this.rect);
+    });
+    layer.querySelector('[data-role="reset"]').addEventListener('click', () => {
+      this.rect = { x: 0, y: 0, width: 1, height: 1 };
+      this.paint();
+    });
+    layer.querySelector('[data-role="aspect"]').addEventListener('change', (e) => {
+      const value = e.target.value;
+      if (!value) { this.aspect = null; return; }
+      const [w, h] = value.split(':').map(Number);
+      this.aspect = w / h;
+      this.rect = this.applyAspect(this.rect);
+      this.paint();
+    });
+
+    // The bar must not start a drag on the rectangle behind it.
+    layer.querySelector('.crop-bar').addEventListener('pointerdown', (e) => e.stopPropagation());
+
+    const start = (e) => {
+      if (e.button !== 0) return;
+      const content = this.contentBox();
+      const handle = e.target.dataset.handle || null;
+      if (!handle && !e.target.closest('.crop-rect')) return;
+
+      e.preventDefault();
+      const origin = { ...this.rect };
+      const from = { x: e.clientX, y: e.clientY };
+      layer.setPointerCapture(e.pointerId);
+
+      const move = (ev) => {
+        const dx = (ev.clientX - from.x) / content.width;
+        const dy = (ev.clientY - from.y) / content.height;
+
+        let next;
+        if (!handle) {
+          next = this.clampRect({ ...origin, x: origin.x + dx, y: origin.y + dy });
+        } else {
+          const left = handle.includes('w');
+          const top = handle.includes('n');
+          const x = left ? origin.x + dx : origin.x;
+          const y = top ? origin.y + dy : origin.y;
+          const width = left ? origin.width - dx : origin.width + dx;
+          const height = top ? origin.height - dy : origin.height + dy;
+          next = this.applyAspect(this.clampRect({ x, y, width, height }));
+        }
+        this.rect = next;
+        this.paint();
+      };
+
+      const end = (ev) => {
+        layer.removeEventListener('pointermove', move);
+        layer.removeEventListener('pointerup', end);
+        try { layer.releasePointerCapture(ev.pointerId); } catch { /* already released */ }
+      };
+
+      layer.addEventListener('pointermove', move);
+      layer.addEventListener('pointerup', end);
+    };
+
+    layer.addEventListener('pointerdown', start);
   }
 }

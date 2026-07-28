@@ -167,7 +167,9 @@ function inspectVoice(dir, files, { parseIni, findAudioSibling }) {
     kind: isDub ? 'dub' : 'voice',
     title: typeof meta.title === 'string' && meta.title ? meta.title : null,
     subtitle: typeof meta.subtitle === 'string' ? meta.subtitle : '',
-    authors: Array.isArray(meta.authors) ? meta.authors : [],
+    authors: Array.isArray(meta.authors) ? meta.authors
+      : typeof meta.authors === 'string' && meta.authors ? [meta.authors] : [],
+    readme: typeof meta.readme === 'string' ? meta.readme : '',
     icon: findFile(files, meta.icon || '_icon', IMAGE_EXTS) || findFile(files, 'icon', IMAGE_EXTS),
     video,
     // The editor needs the real file to cut clips out of.

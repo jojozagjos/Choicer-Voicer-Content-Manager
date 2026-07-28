@@ -199,6 +199,130 @@ async function extractAudioRange(source, destDir, baseName, start, duration, opt
   return { path: target, start, duration };
 }
 
+/**
+ * Builds a backing track by quietening the original audio wherever a clip
+ * speaks.
+ *
+ * Properly separating a voice from music needs a trained model, which is far
+ * too heavy to bundle. This gets most of the way there without one, because a
+ * dub pack already knows exactly when every line happens: take the video's own
+ * audio and duck it across those ranges. Music and room tone between lines
+ * survive untouched, which is the part that makes a dub feel right.
+ *
+ * It cannot recover music that was underneath a voice, so a scene with
+ * continuous scoring dips during dialogue. `level` sets how far: 0 silences
+ * the speech entirely, higher values leave a bed of the original under it.
+ */
+async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
+  const {
+    level = 0,
+    fade = 0.08,          // seconds of ramp, so the duck does not click
+    audioFormat = 'wav',
+    baseName = '_backing_track',
+    signal,
+    onProgress,
+  } = options;
+
+  if (!ranges || !ranges.length) throw new Error('This pack has no clips to work from');
+
+  fs.mkdirSync(destDir, { recursive: true });
+  const target = path.join(destDir, `${baseName}.${audioFormat}`);
+  const partial = `${target}.${process.pid}.part.${audioFormat}`;
+
+  // One enable window per line, widened slightly so the ramp sits outside the
+  // speech rather than clipping its first syllable.
+  const windows = ranges
+    .filter((r) => Number.isFinite(r.start) && r.duration > 0)
+    .sort((a, b) => a.start - b.start)
+    .map((r) => {
+      const from = Math.max(0, r.start - fade);
+      const to = r.start + r.duration + fade;
+      return `between(t,${from.toFixed(3)},${to.toFixed(3)})`;
+    });
+
+  const duration = probeDuration(videoPath);
+  const args = [
+    '-i', videoPath,
+    '-vn',
+    '-af', `volume=${level}:enable='${windows.join('+')}'`,
+  ];
+  if (audioFormat === 'wav') args.push('-c:a', 'pcm_s16le', '-ar', '48000', '-f', 'wav');
+  else if (audioFormat === 'mp3') args.push('-c:a', 'libmp3lame', '-q:a', '2', '-f', 'mp3');
+  else args.push('-c:a', 'libvorbis', '-q:a', '5', '-f', 'ogg');
+  args.push('-y', partial);
+
+  try {
+    await runFfmpeg(args, {
+      signal,
+      onProgress: (seconds) => {
+        if (onProgress && duration) onProgress({ percent: Math.min(100, (seconds / duration) * 100) });
+      },
+    });
+    fs.renameSync(partial, target);
+  } catch (err) {
+    try { fs.unlinkSync(partial); } catch { /* never created */ }
+    throw err;
+  }
+
+  return { path: target, ducked: windows.length };
+}
+
+/**
+ * Crops a video in place, keeping the original aside so the crop can be undone.
+ *
+ * `crop` is in fractions of the source (0-1), not pixels, so the caller can
+ * work from a preview at whatever size it happens to be displayed. Theora wants
+ * even dimensions, so the pixel rectangle is rounded to a multiple of two.
+ */
+async function cropVideo(source, crop, backupPath, options = {}) {
+  const { signal, onProgress } = options;
+
+  const info = probeVideo(source);
+  if (!info.width || !info.height) throw new Error('Could not read the video size');
+
+  const even = (n) => Math.max(2, Math.round(n / 2) * 2);
+  const w = even(info.width * crop.width);
+  const h = even(info.height * crop.height);
+  const x = even(info.width * crop.x);
+  const y = even(info.height * crop.y);
+
+  if (x + w > info.width || y + h > info.height) throw new Error('That crop falls outside the video');
+  if (w < 16 || h < 16) throw new Error('That crop is too small');
+
+  const duration = probeDuration(source);
+  const partial = `${source}.${process.pid}.crop.ogv`;
+
+  await runFfmpeg([
+    '-i', source,
+    '-vf', `crop=${w}:${h}:${x}:${y}`,
+    '-c:v', 'libtheora', '-q:v', String(THEORA_QUALITY),
+    '-c:a', 'libvorbis', '-q:a', String(VORBIS_QUALITY),
+    '-f', 'ogv', '-y', partial,
+  ], {
+    signal,
+    onProgress: (seconds) => {
+      if (onProgress && duration) onProgress({ percent: Math.min(100, (seconds / duration) * 100) });
+    },
+  }).catch((err) => {
+    try { fs.unlinkSync(partial); } catch { /* never created */ }
+    throw err;
+  });
+
+  // The original moves out of the pack before the crop takes its place, so a
+  // failure at any point leaves either the old video or the new one, never
+  // neither.
+  fs.mkdirSync(path.dirname(backupPath), { recursive: true });
+  fs.renameSync(source, backupPath);
+  fs.renameSync(partial, source);
+
+  return {
+    path: source,
+    backup: backupPath,
+    from: { width: info.width, height: info.height },
+    to: { width: w, height: h },
+  };
+}
+
 /** Details useful for showing what will happen before committing to it. */
 function describe(source) {
   const kind = kindOf(source);
@@ -222,6 +346,8 @@ module.exports = {
   convertInto,
   convertMany,
   extractAudioRange,
+  buildBackingTrack,
+  cropVideo,
   describe,
   kindOf,
   isAcceptable,

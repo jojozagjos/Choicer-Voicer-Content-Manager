@@ -15,7 +15,7 @@ const { runExport } = require('./exporter');
 const { ensureProxy } = require('./proxy');
 const { scanContent } = require('./content');
 const {
-  createPack, installPack, deletePack, trashClip, restoreClip, writeClipMeta, saveImage,
+  createPack, installPack, deletePack, trashClip, restoreClip, writeClipMeta, saveImage, writeIni,
 } = require('./create');
 const convert = require('./convert');
 
@@ -61,6 +61,7 @@ const DEFAULT_SETTINGS = {
   theme: 'system', // 'system' | 'dark' | 'light'
   showSplash: true,
   showPreviewCaptions: true,
+  showEditorCaptions: true,
   captionStyle: {},
   characterColors: {},
   // Donation prompt state. It only appears after the app has actually been
@@ -163,6 +164,35 @@ function mediaUrl(filePath) {
 function pathFromMediaUrl(url) {
   const raw = url.slice(`${MEDIA_SCHEME}://file/`.length).split(/[?#]/)[0];
   return path.normalize(Buffer.from(raw, 'base64url').toString('utf8'));
+}
+
+const CLIP_IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.webp'];
+
+/**
+ * Finds a clip's picture.
+ *
+ * Real packs are inconsistent about this. Some declare `image="portrait.png"`,
+ * some declare it without an extension, and some declare nothing at all and
+ * simply name the picture after the clip. Following all three is what makes
+ * portraits appear for every pack rather than about half of them.
+ */
+function findClipImage(dir, clip) {
+  const candidates = [];
+  if (clip.image) {
+    candidates.push(clip.image);
+    if (!path.extname(clip.image)) {
+      for (const ext of CLIP_IMAGE_EXTS) candidates.push(`${clip.image}${ext}`);
+    }
+  }
+  for (const ext of CLIP_IMAGE_EXTS) candidates.push(`${clip.base}${ext}`);
+
+  for (const name of candidates) {
+    const full = path.join(dir, name);
+    try {
+      if (fs.existsSync(full) && fs.statSync(full).isFile()) return full;
+    } catch { /* unreadable, try the next */ }
+  }
+  return null;
 }
 
 function isAllowed(filePath) {
@@ -359,8 +389,97 @@ function createWindow() {
  * Loads the renderer offscreen, waits for it to settle, then reports what it
  * managed to build. Exits non-zero if anything logged an error.
  */
+// Anything the smoke test creates, edits or deletes happens inside a pack
+// named this and nothing else. The checks used to run against whichever real
+// pack sorted first, which meant a test failing at the wrong moment could
+// leave someone's own pack short a clip. Real packs are read-only here now.
+const SMOKE_PACK = '__smoke_scratch';
+
+/**
+ * Copies the smallest dub pack to a scratch name so the destructive checks
+ * have something realistic to work on. Returns null if there is nothing to
+ * copy, in which case those checks are skipped rather than aimed elsewhere.
+ */
+function makeSmokePack(gameDir) {
+  const voiceDir = path.join(gameDir, 'packs_voice');
+  if (!fs.existsSync(voiceDir)) return null;
+
+  const candidates = fs.readdirSync(voiceDir)
+    .filter((name) => name !== SMOKE_PACK)
+    .map((name) => path.join(voiceDir, name))
+    .filter((dir) => {
+      try {
+        return fs.statSync(dir).isDirectory()
+          && fs.readdirSync(dir).some((f) => /^dub_video\./i.test(f));
+      } catch { return false; }
+    })
+    .map((dir) => {
+      const size = fs.readdirSync(dir).reduce((total, f) => {
+        try { return total + fs.statSync(path.join(dir, f)).size; } catch { return total; }
+      }, 0);
+      return { dir, size };
+    })
+    .sort((a, b) => a.size - b.size);
+
+  if (!candidates.length) return null;
+
+  const target = path.join(voiceDir, SMOKE_PACK);
+  fs.rmSync(target, { recursive: true, force: true });
+  fs.cpSync(candidates[0].dir, target, { recursive: true });
+
+  // Retitled, because the grid lists packs by title and the copy would
+  // otherwise be indistinguishable from the pack it came from.
+  writeIni(path.join(target, '_pack_info.ini'), {
+    title: SMOKE_PACK,
+    subtitle: 'created and removed by the smoke test',
+    authors: [],
+    readme: '',
+  });
+
+  // All but the first clip goes. The cut-a-new-clip check needs empty timeline
+  // to work in, and some packs are dubbed end to end with no gap anywhere.
+  const clipBases = fs.readdirSync(target)
+    .filter((f) => !f.startsWith('_') && /\.(ini|txt)$/i.test(f))
+    .filter((f) => {
+      try {
+        return fs.readFileSync(path.join(target, f), 'utf8').includes('dub_timestamps');
+      } catch { return false; }
+    })
+    .map((f) => path.basename(f, path.extname(f)))
+    .sort();
+
+  const kept = clipBases[0] || null;
+  let removed = 0;
+  for (const base of clipBases.slice(1)) {
+    for (const file of fs.readdirSync(target)) {
+      if (path.basename(file, path.extname(file)) !== base) continue;
+      try { fs.unlinkSync(path.join(target, file)); removed++; } catch { /* already gone */ }
+    }
+  }
+
+  return { dir: target, copiedFrom: candidates[0].dir, keptClip: kept, removedClips: removed };
+}
+
+function removeSmokePack(gameDir) {
+  const target = path.join(gameDir, 'packs_voice', SMOKE_PACK);
+  try {
+    fs.rmSync(target, { recursive: true, force: true });
+    return !fs.existsSync(target);
+  } catch {
+    return false;
+  }
+}
+
 function runSmokeTest(win) {
   const errors = [];
+
+  // Made before the renderer loads, so the app's own first scan picks it up
+  // without needing to be told to look again.
+  const gameDir = gamedata.resolveGameDir(settings.gameDir || gamedata.defaultGameDir());
+  let scratch = null;
+  try { scratch = makeSmokePack(gameDir); } catch (err) {
+    errors.push(`could not make the scratch pack: ${err.message}`);
+  }
   win.webContents.on('console-message', (_e, level, message) => {
     if (level >= 2) errors.push(message);
   });
@@ -593,8 +712,12 @@ function runSmokeTest(win) {
           if (document.querySelectorAll('.pack-tile').length) break;
         }
 
-        // Voice packs are selected by default, so the first tile is a dub pack.
-        document.querySelector('.pack-tile').click();
+        // Always the scratch copy. This check creates and deletes a clip, and
+        // aiming it at a real pack once cost someone a clip of their own.
+        const tile = [...document.querySelectorAll('.pack-tile')]
+          .find((t) => t.textContent.includes(${JSON.stringify(SMOKE_PACK)}));
+        if (!tile) return { skipped: 'no scratch pack' };
+        tile.click();
         await new Promise((r) => setTimeout(r, 300));
         const before = document.querySelectorAll('#content-detail .issue').length;
 
@@ -728,7 +851,9 @@ function runSmokeTest(win) {
         return {
           visible: !$('#home-view').hidden,
           statTiles: document.querySelectorAll('.stat').length,
-          setupShown: !$('#home-setup').hidden,
+          // Finding the game folder is an overlay now, not a checklist, so on
+          // a working install it should not be up at all.
+          setupOverlayOpen: $('#setup-dialog').open,
           recentRows: document.querySelectorAll('.recent-row').length,
           exportNote: $('#home-export-note').textContent.trim(),
           tabs: [...document.querySelectorAll('[data-tab]')].map((b) => b.textContent.trim()),
@@ -1008,9 +1133,142 @@ function runSmokeTest(win) {
       }
     }
 
+    // The dub editor's newer parts: captions over the video, the volume
+    // slider, clip thumbnails, pack details and the crop overlay. Superman is
+    // the pack kept for testing, so anything written lands there.
+    let toolsCheck = null;
+    try {
+      toolsCheck = await win.webContents.executeJavaScript(`(async () => {
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+        // Earlier checks leave the editor open and the grid on another type,
+        // so get back to voice packs deliberately rather than assuming.
+        const editorView = document.getElementById('editor-view');
+        if (!editorView.hidden) {
+          const back = editorView.querySelector('.editor-head button');
+          if (back) back.click();
+          await wait(300);
+        }
+        document.querySelector('[data-tab="content"]').click();
+        await wait(400);
+        const voiceType = document.querySelector('#content-types button');
+        if (voiceType) voiceType.click();
+
+        let tile = null;
+        for (let i = 0; i < 40; i++) {
+          await wait(250);
+          tile = [...document.querySelectorAll('.pack-tile')]
+            .find((t) => t.textContent.includes(${JSON.stringify(SMOKE_PACK)}));
+          if (tile) break;
+        }
+        if (!tile) return { skipped: 'no scratch pack' };
+        tile.click();
+        await wait(250);
+
+        const edit = document.querySelector('#btn-detail-edit');
+        if (!edit) return { skipped: 'no Edit button' };
+        edit.click();
+
+        const root = document.getElementById('editor-view');
+        for (let i = 0; i < 120; i++) {
+          await wait(500);
+          if (!root.hidden && root.querySelector('canvas.timeline')) break;
+        }
+
+        const video = root.querySelector('video');
+        for (let i = 0; i < 60; i++) {
+          if (video && video.videoWidth) break;
+          await wait(500);
+        }
+
+        const q = (s) => root.querySelector(s);
+        const out = {
+          opened: !root.hidden,
+          videoW: video ? video.videoWidth : 0,
+          hasVolume: Boolean(q('[data-role="volume"]')),
+          hasCaptionToggle: Boolean(q('[data-act="captions"]')),
+          hasCropButton: Boolean(q('[data-act="crop"]')),
+          hasBackingButton: Boolean(q('[data-act="backing"]')),
+          clipRows: root.querySelectorAll('.clip-row').length,
+          thumbs: root.querySelectorAll('.clip-thumb').length,
+        };
+
+        // Volume actually reaches the element.
+        const vol = q('[data-role="volume"]');
+        vol.value = '0.35';
+        vol.dispatchEvent(new Event('input'));
+        out.volumeApplied = Math.abs(video.volume - 0.35) < 0.01;
+        out.volumeReadout = q('[data-role="vol-read"]').textContent;
+        vol.value = '1';
+        vol.dispatchEvent(new Event('input'));
+
+        // A caption should appear while a line is speaking, and go once it is
+        // over. Seek rather than play, so this does not depend on timing.
+        const rows = [...root.querySelectorAll('.clip-row')];
+        const stamp = rows.length ? rows[0].querySelector('.line-time') : null;
+        if (stamp) {
+          stamp.click();
+          await wait(400);
+          const box = q('.editor-caption');
+          out.captionShown = box ? !box.hidden : null;
+          out.captionText = box && !box.hidden ? box.textContent.trim().slice(0, 60) : '';
+
+          video.currentTime = Math.max(0, video.duration - 0.25);
+          await wait(500);
+          out.captionHiddenAfter = box ? box.hidden : null;
+        }
+
+        // Pack details tab, and that its fields carry the pack's real values.
+        const packTab = q('[data-side-tab="pack"]');
+        if (packTab) {
+          packTab.click();
+          await wait(150);
+          out.packFields = [...root.querySelectorAll('[data-info]')].map((i) => i.dataset.info);
+          out.titleField = (q('[data-info="title"]') || {}).value;
+        }
+
+        // The crop overlay opens, sizes itself to the frame, and closes again.
+        q('[data-act="crop"]').click();
+        await wait(250);
+        const layer = q('.crop-layer');
+        const rect = q('.crop-rect');
+        out.cropOpened = Boolean(layer && !layer.hidden && rect);
+        out.cropSizeLabel = q('.crop-size') ? q('.crop-size').textContent : null;
+        if (q('[data-role="cancel"]')) q('[data-role="cancel"]').click();
+        await wait(150);
+        out.cropClosed = layer.hidden;
+
+        return out;
+      })()`);
+
+      if (toolsCheck && toolsCheck.skipped) { /* nothing to assert against */ }
+      else if (toolsCheck) {
+        if (!toolsCheck.hasVolume) errors.push('editor has no volume slider');
+        if (!toolsCheck.volumeApplied) errors.push('volume slider does not reach the video');
+        if (!toolsCheck.hasCaptionToggle) errors.push('editor has no caption toggle');
+        if (!toolsCheck.hasBackingButton) errors.push('editor has no backing track button');
+        if (!toolsCheck.cropOpened) errors.push('crop overlay did not open');
+        if (!toolsCheck.cropClosed) errors.push('crop overlay did not close');
+        if (toolsCheck.clipRows && toolsCheck.thumbs !== toolsCheck.clipRows) {
+          errors.push('not every clip row has a thumbnail');
+        }
+        if (toolsCheck.captionShown === false) errors.push('no caption shown on a line with one');
+        if (toolsCheck.captionHiddenAfter === false) errors.push('caption stayed up past its line');
+      }
+    } catch (err) {
+      toolsCheck = { error: err.message };
+      errors.push(`editor tools check threw: ${err.message}`);
+    }
+
+    // The scratch pack goes whatever happened above, and its absence is
+    // asserted rather than assumed.
+    const scratchRemoved = scratch ? removeSmokePack(gameDir) : null;
+    if (scratch && !scratchRemoved) errors.push('the scratch pack was left behind');
+
     console.log('SMOKE ' + JSON.stringify(
-      { report, videoCheck, captionCheck, editorCheck, homeCheck, contentCheck, createCheck, sessionCheck,
-        staleCheck, packCheck, queueCheck, errors },
+      { report, scratch, scratchRemoved, videoCheck, captionCheck, editorCheck, homeCheck,
+        contentCheck, createCheck, sessionCheck, staleCheck, packCheck, toolsCheck, queueCheck,
+        errors },
       null, 2));
     app.exit(errors.length ? 1 : 0);
   });
@@ -1119,9 +1377,11 @@ function registerIpc() {
         // findAudioSibling already hands back an absolute path.
         for (const clip of pack.clips || []) {
           clip.audioUrl = clip.audio ? mediaUrl(clip.audio) : null;
-          clip.imagePath = clip.image ? path.join(pack.dir, clip.image) : null;
-          clip.imageUrl = clip.imagePath && fs.existsSync(clip.imagePath)
-            ? mediaUrl(clip.imagePath) : null;
+          // Some packs declare image=, others just name the picture after the
+          // clip and let the game find it. Both have to work, or half the real
+          // packs show no portrait.
+          clip.imagePath = findClipImage(pack.dir, clip);
+          clip.imageUrl = clip.imagePath ? mediaUrl(clip.imagePath) : null;
         }
         if (pack.slotFiles) {
           pack.slotUrls = Object.fromEntries(
@@ -1374,6 +1634,89 @@ function registerIpc() {
       }
       fs.writeFileSync(target, JSON.stringify(merged, null, '\t'), 'utf8');
       return { ok: true, config: merged };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  /**
+   * Merges fields into a pack's _pack_info.ini. Godot ini, not JSON, so it goes
+   * through the same writer that creates packs in the first place.
+   */
+  ipcMain.handle('content:writePackInfo', (_e, { dir, patch }) => {
+    if (!isAllowed(dir)) return { ok: false, error: 'That folder is outside the game folder' };
+    try {
+      const existing = fs.readdirSync(dir)
+        .find((f) => /^_pack_info\.(ini|txt)$/i.test(f)) || '_pack_info.ini';
+      const target = path.join(dir, existing);
+
+      const current = fs.existsSync(target) ? gamedata.parseIni(target) : {};
+      const merged = { ...current, ...(patch || {}) };
+      writeIni(target, merged);
+      return { ok: true, info: merged, file: target };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  /**
+   * Builds a backing track by ducking the video's own audio under every line.
+   * See convert.buildBackingTrack for why this is done from the clip times
+   * rather than by trying to separate the voice out.
+   */
+  ipcMain.handle('content:buildBacking', async (event, { packDir, videoPath, ranges, level, replacing }) => {
+    if (!isAllowed(packDir)) return { ok: false, error: 'That folder is outside the game folder' };
+
+    // Confirmed here rather than in the renderer, matching how deleting a pack
+    // asks, and so the one thing it cannot do is stated before it happens.
+    const answer = await dialog.showMessageBox(mainWindow, {
+      type: 'question',
+      buttons: [replacing ? 'Replace it' : 'Build it', 'Cancel'],
+      defaultId: 0,
+      cancelId: 1,
+      message: replacing ? 'Replace the existing backing track?' : 'Build a backing track?',
+      detail: `The video's own audio is used, silenced under each of the ${(ranges || []).length} `
+        + 'lines so your dub sits in the gaps.\n\n'
+        + 'Music playing underneath a line goes quiet along with it. Separating a voice out from '
+        + 'music properly needs a trained model, which is far too large to ship inside this app.'
+        + (replacing ? '\n\nThe current backing track is overwritten.' : ''),
+    });
+    if (answer.response !== 0) return { ok: false, cancelled: true };
+
+    try {
+      const result = await convert.buildBackingTrack(videoPath, ranges || [], packDir, {
+        level: Number.isFinite(level) ? level : 0,
+        onProgress: ({ percent }) => {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send('import:progress', { dir: packDir, phase: 'backing', percent });
+          }
+        },
+      });
+      return { ok: true, ...result };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  /** Crops a pack's video, keeping the original so the crop can be undone. */
+  ipcMain.handle('content:cropVideo', async (event, { packDir, videoPath, crop }) => {
+    if (!isAllowed(packDir) || !isAllowed(videoPath)) {
+      return { ok: false, error: 'That folder is outside the game folder' };
+    }
+    try {
+      const bin = path.join(app.getPath('userData'), 'deleted-clips', `${Date.now()}_crop`);
+      const backup = path.join(bin, path.basename(videoPath));
+
+      const result = await convert.cropVideo(videoPath, crop, backup, {
+        onProgress: ({ percent }) => {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send('import:progress', { dir: packDir, phase: 'crop', percent });
+          }
+        },
+      });
+
+      // Shaped like trashClip's result so restoreClip can undo it unchanged.
+      return { ok: true, ...result, moved: [{ from: videoPath, to: backup }] };
     } catch (err) {
       return { ok: false, error: err.message };
     }

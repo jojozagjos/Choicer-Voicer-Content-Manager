@@ -44,7 +44,12 @@ const ignore = [
   /^\/\.claude($|\/)/,
   /^\/scripts($|\/)/,
   /^\/docs($|\/)/,
+  // The icon is baked into the exe by the packager, so the sources that made
+  // it do not need to ship inside the app as well.
+  /^\/assets($|\/)/,
+  /^\/build($|\/)/,
   /^\/README\.md$/,
+  /^\/THIRD-PARTY-NOTICES\.md$/,
   new RegExp(`^/node_modules/ffprobe-static/bin/(${otherPlatforms.join('|')})($|/)`),
   new RegExp(`^/node_modules/ffprobe-static/bin/[^/]+/(${otherArchs.join('|')})($|/)`),
 ];
@@ -167,6 +172,7 @@ async function main() {
       unpack: '**/node_modules/{ffmpeg-static,ffprobe-static}/**',
     },
     ignore,
+    icon: path.join(ROOT, 'assets', 'icon'),
     win32metadata: {
       CompanyName: 'jojozagjos',
       FileDescription: pkg.description,

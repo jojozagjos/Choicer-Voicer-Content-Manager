@@ -351,18 +351,41 @@ function identifyPack(dir) {
   const has = (name) => files.some((f) => f.toLowerCase() === name.toLowerCase());
   const hasPrefix = (prefix) => files.some((f) => f.toLowerCase().startsWith(prefix));
   const hasExt = (ext) => files.some((f) => f.toLowerCase().endsWith(ext));
+  const hasBase = (base) =>
+    files.some((f) => f.slice(0, f.lastIndexOf('.')).toLowerCase() === base);
+  const countMatching = (re) => files.filter((f) => re.test(f)).length;
 
+  // A config settles it outright.
   if (has('config_player.json')) return 'player';
   if (has('config_host.json')) return 'host';
   if (has('config_menu.json')) return 'menu';
   if (has('config_chatter.ini') || has('config_chatter.cfg')) return 'chatter';
-  if (has('config_judges.json') || hasPrefix('judge1')) return 'judges';
-  if (has('config_studio.json') || hasPrefix('model.') || hasPrefix('music_studio')) return 'studio';
+  if (has('config_judges.json')) return 'judges';
+  if (has('config_studio.json')) return 'studio';
+
+  // Without one, go by the filenames the game looks for. These are checked
+  // before voice packs because a voice pack is the loosest shape of all, and
+  // anything with audio in it used to fall through and be called one.
+  if (countMatching(/^judge[1-5](_voice|_success)?\.[a-z0-9]+$/i)
+    || countMatching(/^scoreblip[1-5]\.[a-z0-9]+$/i)) return 'judges';
+
+  if (hasBase('model') || hasBase('music_studio') || hasBase('screen')
+    || hasBase('absolute_image')) return 'studio';
+
+  if (hasBase('host')) return 'host';
+  if (hasBase('player')) return 'player';
+
+  if (hasBase('background') || hasBase('overlay') || hasBase('music_menu')
+    || hasBase('unseen_image') || hasBase('no_image')
+    || countMatching(/^button_sfx_/i)) return 'menu';
 
   // A voice pack is the loosest shape, so it is checked last: a video, a pack
   // info file, or clip metadata alongside audio.
-  if (hasPrefix('dub_video') || has('_pack_info.ini') || has('_pack_info.txt')) return 'voice';
-  if (hasExt('.ini') && files.some((f) => /\.(wav|mp3|ogg)$/i.test(f))) return 'voice';
+  if (hasPrefix('dub_video') || has('_pack_info.ini') || has('_pack_info.cfg')
+    || has('_pack_info.txt')) return 'voice';
+  if ((hasExt('.ini') || hasExt('.cfg')) && files.some((f) => /\.(wav|mp3|ogg)$/i.test(f))) {
+    return 'voice';
+  }
 
   return null;
 }

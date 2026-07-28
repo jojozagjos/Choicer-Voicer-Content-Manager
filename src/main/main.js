@@ -24,6 +24,50 @@ const execFileAsync = promisify(execFile);
 
 const MEDIA_SCHEME = 'cvmedia';
 
+// What counts as clip audio when probing a pack's lengths.
+const AUDIO_EXTS_MAIN = ['.wav', '.mp3', '.ogg', '.opus'];
+
+/**
+ * Inspected packs, keyed by folder. Re-reading every config in a large library
+ * on every scan is the whole cost of a scan, and the app rescans after each
+ * edit, so unchanged packs are reused.
+ */
+const packCache = new Map();
+
+/** Forgets a pack, so the next scan reads it fresh. */
+function invalidatePack(dir) {
+  if (!dir) return;
+  packCache.delete(path.resolve(dir));
+  packCache.delete(dir);
+  // Anything already on screen from this pack may now be out of date.
+  mediaGeneration = Date.now();
+}
+
+/**
+ * Registers an IPC handler that writes into a pack.
+ *
+ * The folder fingerprint catches files being added or removed, but not a
+ * config being rewritten in place, which is most of what the editors do. Every
+ * write therefore has to forget its pack. Routing them through here means that
+ * happens by construction rather than by remembering, so a handler added later
+ * cannot leave the library showing stale contents.
+ *
+ * `dirFrom` pulls the pack folder out of whatever shape the payload has.
+ */
+function handleWrite(channel, dirFrom, handler) {
+  ipcMain.handle(channel, async (event, payload) => {
+    const result = await handler(event, payload);
+    try {
+      const dirs = [].concat(dirFrom(payload, result) || []);
+      for (const dir of dirs) invalidatePack(dir);
+    } catch { /* nothing to forget */ }
+    return result;
+  });
+}
+
+/** The folder a file sits in, for writes that name a file rather than a pack. */
+const dirOfFile = (file) => (file ? path.dirname(file) : null);
+
 const GITHUB_REPO = 'jojozagjos/Choicer-Voicer-Content-Manager';
 const DISCORD_URL = 'https://discord.com/users/jojozagjos';
 
@@ -159,24 +203,49 @@ const MIME = {
 // backslashes that Chromium rewrites when canonicalising a standard scheme.
 // base64url sidesteps all of it.
 /**
- * A URL the renderer can load a pack file through.
+ * Bumped whenever anything is written into a pack, or on a manual rescan.
  *
- * The modified time rides along as a query parameter. Without it the URL for
- * a given path never changes, so replacing a pack icon or re-grabbing a clip's
+ * It rides along on every media URL. Without something like it the URL for a
+ * given path never changes, so replacing a pack icon or re-grabbing a clip's
  * picture left the old bytes on screen: same URL, so Chromium reused what it
- * already had. The protocol handler strips the query before decoding the path,
- * so this only ever affects caching.
+ * already had.
+ *
+ * This used to be the file's own modified time, which was correct but cost a
+ * stat per URL. On a library of a thousand packs per type that was well over a
+ * hundred thousand stats per scan. A counter costs nothing, at the price of
+ * invalidating every picture rather than the one that changed, which for local
+ * files is not worth caring about.
  */
+let mediaGeneration = Date.now();
+
+/** A URL the renderer can load a pack file through. */
 function mediaUrl(filePath) {
   const encoded = Buffer.from(filePath, 'utf8').toString('base64url');
-  let stamp = 0;
-  try { stamp = Math.round(fs.statSync(filePath).mtimeMs); } catch { /* gone, let it 404 */ }
-  return `${MEDIA_SCHEME}://file/${encoded}?v=${stamp}`;
+  // The protocol handler strips the query before decoding the path, so this
+  // only ever affects caching.
+  return `${MEDIA_SCHEME}://file/${encoded}?v=${mediaGeneration}`;
 }
 
 function pathFromMediaUrl(url) {
   const raw = url.slice(`${MEDIA_SCHEME}://file/`.length).split(/[?#]/)[0];
   return path.normalize(Buffer.from(raw, 'base64url').toString('utf8'));
+}
+
+/**
+ * Merges a patch into a config, all the way down.
+ *
+ * Host dialogue nests three deep: mode, then group, then the event holding the
+ * lines. A merge that only went one level replaced a whole group with the one
+ * event being edited, so saving a single line silently deleted its siblings.
+ * Arrays are replaced outright, since a dialogue event is the list.
+ */
+function deepMerge(current, patch) {
+  const out = { ...(current || {}) };
+  for (const [key, value] of Object.entries(patch)) {
+    const isPlain = value && typeof value === 'object' && !Array.isArray(value);
+    out[key] = isPlain ? deepMerge(out[key], value) : value;
+  }
+  return out;
 }
 
 const CLIP_IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.webp'];
@@ -358,12 +427,17 @@ function startupBackground() {
 const SMOKE = process.env.CVE_SMOKE === '1';
 
 function createWindow() {
+  // The packager bakes the icon into the exe, so a packaged build already has
+  // it. Running from source has no exe to carry one, hence this.
+  const devIcon = path.join(__dirname, '..', '..', 'assets', 'icon.png');
+
   mainWindow = new BrowserWindow({
     width: 1500,
     height: 940,
     minWidth: 1060,
     minHeight: 680,
     backgroundColor: startupBackground(),
+    ...(app.isPackaged || !fs.existsSync(devIcon) ? {} : { icon: devIcon }),
     show: false,
     autoHideMenuBar: true,
     title: 'Choicer Voicer Content Manager',
@@ -1624,6 +1698,17 @@ function registerIpc() {
   ipcMain.handle('media:probe', (_e, files) => probeMany(files || []));
 
   /** Every pack of every type, with whatever is wrong with each one. */
+  /**
+   * Drops every cached pack and re-reads the library from scratch. This is
+   * what the Rescan button is for: catching changes made outside the app,
+   * which nothing else can know about.
+   */
+  ipcMain.handle('content:forget', () => {
+    packCache.clear();
+    mediaGeneration = Date.now();
+    return { ok: true };
+  });
+
   ipcMain.handle('content:scan', async (_e, dir) => {
     const target = gamedata.resolveGameDir(dir || settings.gameDir || gamedata.defaultGameDir());
     if (!target) return { ok: false, error: 'No game folder found' };
@@ -1633,7 +1718,7 @@ function registerIpc() {
       parseIni: gamedata.parseIni,
       parseIniSections: gamedata.parseIniSections,
       findAudioSibling: gamedata.findAudioSibling,
-    });
+    }, packCache);
 
     // Icons and clip audio are served through the media protocol, so the
     // editor can show a picture and play a clip back.
@@ -1655,14 +1740,12 @@ function registerIpc() {
           clip.imagePath = findClipImage(pack.dir, clip);
           clip.imageUrl = clip.imagePath ? mediaUrl(clip.imagePath) : null;
         }
-        // Filename to URL for everything in the pack. The slot editors work
-        // from names the game defines, so they need to be able to look one up
-        // whatever extension it was saved with.
-        if (pack.fileNames) {
-          pack.fileUrls = Object.fromEntries(
-            pack.fileNames.map((name) => [name, mediaUrl(path.join(pack.dir, name))])
-          );
-        }
+        // Deliberately not building a URL for every file here. Only the pack
+        // being edited needs them, and doing it for all of them cost a stat per
+        // file: 117,000 of them on a library of a thousand packs per type.
+        // content:packFiles builds them for one pack, when it is opened.
+        delete pack.fileNames;
+
         if (pack.slotFiles) {
           pack.slotUrls = Object.fromEntries(
             Object.entries(pack.slotFiles).map(([name, file]) => [name, mediaUrl(file)])
@@ -1670,26 +1753,50 @@ function registerIpc() {
         }
       }
     }
-    // Clip lengths come from ffprobe, cached by path and mtime. Without them
-    // every block on the timeline is drawn at the same minimum width, which
-    // tells you nothing about how long a line actually is.
-    const clipAudio = model.types
-      .flatMap((t) => t.packs)
-      .flatMap((p) => (p.clips || []).map((c) => c.audio))
-      .filter(Boolean);
-
-    if (clipAudio.length) {
-      const durations = await probeMany([...new Set(clipAudio)]);
-      for (const type of model.types) {
-        for (const pack of type.packs) {
-          for (const clip of pack.clips || []) {
-            clip.duration = (clip.audio && durations[clip.audio]) || 0;
-          }
-        }
-      }
-    }
-
+    // Clip lengths are NOT probed here. They are only needed to size blocks on
+    // the timeline, which is one pack at a time, and probing every clip in the
+    // library meant one ffprobe per clip: twenty thousand of them on a large
+    // library, which took minutes. content:clipDurations does the pack being
+    // opened instead.
     return { ok: true, ...model };
+  });
+
+  /**
+   * Clip lengths for one pack, so its timeline can size the blocks.
+   *
+   * Split out from the scan because it is the expensive part and only ever
+   * wanted for the pack on screen.
+   */
+  ipcMain.handle('content:clipDurations', async (_e, packDir) => {
+    if (!isAllowed(packDir)) return { ok: false, error: 'That folder is outside the game folder' };
+    try {
+      const files = fs.readdirSync(packDir)
+        .filter((f) => AUDIO_EXTS_MAIN.includes(path.extname(f).toLowerCase()))
+        .map((f) => path.join(packDir, f));
+      if (!files.length) return { ok: true, durations: {} };
+      return { ok: true, durations: await probeMany(files) };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  /**
+   * Every file in one pack, with a URL for each. Only the editor needs these,
+   * and only for the pack it has open.
+   */
+  ipcMain.handle('content:packFiles', (_e, packDir) => {
+    if (!isAllowed(packDir)) return { ok: false, error: 'That folder is outside the game folder' };
+    try {
+      const fileNames = fs.readdirSync(packDir, { withFileTypes: true })
+        .filter((e) => e.isFile())
+        .map((e) => e.name);
+      const fileUrls = Object.fromEntries(
+        fileNames.map((name) => [name, mediaUrl(path.join(packDir, name))])
+      );
+      return { ok: true, fileNames, fileUrls };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
   });
 
   // Chromium can't decode the packs' Theora video, so previews play a cached
@@ -1760,7 +1867,7 @@ function registerIpc() {
   });
 
   /** Copies or converts dropped files into a pack folder. */
-  ipcMain.handle('content:import', async (event, { destDir, files, options }) => {
+  handleWrite('content:import', (p) => p.destDir, async (event, { destDir, files, options }) => {
     if (!isAllowed(destDir)) return { ok: false, error: 'That folder is outside the game folder' };
 
     const send = (payload) => {
@@ -1820,7 +1927,7 @@ function registerIpc() {
   });
 
   /** Cuts a clip out of a pack's video and writes its metadata alongside. */
-  ipcMain.handle('content:extractClip', async (_e, { source, destDir, baseName, start, duration, meta, overwrite }) => {
+  handleWrite('content:extractClip', (p) => p.destDir, async (_e, { source, destDir, baseName, start, duration, meta, overwrite }) => {
     if (!isAllowed(destDir)) return { ok: false, error: 'That folder is outside the game folder' };
     try {
       // Retiming an existing clip replaces it; a new clip gets its own name.
@@ -1836,7 +1943,7 @@ function registerIpc() {
   });
 
   // Deleting a clip is undoable: its files are moved aside rather than removed.
-  ipcMain.handle('content:trashClip', (_e, { packDir, base }) => {
+  handleWrite('content:trashClip', (p) => p.packDir, (_e, { packDir, base }) => {
     if (!isAllowed(packDir)) return { ok: false, error: 'That folder is outside the game folder' };
     try {
       const trashRoot = path.join(app.getPath('userData'), 'deleted-clips');
@@ -1846,7 +1953,7 @@ function registerIpc() {
     }
   });
 
-  ipcMain.handle('content:restoreClip', (_e, { moved }) => {
+  handleWrite('content:restoreClip', (p) => (p.moved || []).map((m) => dirOfFile(m.from)), (_e, { moved }) => {
     try {
       for (const entry of moved || []) {
         if (!isAllowed(entry.from)) return { ok: false, error: 'That folder is outside the game folder' };
@@ -1857,7 +1964,7 @@ function registerIpc() {
     }
   });
 
-  ipcMain.handle('content:writeClipMeta', (_e, { destDir, base, meta }) => {
+  handleWrite('content:writeClipMeta', (p) => p.destDir, (_e, { destDir, base, meta }) => {
     if (!isAllowed(destDir)) return { ok: false, error: 'That folder is outside the game folder' };
     try {
       return { ok: true, file: writeClipMeta(destDir, base, meta || {}) };
@@ -1870,7 +1977,7 @@ function registerIpc() {
    * Saves audio recorded in the app. MediaRecorder gives us WebM/Opus, which
    * the game cannot read, so it is converted on the way in.
    */
-  ipcMain.handle('content:saveRecording', async (_e, { destDir, base, bytes, audioFormat, maxSeconds }) => {
+  handleWrite('content:saveRecording', (p) => p.destDir, async (_e, { destDir, base, bytes, audioFormat, maxSeconds }) => {
     if (!isAllowed(destDir)) return { ok: false, error: 'That folder is outside the game folder' };
 
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'cvrec-'));
@@ -1894,7 +2001,7 @@ function registerIpc() {
    * Merges a patch into a pack's JSON config. Read-modify-write rather than
    * overwrite, so editing one contestant slot cannot wipe the other eight.
    */
-  ipcMain.handle('content:writeConfig', (_e, { dir, file, patch }) => {
+  handleWrite('content:writeConfig', (p) => p.dir, (_e, { dir, file, patch }) => {
     if (!isAllowed(dir)) return { ok: false, error: 'That folder is outside the game folder' };
 
     const target = path.join(dir, file);
@@ -1906,12 +2013,7 @@ function registerIpc() {
     }
 
     try {
-      const merged = { ...current };
-      for (const [key, value] of Object.entries(patch || {})) {
-        merged[key] = (value && typeof value === 'object' && !Array.isArray(value))
-          ? { ...(current[key] || {}), ...value }
-          : value;
-      }
+      const merged = deepMerge(current, patch || {});
       fs.writeFileSync(target, JSON.stringify(merged, null, '\t'), 'utf8');
       return { ok: true, config: merged };
     } catch (err) {
@@ -1923,7 +2025,7 @@ function registerIpc() {
    * Merges fields into a pack's _pack_info.ini. Godot ini, not JSON, so it goes
    * through the same writer that creates packs in the first place.
    */
-  ipcMain.handle('content:writePackInfo', (_e, { dir, patch }) => {
+  handleWrite('content:writePackInfo', (p) => p.dir, (_e, { dir, patch }) => {
     if (!isAllowed(dir)) return { ok: false, error: 'That folder is outside the game folder' };
     try {
       const existing = fs.readdirSync(dir)
@@ -1940,7 +2042,7 @@ function registerIpc() {
   });
 
   /** Writes a multi-section ini, which is what a chatter config is. */
-  ipcMain.handle('content:writeIniSections', (_e, { dir, file, sections }) => {
+  handleWrite('content:writeIniSections', (p) => p.dir, (_e, { dir, file, sections }) => {
     if (!isAllowed(dir)) return { ok: false, error: 'That folder is outside the game folder' };
     try {
       const existing = fs.readdirSync(dir)
@@ -1958,7 +2060,7 @@ function registerIpc() {
    * See convert.buildBackingTrack for why this is done from the clip times
    * rather than by trying to separate the voice out.
    */
-  ipcMain.handle('content:buildBacking', async (event, { packDir, videoPath, ranges, level, replacing }) => {
+  handleWrite('content:buildBacking', (p) => p.packDir, async (event, { packDir, videoPath, ranges, level, replacing }) => {
     if (!isAllowed(packDir)) return { ok: false, error: 'That folder is outside the game folder' };
 
     // Confirmed here rather than in the renderer, matching how deleting a pack
@@ -1996,7 +2098,7 @@ function registerIpc() {
   });
 
   /** Trims a pack's video, keeping the original so the trim can be undone. */
-  ipcMain.handle('content:trimVideo', async (event, { packDir, videoPath, start, end }) => {
+  handleWrite('content:trimVideo', (p) => p.packDir, async (event, { packDir, videoPath, start, end }) => {
     if (!isAllowed(packDir) || !isAllowed(videoPath)) {
       return { ok: false, error: 'That folder is outside the game folder' };
     }
@@ -2042,7 +2144,7 @@ function registerIpc() {
   });
 
   /** Stores a frame grabbed from the video as a clip's picture. */
-  ipcMain.handle('content:saveImage', (_e, { destDir, base, dataUrl }) => {
+  handleWrite('content:saveImage', (p) => p.destDir, (_e, { destDir, base, dataUrl }) => {
     if (!isAllowed(destDir)) return { ok: false, error: 'That folder is outside the game folder' };
     try {
       return { ok: true, file: saveImage(destDir, base, dataUrl) };

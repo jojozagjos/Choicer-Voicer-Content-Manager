@@ -810,7 +810,9 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
 .tile-icon {
   width: 46px; height: 46px;
   border-radius: 8px;
-  object-fit: cover;
+  /* Character art is a full body cutout, so cropping it hides most of the
+     picture. Fitting shows what the pack actually looks like. */
+  object-fit: contain;
   background: var(--bg-sunken);
   flex: none;
 }
@@ -840,7 +842,7 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
   border-left: 1px solid var(--line);
 }
 .detail-head { display: flex; gap: 10px; align-items: flex-start; }
-.detail-head img { width: 56px; height: 56px; border-radius: 8px; object-fit: cover; background: var(--bg-sunken); flex: none; }
+.detail-head img { width: 56px; height: 56px; border-radius: 8px; object-fit: contain; background: var(--bg-sunken); flex: none; padding: 2px; }
 .detail-head h3 { font-size: 14px; overflow-wrap: anywhere; }
 
 .issue-list { display: flex; flex-direction: column; gap: 6px; }
@@ -1890,7 +1892,8 @@ input[type="range"]::-webkit-slider-thumb {
   grid-area: portrait;
   width: 34px;
   height: 34px;
-  object-fit: cover;
+  object-fit: contain;
+  background: var(--bg-sunken);
   border-radius: 6px;
   border: 1px solid var(--line);
   display: block;
@@ -2101,7 +2104,7 @@ input[type="range"]::-webkit-slider-thumb {
   background: var(--bg-sunken);
   overflow: hidden;
 }
-.slot-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.slot-preview img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .slot-glyph { font-size: 19px; color: var(--muted); }
 .slot-card.filled .slot-glyph { color: var(--accent); }
 
@@ -2179,4 +2182,167 @@ input[type="range"]::-webkit-slider-thumb {
 @media (max-width: 900px) {
   .chatter-row { grid-template-columns: auto 1fr; }
   .chatter-field { grid-column: span 2; }
+}
+
+/* ---------------------------------------------------------------------------
+   Editor furniture shared by every pack type except the dub one
+   --------------------------------------------------------------------------- */
+
+/* The help footer carries both classes, and dialog-foot stacks its children,
+   which laid the buttons out one on top of another. A row of buttons is a row. */
+.dialog-actions.dialog-foot {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.pack-head {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.pack-head-icon {
+  width: 72px;
+  height: 96px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+.pack-head-icon img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.pack-head-icon.clickable { cursor: zoom-in; }
+.pack-head-icon.clickable:hover { border-color: var(--accent); }
+.pack-head-text { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.pack-head-text h3 { font-size: 17px; }
+
+/* The cardboard stand-in is a drawing, not the pack's own art, so it sits back
+   a little rather than presenting itself as content. */
+.placeholder-art { opacity: 0.62; padding: 4px; }
+
+/* Dropping anywhere on the page routes files to the slots their names match. */
+.editor-stage.drop-ready {
+  outline: 2px dashed var(--accent);
+  outline-offset: -6px;
+  background: var(--glow);
+}
+
+.slot-preview.clickable { cursor: zoom-in; }
+.slot-preview.clickable:hover { border-color: var(--accent); }
+
+/* Full size picture viewer */
+
+.viewer-sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(3px);
+}
+.viewer-figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  max-width: 100%;
+  max-height: 100%;
+  min-height: 0;
+}
+.viewer-figure img {
+  max-width: 100%;
+  min-height: 0;
+  flex: 1;
+  object-fit: contain;
+  /* A chequerboard, so transparent art reads as transparent rather than as
+     whatever colour happens to be behind it. */
+  background:
+    repeating-conic-gradient(#2a2a2a 0% 25%, #1e1e1e 0% 50%) 50% / 18px 18px;
+  border-radius: 8px;
+}
+.viewer-figure figcaption {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  color: #e8e8e8;
+  font-size: 12.5px;
+  flex: none;
+}
+.viewer-size { font-variant-numeric: tabular-nums; opacity: 0.75; }
+.viewer-close {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 15px;
+  cursor: pointer;
+}
+.viewer-close:hover { background: rgba(0, 0, 0, 0.75); }
+
+/* Contestant colours */
+
+.colour-row { display: flex; gap: 7px; align-items: center; }
+.colour-row input[type="color"] {
+  width: 40px;
+  height: 30px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg-sunken);
+  cursor: pointer;
+  flex: none;
+}
+.colour-row .input { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+
+/* Reactions sit two across, since there are nine of them. */
+.reaction-grid { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+
+/* Host dialogue */
+
+.dialogue-wrap { display: flex; flex-direction: column; gap: 12px; }
+.dialogue-tabs { flex: none; }
+.dialogue-panels { min-height: 0; }
+.dialogue-panel { display: flex; flex-direction: column; gap: 14px; }
+
+.dialogue-group { display: flex; flex-direction: column; gap: 8px; }
+.dialogue-group h4 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.dialogue-event {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.dialogue-event-head { display: flex; align-items: center; gap: 8px; }
+.dialogue-event-head b { font-size: 12.5px; }
+
+.dialogue-boxes { display: flex; flex-direction: column; gap: 6px; }
+.dialogue-box { display: flex; gap: 6px; align-items: flex-start; }
+.dialogue-box textarea {
+  flex: 1;
+  font-size: 12.5px;
+  line-height: 1.4;
+  resize: vertical;
+  min-height: 42px;
 }

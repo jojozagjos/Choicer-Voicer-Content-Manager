@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img"
+     aria-label="Choicer Voicer Content Manager">
+  <!--
+    The app icon. Two ideas held together: a microphone, because everything
+    here starts as a recorded voice, and a stack of layers, because the job is
+    managing many packs. The waveform sits where a mic's grille would be, so at
+    small sizes the silhouette still reads as a microphone.
+  -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1e4f74"/>
+      <stop offset="0.55" stop-color="#0f2c44"/>
+      <stop offset="1" stop-color="#081a2a"/>
+    </linearGradient>
+    <linearGradient id="mic" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9ee5ff"/>
+      <stop offset="1" stop-color="#3aa9dd"/>
+    </linearGradient>
+    <linearGradient id="sheet" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7fd8f8"/>
+      <stop offset="1" stop-color="#2b8fc4"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- A soft rim, so the tile has an edge on a dark taskbar. -->
+  <rect x="3" y="3" width="506" height="506" rx="110"
+        fill="none" stroke="#5ecdf5" stroke-opacity="0.28" stroke-width="6"/>
+
+  <!-- The stack: three sheets fanned behind the microphone. -->
+  <g opacity="0.95">
+    <rect x="96" y="330" width="220" height="30" rx="15" fill="url(#sheet)" opacity="0.35"/>
+    <rect x="112" y="368" width="188" height="30" rx="15" fill="url(#sheet)" opacity="0.55"/>
+    <rect x="128" y="406" width="156" height="30" rx="15" fill="url(#sheet)" opacity="0.8"/>
+  </g>
+
+  <!-- Microphone body. -->
+  <rect x="196" y="72" width="120" height="196" rx="60" fill="url(#mic)"/>
+
+  <!-- Waveform across the grille: the thing the app actually works on. -->
+  <g stroke="#0b2334" stroke-width="11" stroke-linecap="round">
+    <path d="M226 158 v22"/>
+    <path d="M252 136 v66"/>
+    <path d="M278 148 v42"/>
+    <path d="M304 128 v82" transform="translate(-18 0)"/>
+  </g>
+
+  <!-- Cradle and stem. -->
+  <path d="M166 236 a90 90 0 0 0 180 0"
+        fill="none" stroke="url(#mic)" stroke-width="26" stroke-linecap="round"/>
+  <rect x="242" y="318" width="28" height="52" rx="14" fill="url(#mic)"/>
+</svg>

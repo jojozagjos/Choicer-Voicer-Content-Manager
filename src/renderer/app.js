@@ -459,6 +459,11 @@ const TYPE_ICONS = {
   studio: '🏛️', menu: '🖼️', chatter: '💬',
 };
 
+// Types whose pack is a person on screen. When one of these has no picture,
+// the game stands a cardboard cutout in its place, so the app shows the same
+// thing rather than a generic box.
+const CHARACTER_TYPES = new Set(['player', 'host', 'judges']);
+
 async function switchTab(tab) {
   state.tab = tab;
   for (const button of el.tabButtons) button.classList.toggle('on', button.dataset.tab === tab);
@@ -674,9 +679,14 @@ function renderContentGrid() {
     tile.className = 'pack-tile';
     tile.classList.toggle('on', pack.id === state.contentPackId);
 
+    // Types that put a character on screen fall back to the cardboard cutout
+    // the game itself uses, so an empty pack looks the way it will in game
+    // rather than showing a generic box.
     const icon = pack.iconUrl
       ? `<img class="tile-icon" src="${pack.iconUrl}" alt="" loading="lazy" />`
-      : `<div class="tile-icon tile-icon-blank">${TYPE_ICONS[type.id] || '📦'}</div>`;
+      : CHARACTER_TYPES.has(type.id)
+        ? '<img class="tile-icon" src="placeholder.svg" alt="No picture yet" />'
+        : `<div class="tile-icon tile-icon-blank">${TYPE_ICONS[type.id] || '📦'}</div>`;
 
     const job = state.converting.get(pack.dir);
     const badge = job
@@ -721,7 +731,11 @@ function renderContentGrid() {
 function renderContentDetail(pack) {
   el.contentDetail.hidden = false;
 
-  const icon = pack.iconUrl ? `<img src="${pack.iconUrl}" alt="" />` : '';
+  const icon = pack.iconUrl
+    ? `<img src="${pack.iconUrl}" alt="" />`
+    : CHARACTER_TYPES.has(pack.type)
+      ? '<img src="placeholder.svg" alt="No picture yet" />'
+      : '';
   const issues = (pack.issues || []).length
     ? `<div class="issue-list">${pack.issues.map((i) => `
         <div class="issue issue-${i.level}">${escapeHtml(i.message)}</div>`).join('')}</div>`
@@ -797,6 +811,11 @@ async function openEditorFor(pack) {
     }
   }
 
+  // Fetched per pack rather than for the whole library: clip lengths cost an
+  // ffprobe each and the file list costs a stat each, so doing them up front
+  // made opening the app unusable once someone had a lot of packs.
+  await hydratePack(pack);
+
   // The editor reads the caption toggle and the character colours from here,
   // so they match what the export draws.
   editor.settings = state.settings;
@@ -812,9 +831,47 @@ async function openEditorFor(pack) {
     const fresh = state.content
       && state.content.types.flatMap((t) => t.packs).find((p) => p.id === packId);
     if (!fresh) return;
-    if (options.keepEditor) editor.pack = fresh;
-    else openEditorFor(fresh);
+
+    // A rescan hands back the cheap shape, so the per pack extras have to be
+    // filled in again or the editor loses its file list mid edit.
+    if (options.keepEditor) {
+      await hydratePack(fresh);
+      editor.pack = fresh;
+    } else {
+      openEditorFor(fresh);
+    }
   };
+}
+
+/**
+ * Fills in the parts of a pack the scan deliberately leaves out.
+ *
+ * The scan stays cheap so the library list is fast no matter how many packs
+ * there are. Everything expensive and per pack happens here, once, when a pack
+ * is actually opened.
+ */
+async function hydratePack(pack) {
+  const jobs = [];
+
+  if (!pack.fileNames) {
+    jobs.push(window.api.content.packFiles(pack.dir).then((r) => {
+      if (!r.ok) return;
+      pack.fileNames = r.fileNames;
+      pack.fileUrls = r.fileUrls;
+    }));
+  }
+
+  // Only dub packs draw a timeline, so only they need lengths.
+  if (pack.clips && pack.clips.length && pack.clips.some((c) => c.duration == null)) {
+    jobs.push(window.api.content.clipDurations(pack.dir).then((r) => {
+      if (!r.ok) return;
+      for (const clip of pack.clips) {
+        clip.duration = (clip.audio && r.durations[clip.audio]) || 0;
+      }
+    }));
+  }
+
+  await Promise.all(jobs);
 }
 
 /** Installs dropped pack folders, refusing anything that is not one. */
@@ -2422,9 +2479,12 @@ function wireEvents() {
     renderPacks();
   });
 
-  el.btnRefresh.addEventListener('click', () => {
-    rescan(state.settings.gameDir);
-    if (state.tab === 'content') refreshContent();
+  el.btnRefresh.addEventListener('click', async () => {
+    // Packs are cached between scans, so a rescan has to throw that away
+    // first. This is the one thing that catches edits made outside the app.
+    await window.api.content.forget();
+    await rescan(state.settings.gameDir);
+    if (state.tab === 'content') await refreshContent();
   });
   el.btnSettings.addEventListener('click', openSettings);
 

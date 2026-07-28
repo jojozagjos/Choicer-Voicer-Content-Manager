@@ -1,7 +1,8 @@
 # Dependencies
 node_modules/
 
-# Build output
+# Build output. `assets/` is deliberately not here: the app icon lives there
+# and is part of the source, unlike anything below.
 dist/
 out/
 build/

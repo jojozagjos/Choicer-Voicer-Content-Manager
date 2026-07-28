@@ -33,6 +33,26 @@ const escapeHtml = (text) => {
   return div.innerHTML;
 };
 
+/**
+ * Turns a config key into something readable.
+ *
+ * Keys carry a sort prefix so they come out in the right order in the file
+ * (`a_welcome`, `b_contestant`), which is noise once they are laid out on
+ * screen in that order anyway.
+ */
+function prettyKey(key) {
+  const text = String(key)
+    .replace(/^[a-z]_(?=[a-z])/i, '')
+    .replace(/_/g, ' ')
+    .trim();
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** `['a','b','c']` and a value becomes `{a:{b:{c:value}}}`. */
+function buildNestedPatch(trail, value) {
+  return trail.reduceRight((acc, key) => ({ [key]: acc }), value);
+}
+
 /** Sortable, filename-safe clip name: 01_something. */
 function clipFileName(index, label) {
   const clean = String(label || 'clip')
@@ -1285,67 +1305,181 @@ export class PackEditor {
       ['game_loser', 'Game loser'],
     ];
 
-    const left = el('div', 'editor-stage');
-    left.innerHTML = `
-      <div class="editor-portrait">
-        ${pack.iconUrl ? `<img src="${pack.iconUrl}" alt="" />`
-    : '<div class="editor-portrait-blank">No picture yet</div>'}
-      </div>`;
-    left.append(this.buildDropzone('Drop a picture', 'image', async (paths) => {
-      await this.importFiles(paths, { baseName: 'player', kind: 'image' });
-      if (this.onChanged) await this.onChanged(pack.id);
+    const main = el('div', 'editor-stage');
+    main.append(this.buildEditorHeader(
+      'A contestant on the show: their picture, their colours, and how they react to a score.'
+    ));
+
+    // The picture, as a slot card like every other editor uses, rather than a
+    // full width image with a drop zone the same size again underneath it.
+    const pictureGroup = el('section', 'slot-group');
+    pictureGroup.innerHTML = `
+      <h4>Picture</h4>
+      <p class="muted small">Not scaled, so a small image stays small. Around 1000 pixels tall
+         suits a standing person. A short one is hidden by their podium unless you leave empty
+         space below them.</p>
+      <div class="slot-grid"></div>`;
+    pictureGroup.querySelector('.slot-grid').append(this.buildSlot({
+      key: 'player', label: 'Contestant picture', kind: 'image', required: true,
     }));
-    body.append(left);
+    main.append(pictureGroup);
+
+    const reactions = el('section', 'slot-group');
+    reactions.innerHTML = `
+      <h4>Reactions</h4>
+      <p class="muted small">Record straight into the app, or use a file. Each is saved into the
+         pack and pointed at for you. Leave one empty for silence.</p>
+      <div class="slot-grid reaction-grid"></div>`;
+    const grid = reactions.querySelector('.slot-grid');
+    for (const [key, label] of SLOTS) grid.append(this.buildReactionSlot(key, label, config));
+    main.append(reactions);
+
+    body.append(main);
+    this.wireBodyDrop(main, [{ key: 'player', label: 'Contestant picture', kind: 'image' }]);
 
     const side = el('aside', 'editor-side');
-    side.innerHTML = `
-      <h3>Reaction sounds</h3>
-      <p class="muted small">Record one, or drop in a file. Each is saved into the pack and
-         assigned for you.</p>
-      <div class="slot-list"></div>`;
     body.append(side);
+    this.renderPlayerConfig(side);
+  }
 
-    const list = side.querySelector('.slot-list');
-    for (const [key, label] of SLOTS) {
-      const assigned = (config.audio_assignment || {})[key] || '';
-      const row = el('div', 'slot-row');
-      row.dataset.slot = key;
-      row.classList.toggle('filled', Boolean(assigned));
-      row.innerHTML = `
-        <span class="slot-state" title="${assigned ? 'Ready' : 'Nothing set'}">${assigned ? '●' : '○'}</span>
-        <span class="slot-label">${escapeHtml(label)}</span>
-        <span class="slot-file">${assigned ? escapeHtml(assigned) : 'not set'}</span>
+  /**
+   * One reaction. These differ from every other slot in the app: the file can
+   * be called anything, and the config points at it, so the card shows what it
+   * is pointed at rather than a fixed filename.
+   */
+  buildReactionSlot(key, label, config) {
+    const assigned = (config.audio_assignment || {})[key] || '';
+    const url = assigned && this.pack.slotUrls ? this.pack.slotUrls[assigned] : null;
+
+    const card = el('div', 'slot-card slot-audio');
+    card.dataset.slot = key;
+    card.classList.toggle('filled', Boolean(assigned));
+
+    card.innerHTML = `
+      <div class="slot-preview"><span class="slot-glyph">♪</span></div>
+      <div class="slot-info">
+        <b>${escapeHtml(label)}</b>
+        <span class="slot-filename ${assigned ? '' : 'muted'}">${
+  escapeHtml(assigned || 'nothing, so this is silent')}</span>
         <span class="slot-timer muted small"></span>
-        <button type="button" class="btn btn-small play" ${assigned ? '' : 'disabled'}>▶</button>
-        <button type="button" class="btn btn-small rec">● Record</button>
-        <button type="button" class="btn btn-small pick">File…</button>`;
+      </div>
+      <div class="slot-buttons">
+        <button type="button" class="icon-btn" data-act="play" ${assigned ? '' : 'disabled'}
+                title="Play this">▶</button>
+        <button type="button" class="icon-btn" data-act="rec" title="Record one">●</button>
+        <button type="button" class="icon-btn" data-act="pick" title="Choose a file">↑</button>
+      </div>`;
 
-      const playBtn = row.querySelector('.play');
-      playBtn.addEventListener('click', () => this.playSlot(key, playBtn));
+    const playBtn = card.querySelector('[data-act="play"]');
+    if (assigned) playBtn.addEventListener('click', () => this.playFile(url, playBtn));
 
-      attachRecorder(
-        row.querySelector('.rec'),
-        row.querySelector('.slot-timer'),
-        async (take) => {
-          if (!take) return;
-          await this.saveSlotRecording(key, take, row);
-        },
-        { maxSeconds: 30, onError: (err) => this.toast(err.message, 'error', 7000) }
-      );
+    attachRecorder(
+      card.querySelector('[data-act="rec"]'),
+      card.querySelector('.slot-timer'),
+      async (take) => { if (take) await this.saveSlotRecording(key, take, card); },
+      { maxSeconds: 30, onError: (err) => this.toast(err.message, 'error', 7000) }
+    );
 
-      row.querySelector('.pick').addEventListener('click', async () => {
-        const picked = await this.api.dialog.pickFiles({ title: label, kind: 'audio' });
-        if (!picked.length) return;
-        const base = key;
-        await this.importFiles([picked[0]], { baseName: base, kind: 'audio', audioFormat: 'wav' });
-        await this.assignSlot(key, base, row);
+    card.querySelector('[data-act="pick"]').addEventListener('click', async () => {
+      const picked = await this.api.dialog.pickFiles({ title: label, kind: 'audio' });
+      if (!picked.length) return;
+      await this.run('Adding the sound…', () =>
+        this.importFiles([picked[0]], { baseName: key, kind: 'audio', audioFormat: 'wav', overwrite: true }));
+      await this.assignSlot(key, key, card);
+    });
+
+    for (const event of ['dragenter', 'dragover']) {
+      card.addEventListener(event, (e) => { e.preventDefault(); card.classList.add('over'); });
+    }
+    for (const event of ['dragleave', 'drop']) {
+      card.addEventListener(event, () => card.classList.remove('over'));
+    }
+    card.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const paths = [...(e.dataTransfer.files || [])]
+        .map((f) => this.api.pathForFile(f)).filter(Boolean);
+      if (!paths.length) return;
+      await this.run('Adding the sound…', () =>
+        this.importFiles([paths[0]], { baseName: key, kind: 'audio', audioFormat: 'wav', overwrite: true }));
+      await this.assignSlot(key, key, card);
+    });
+
+    return card;
+  }
+
+  renderPlayerConfig(side) {
+    const config = this.pack.config || {};
+    side.innerHTML = `
+      <h3>Contestant</h3>
+      <label class="field"><span>Name</span>
+        <input class="input" data-cfg="name" placeholder="Player" /></label>
+      <p class="muted small">The contestant does not take the pack's name. Left blank they are
+         called <b>Player</b>.</p>
+
+      <label class="field"><span>How the host introduces them</span>
+        <input class="input" data-cfg="introduction" placeholder="Our next contestant:" /></label>
+
+      <h4 class="side-heading">Colours</h4>
+      <p class="muted small">Used for their podium and their score tracker.</p>
+      <label class="field"><span>Main</span>
+        <div class="colour-row">
+          <input type="color" data-cfg="color1" />
+          <input class="input" data-cfg="color1-hex" spellcheck="false" />
+        </div></label>
+      <label class="field"><span>Accent</span>
+        <div class="colour-row">
+          <input type="color" data-cfg="color2" />
+          <input class="input" data-cfg="color2-hex" spellcheck="false" />
+        </div></label>`;
+
+    const name = side.querySelector('[data-cfg="name"]');
+    name.value = config.name || '';
+    const intro = side.querySelector('[data-cfg="introduction"]');
+    intro.value = config.introduction || '';
+
+    const save = async (patch, note = true) => {
+      if (await this.patchConfig('config_player.json', patch) && note) {
+        this.toast('Saved.', 'ok', 1500);
+      }
+    };
+
+    name.addEventListener('change', async () => {
+      await save({ name: name.value.trim() });
+      const heading = this.root.querySelector('.pack-head-text h3');
+      if (heading) heading.textContent = name.value.trim() || this.pack.title;
+      if (this.onChanged) await this.onChanged(this.pack.id, { keepEditor: true });
+    });
+    intro.addEventListener('change', () => save({ introduction: intro.value.trim() }));
+
+    // The game stores colours without the leading hash, so it is stripped on
+    // the way out and put back on the way in.
+    for (const which of ['color1', 'color2']) {
+      const swatch = side.querySelector(`[data-cfg="${which}"]`);
+      const hex = side.querySelector(`[data-cfg="${which}-hex"]`);
+      const stored = String(config[which] || (which === 'color1' ? 'accbd1' : 'ffffff'))
+        .replace('#', '');
+      swatch.value = `#${stored}`;
+      hex.value = stored;
+
+      swatch.addEventListener('change', () => {
+        hex.value = swatch.value.replace('#', '');
+        save({ [which]: hex.value });
       });
-
-      list.append(row);
+      hex.addEventListener('change', () => {
+        const clean = hex.value.replace('#', '').trim();
+        if (!/^[0-9a-f]{6}$/i.test(clean)) {
+          this.toast('A colour is six hex digits, like accbd1.', 'warn', 5000);
+          hex.value = swatch.value.replace('#', '');
+          return;
+        }
+        swatch.value = `#${clean}`;
+        save({ [which]: clean });
+      });
     }
   }
 
-  async saveSlotRecording(key, take, row) {
+  async saveSlotRecording(key, take, card) {
     const saved = await this.api.content.saveRecording({
       destDir: this.pack.dir,
       base: key,
@@ -1356,11 +1490,11 @@ export class PackEditor {
       this.toast(`Could not save that take: ${saved.error}`, 'error', 7000);
       return;
     }
-    await this.assignSlot(key, saved.base, row);
+    await this.assignSlot(key, saved.base, card);
   }
 
   /** Points a reaction slot at a file, without disturbing the other slots. */
-  async assignSlot(key, base, row) {
+  async assignSlot(key, base, card) {
     const config = this.pack.config || {};
     const assignment = { ...(config.audio_assignment || {}), [key]: base };
     const result = await this.api.content.writeConfig({
@@ -1372,46 +1506,153 @@ export class PackEditor {
       this.toast(`Could not save it: ${result.error}`, 'error', 7000);
       return;
     }
-    this.pack.config = { ...config, audio_assignment: assignment };
-    row.querySelector('.slot-file').textContent = base;
-    row.querySelector('.slot-state').textContent = '●';
-    row.querySelector('.slot-state').title = 'Ready';
-    row.querySelector('.play').disabled = false;
-    row.classList.add('filled');
+    this.pack.config = result.config;
     this.toast('Saved.', 'ok', 1500);
+
+    // Rescan so the new file has a URL, then rebuild the card from it rather
+    // than patching the markup in place and hoping it matches.
+    if (this.onChanged) await this.onChanged(this.pack.id, { keepEditor: true });
+
+    const label = card.querySelector('b').textContent;
+    card.replaceWith(this.buildReactionSlot(key, label, this.pack.config || {}));
   }
 
-  /** Plays whatever a reaction slot points at. */
-  async playSlot(key, button) {
-    const assigned = ((this.pack.config || {}).audio_assignment || {})[key];
-    if (!assigned) return;
 
-    if (this.slotAudio) {
-      this.slotAudio.pause();
-      if (this.slotButton) this.slotButton.textContent = '▶';
-      const same = this.slotAudio.dataset.slot === key;
-      this.slotAudio = null;
-      this.slotButton = null;
-      if (same) return;
+  // Shared furniture for every editor except the dub one
+
+  /**
+   * The block every pack editor opens with: what the pack is, what it looks
+   * like, and how to get files into it. Having one of these is most of what
+   * makes the editors feel like the same app.
+   */
+  buildEditorHeader(blurb) {
+    const pack = this.pack;
+    const icon = pack.iconUrl
+      ? `<img src="${pack.iconUrl}" alt="" />`
+      : '<img src="placeholder.svg" alt="No picture yet" class="placeholder-art" />';
+
+    const head = el('div', 'pack-head');
+    head.innerHTML = `
+      <div class="pack-head-icon" data-act="view-icon">${icon}</div>
+      <div class="pack-head-text">
+        <h3>${escapeHtml(pack.title)}</h3>
+        <p class="muted">${escapeHtml(blurb)}</p>
+        <p class="muted small">Drop files anywhere on this page and each one goes to the slot its
+           name matches. Anything in the wrong format is converted for you.</p>
+      </div>`;
+
+    if (pack.iconUrl) {
+      const box = head.querySelector('[data-act="view-icon"]');
+      box.classList.add('clickable');
+      box.addEventListener('click', () => this.openViewer(pack.iconUrl, pack.title));
+    }
+    return head;
+  }
+
+  /**
+   * Shows a picture at full size.
+   *
+   * Character art is tall and thin, and judging one from a 52 pixel thumbnail
+   * is not really possible, so every picture in an editor can be opened.
+   */
+  openViewer(url, label) {
+    const sheet = el('div', 'viewer-sheet');
+    sheet.innerHTML = `
+      <figure class="viewer-figure">
+        <img src="${url}" alt="" />
+        <figcaption>
+          <span>${escapeHtml(label || '')}</span>
+          <b class="viewer-size" data-role="size"></b>
+        </figcaption>
+      </figure>
+      <button type="button" class="viewer-close" title="Close">✕</button>`;
+
+    const img = sheet.querySelector('img');
+    img.addEventListener('load', () => {
+      sheet.querySelector('[data-role="size"]').textContent =
+        `${img.naturalWidth} × ${img.naturalHeight}`;
+    });
+
+    const close = () => {
+      sheet.remove();
+      document.removeEventListener('keydown', onKey);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+
+    sheet.addEventListener('click', (e) => { if (e.target === sheet) close(); });
+    sheet.querySelector('.viewer-close').addEventListener('click', close);
+    document.addEventListener('keydown', onKey);
+
+    this.root.append(sheet);
+  }
+
+  /**
+   * Lets a whole set of files be dropped on the editor at once, sending each
+   * to the slot whose name it matches.
+   *
+   * Dropping the five judge pictures in one go is the obvious thing to try,
+   * and before this it either did nothing or was mistaken for installing a
+   * pack. Files that match nothing are named rather than silently ignored.
+   */
+  wireBodyDrop(container, slots) {
+    for (const event of ['dragenter', 'dragover']) {
+      container.addEventListener(event, (e) => {
+        e.preventDefault();
+        container.classList.add('drop-ready');
+      });
+    }
+    for (const event of ['dragleave', 'drop']) {
+      container.addEventListener(event, (e) => {
+        if (event === 'dragleave' && container.contains(e.relatedTarget)) return;
+        container.classList.remove('drop-ready');
+      });
     }
 
-    // The scan lists every file in the pack, so find the one this points at
-    // regardless of which extension it happens to use.
-    const scan = await this.api.content.scan();
-    const fresh = scan.ok && scan.types.flatMap((t) => t.packs).find((p) => p.id === this.pack.id);
-    const url = fresh && fresh.slotUrls ? fresh.slotUrls[assigned] : null;
-    if (!url) {
-      this.toast(`Could not find "${assigned}" in this pack.`, 'warn', 6000);
-      return;
-    }
+    container.addEventListener('drop', async (e) => {
+      // A slot card handles its own drop, so do not also treat it as a loose one.
+      if (e.target.closest('.slot-card')) return;
+      e.preventDefault();
 
-    const audio = new Audio(url);
-    audio.dataset.slot = key;
-    audio.addEventListener('ended', () => { button.textContent = '▶'; this.slotAudio = null; });
-    audio.play().catch(() => this.toast('Could not play that sound.', 'warn'));
-    button.textContent = '■';
-    this.slotAudio = audio;
-    this.slotButton = button;
+      const paths = [...(e.dataTransfer.files || [])]
+        .map((f) => this.api.pathForFile(f))
+        .filter(Boolean);
+      if (!paths.length) return;
+
+      const byName = new Map(slots.map((s) => [s.key.toLowerCase(), s]));
+      const matched = [];
+      const unmatched = [];
+
+      for (const p of paths) {
+        const base = p.split(/[\\/]/).pop().replace(/\.[^.]+$/, '').toLowerCase();
+        const slot = byName.get(base);
+        if (slot) matched.push({ slot, path: p });
+        else unmatched.push(p.split(/[\\/]/).pop());
+      }
+
+      if (!matched.length) {
+        this.toast(
+          `Nothing there matches a slot in this pack. Expected names like `
+          + `${slots.slice(0, 3).map((s) => s.key).join(', ')}. `
+          + 'Drop onto a single slot to use any file for it.',
+          'warn', 10000
+        );
+        return;
+      }
+
+      await this.run(`Adding ${matched.length} file${matched.length > 1 ? 's' : ''}…`, async () => {
+        for (const { slot, path } of matched) await this.fillSlot(slot, path, { quiet: true });
+      });
+
+      this.toast(
+        `Added ${matched.length} file${matched.length > 1 ? 's' : ''}.`
+        + (unmatched.length ? ` Ignored: ${unmatched.join(', ')}.` : ''),
+        unmatched.length ? 'warn' : 'ok',
+        unmatched.length ? 9000 : 3000
+      );
+
+      if (this.onChanged) await this.onChanged(this.pack.id, { keepEditor: true });
+      this.refreshSlots();
+    });
   }
 
   // Slot editors: host, judges, studio, menu
@@ -1429,11 +1670,7 @@ export class PackEditor {
     const pack = this.pack;
 
     const main = el('div', 'editor-stage');
-    main.append(el('div', 'slot-intro', `
-      <h3>${escapeHtml(pack.title)}</h3>
-      <p class="muted">${escapeHtml(spec.blurb)}</p>
-      <p class="muted small">Drop a file on a slot, or click it to choose one. Anything in the
-         wrong format is converted and named the way the game expects.</p>`));
+    main.append(this.buildEditorHeader(spec.blurb));
 
     for (const group of spec.groups) {
       const section = el('section', 'slot-group');
@@ -1446,7 +1683,12 @@ export class PackEditor {
       main.append(section);
     }
 
+    // The host's dialogue is the bulk of that pack, so it sits with the files
+    // rather than being pushed into a side panel.
+    if (pack.type === 'host') this.renderHostDialogue(main);
+
     body.append(main);
+    this.wireBodyDrop(main, spec.groups.flatMap((g) => g.slots));
 
     const side = el('aside', 'editor-side');
     body.append(side);
@@ -1469,11 +1711,16 @@ export class PackEditor {
     card.classList.toggle('filled', Boolean(file));
     if (slot.required && !file) card.classList.add('missing');
 
+    // An empty character slot shows the cutout the game would stand there, so
+    // what is missing looks like what the game will actually do.
+    const isCharacter = slot.kind === 'image' && /^(judge[1-5]|host|player)$/.test(slot.key);
     const preview = slot.kind === 'image' && url
       ? `<img src="${url}" alt="" />`
-      : `<span class="slot-glyph">${
-        slot.kind === 'audio' ? '♪' : slot.kind === 'video' ? '▶' : slot.kind === 'model' ? '◈' : '🖼'
-      }</span>`;
+      : isCharacter
+        ? '<img src="placeholder.svg" alt="No picture yet" class="placeholder-art" />'
+        : `<span class="slot-glyph">${
+          slot.kind === 'audio' ? '♪' : slot.kind === 'video' ? '▶' : slot.kind === 'model' ? '◈' : '🖼'
+        }</span>`;
 
     card.innerHTML = `
       <div class="slot-preview">${preview}</div>
@@ -1493,6 +1740,15 @@ export class PackEditor {
       </div>`;
 
     card.querySelector('[data-act="pick"]').addEventListener('click', () => this.fillSlot(slot));
+
+    // Judging a tall character cutout from a 52 pixel thumbnail is not really
+    // possible, so the preview opens it.
+    if (slot.kind === 'image' && url) {
+      const box = card.querySelector('.slot-preview');
+      box.classList.add('clickable');
+      box.title = 'Click to see it full size';
+      box.addEventListener('click', () => this.openViewer(url, `${slot.label} — ${file}`));
+    }
 
     const playBtn = card.querySelector('[data-act="play"]');
     if (playBtn) playBtn.addEventListener('click', () => this.playFile(url, playBtn));
@@ -1518,7 +1774,7 @@ export class PackEditor {
   }
 
   /** Puts a file into a slot, converted and named the way the game wants. */
-  async fillSlot(slot, sourcePath) {
+  async fillSlot(slot, sourcePath, { quiet = false } = {}) {
     let source = sourcePath;
     if (!source) {
       const picked = await this.api.dialog.pickFiles({
@@ -1536,13 +1792,16 @@ export class PackEditor {
       return;
     }
 
-    const ok = await this.run(`Adding ${slot.label.toLowerCase()}…`, () => this.importFiles([source], {
+    const doImport = () => this.importFiles([source], {
       baseName: slot.key,
       kind: slot.kind === 'model' ? undefined : slot.kind,
       overwrite: true,
       audioFormat: 'wav',
-    }));
-    if (!ok) return;
+    }, { quiet });
+
+    // A batch drop reports once at the end rather than per file.
+    const ok = quiet ? await doImport() : await this.run(`Adding ${slot.label.toLowerCase()}…`, doImport);
+    if (!ok || quiet) return;
 
     if (this.onChanged) await this.onChanged(this.pack.id, { keepEditor: true });
     this.refreshSlots();
@@ -1637,45 +1896,161 @@ export class PackEditor {
         <input class="input" data-cfg="name" placeholder="Shae" /></label>
       <p class="muted small">The host does not take the pack's name. Left blank they are called
          <b>Shae</b>.</p>
+      <label class="field"><span>Kind of host</span>
+        <select class="select" data-cfg="host_type">
+          <option value="basic">Basic</option>
+          <option value="advanced">Advanced</option>
+        </select></label>
 
-      <h4 class="side-heading">Writing dialogue</h4>
-      <p class="muted small">These stand in for things that change during a session:</p>
+      <h4 class="side-heading">These change as they are spoken</h4>
       <dl class="token-list">
         <div><dt>&lt;host_name&gt;</dt><dd>the name above</dd></div>
         <div><dt>&lt;player&gt;</dt><dd>whoever is up</dd></div>
         <div><dt>&lt;round&gt;</dt><dd>the round now or next</dd></div>
         <div><dt>&lt;points&gt;</dt><dd>points earned this round</dd></div>
       </dl>
-      <p class="muted small">In the config file each dialogue event is a list, and every entry in
-         it is one text box. Use <code>\\n</code> for a line break, and do not use
-         <code>&lt;/next&gt;</code>; that is only for the in game editor.</p>
-
-      <h4 class="side-heading">Dialogue</h4>
-      <p class="muted small" data-role="line-count"></p>
-      <button type="button" class="btn btn-small" data-act="open-config">Edit config_host.json</button>
-      <p class="muted small">Dialogue is a deep structure and the game has its own editor for it,
-         under Extras. This app checks it and leaves the wording to you.</p>`;
+      <p class="muted small">Every box below is one text box in game. Press Enter for a line break
+         inside one, or add another box to make the host pause and continue.</p>`;
 
     const name = side.querySelector('[data-cfg="name"]');
     name.value = config.name || '';
     name.addEventListener('change', async () => {
-      if (await this.patchConfig('config_host.json', { name: name.value.trim() })) {
+      const value = name.value.trim();
+      if (await this.patchConfig('config_host.json', { name: value })) {
         this.toast('Saved.', 'ok', 1500);
+        // The pack is titled by the host's name, so the heading follows it.
+        const heading = this.root.querySelector('.pack-head-text h3');
+        if (heading) heading.textContent = value || 'Shae';
         if (this.onChanged) await this.onChanged(this.pack.id, { keepEditor: true });
       }
     });
 
-    let lines = 0;
-    const walk = (node) => {
-      if (Array.isArray(node)) lines += node.filter((v) => typeof v === 'string').length;
-      else if (node && typeof node === 'object') Object.values(node).forEach(walk);
-    };
-    walk(config);
-    side.querySelector('[data-role="line-count"]').textContent =
-      `${lines} line${lines === 1 ? '' : 's'} of dialogue in this pack.`;
+    const hostType = side.querySelector('[data-cfg="host_type"]');
+    hostType.value = config.host_type || 'basic';
+    hostType.addEventListener('change', async () => {
+      if (await this.patchConfig('config_host.json', { host_type: hostType.value })) {
+        this.toast('Saved.', 'ok', 1500);
+      }
+    });
+  }
 
-    side.querySelector('[data-act="open-config"]').addEventListener('click', () =>
-      this.api.shell.openPath(`${this.pack.dir}\\config_host.json`));
+  /**
+   * The host's dialogue, laid out from whatever the config actually contains.
+   *
+   * The shape is not fixed: a match mode nests events inside groups, while the
+   * Twitch mode puts them straight at the top. Walking for string arrays
+   * handles both, and handles a pack that carries something this app has never
+   * seen, instead of showing only the parts it was told about.
+   */
+  renderHostDialogue(main) {
+    const config = this.pack.config || {};
+    const MODES = {
+      match_singleplayer: 'Single player',
+      match_multiplayer: 'Multiplayer',
+      twitch_standard: 'Twitch mode',
+    };
+
+    const wrap = el('div', 'dialogue-wrap');
+    const modes = Object.keys(config).filter((k) => config[k] && typeof config[k] === 'object');
+
+    if (!modes.length) {
+      wrap.innerHTML = `
+        <div class="editor-empty">
+          <h3>No dialogue yet</h3>
+          <p class="muted">This host has no lines. The game can fill in a starting set for you
+             under Extras, then everything shows up here to edit.</p>
+        </div>`;
+      main.append(wrap);
+      return;
+    }
+
+    const tabs = el('div', 'seg-tabs dialogue-tabs');
+    const panels = el('div', 'dialogue-panels');
+
+    modes.forEach((mode, i) => {
+      const tab = el('button', `seg-tab${i === 0 ? ' on' : ''}`, escapeHtml(MODES[mode] || mode));
+      tab.type = 'button';
+      tab.dataset.mode = mode;
+      tab.addEventListener('click', () => {
+        for (const t of tabs.children) t.classList.toggle('on', t === tab);
+        for (const p of panels.children) p.hidden = p.dataset.mode !== mode;
+      });
+      tabs.append(tab);
+
+      const panel = el('div', 'dialogue-panel');
+      panel.dataset.mode = mode;
+      panel.hidden = i !== 0;
+      this.buildDialogueTree(panel, config[mode], [mode]);
+      panels.append(panel);
+    });
+
+    wrap.append(tabs, panels);
+    main.append(wrap);
+  }
+
+  /** Renders one level of the dialogue tree, recursing until it finds lines. */
+  buildDialogueTree(container, node, trail) {
+    for (const [key, value] of Object.entries(node || {})) {
+      if (Array.isArray(value)) {
+        container.append(this.buildDialogueEvent(key, value, [...trail, key]));
+      } else if (value && typeof value === 'object') {
+        const group = el('section', 'dialogue-group');
+        group.innerHTML = `<h4>${escapeHtml(prettyKey(key))}</h4>`;
+        this.buildDialogueTree(group, value, [...trail, key]);
+        container.append(group);
+      }
+    }
+  }
+
+  /** One dialogue event: a list of text boxes the host says in order. */
+  buildDialogueEvent(key, lines, trail) {
+    const card = el('div', 'dialogue-event');
+    card.innerHTML = `
+      <div class="dialogue-event-head">
+        <b>${escapeHtml(prettyKey(key))}</b>
+        <span class="muted small">${lines.length} box${lines.length === 1 ? '' : 'es'}</span>
+        <span class="grow"></span>
+        <button type="button" class="btn btn-small" data-act="add">+ Box</button>
+      </div>
+      <div class="dialogue-boxes"></div>`;
+
+    const boxes = card.querySelector('.dialogue-boxes');
+    const current = [...lines];
+
+    const save = async () => {
+      const patch = buildNestedPatch(trail, current.filter((s) => s.trim().length));
+      if (await this.patchConfig('config_host.json', patch)) this.toast('Saved.', 'ok', 1200);
+    };
+
+    const draw = () => {
+      boxes.innerHTML = '';
+      current.forEach((text, i) => {
+        const row = el('div', 'dialogue-box');
+        row.innerHTML = `
+          <textarea class="input" rows="2"></textarea>
+          <button type="button" class="icon-btn danger" data-act="drop" title="Remove this box">✕</button>`;
+        // Through the property: dialogue is full of quotes and apostrophes.
+        const field = row.querySelector('textarea');
+        field.value = text;
+        field.addEventListener('change', () => { current[i] = field.value; save(); });
+        row.querySelector('[data-act="drop"]').addEventListener('click', () => {
+          current.splice(i, 1);
+          draw();
+          save();
+        });
+        boxes.append(row);
+      });
+      card.querySelector('.muted').textContent =
+        `${current.length} box${current.length === 1 ? '' : 'es'}`;
+    };
+
+    card.querySelector('[data-act="add"]').addEventListener('click', () => {
+      current.push('');
+      draw();
+    });
+
+    draw();
+    return card;
   }
 
   renderJudgeConfig(side) {
@@ -1898,7 +2273,9 @@ export class PackEditor {
         <label class="chatter-field">
           <span>Broad</span>
           <input class="input" data-kind="broad_keywords" placeholder="clap, yes" />
-        </label>`;
+        </label>
+        <button type="button" class="icon-btn danger" data-act="delete"
+                title="Remove this sound from the pack">✕</button>`;
 
       // Through the property: keywords can contain quotes and emoji.
       const [exactInput, broadInput] = row.querySelectorAll('input');
@@ -1907,6 +2284,9 @@ export class PackEditor {
 
       const playBtn = row.querySelector('[data-act="play"]');
       playBtn.addEventListener('click', () => this.playFile(url, playBtn));
+
+      row.querySelector('[data-act="delete"]')
+        .addEventListener('click', () => this.deleteChatterSound(file));
 
       for (const input of [exactInput, broadInput]) {
         input.addEventListener('change', async () => {
@@ -1923,6 +2303,57 @@ export class PackEditor {
 
       container.append(row);
     }
+  }
+
+  /**
+   * Removes a chatter sound and the keywords pointing at it.
+   *
+   * Both have to go together: a keyword left behind names a file that is no
+   * longer there, which the scanner then reports as broken. Undo puts the file
+   * and its keywords back.
+   */
+  async deleteChatterSound(file) {
+    const base = file.slice(0, file.lastIndexOf('.'));
+    const before = {
+      exact: this.chatterSections.exact_keywords[file],
+      broad: this.chatterSections.broad_keywords[file],
+    };
+
+    const result = await this.run('Removing the sound…', () =>
+      this.api.content.trashClip({ packDir: this.pack.dir, base }));
+
+    if (!result.ok) {
+      this.toast(`Could not remove it: ${result.error}`, 'error', 7000);
+      return;
+    }
+
+    const applyRemoval = async () => {
+      delete this.chatterSections.exact_keywords[file];
+      delete this.chatterSections.broad_keywords[file];
+      await this.saveChatter();
+      this.renderChatterList();
+    };
+    const applyRestore = async () => {
+      if (before.exact) this.chatterSections.exact_keywords[file] = before.exact;
+      if (before.broad) this.chatterSections.broad_keywords[file] = before.broad;
+      await this.saveChatter();
+      this.renderChatterList();
+    };
+
+    await applyRemoval();
+    this.toast(`Removed ${file}.`, 'ok', 2500);
+
+    this.push({
+      label: `remove ${file}`,
+      undo: async () => {
+        await this.api.content.restoreClip({ moved: result.moved });
+        await applyRestore();
+      },
+      redo: async () => {
+        await this.api.content.trashClip({ packDir: this.pack.dir, base });
+        await applyRemoval();
+      },
+    });
   }
 
   /** Writes the whole chatter config back as Godot ini. */
@@ -1984,13 +2415,15 @@ export class PackEditor {
     return zone;
   }
 
-  async importFiles(paths, options = {}) {
+  async importFiles(paths, options = {}, { quiet = false } = {}) {
     const result = await this.api.content.import(this.pack.dir, paths, options);
     if (!result.ok) {
       this.toast(`Could not add those: ${result.error}`, 'error', 8000);
       return false;
     }
     const failed = result.results.filter((r) => !r.ok);
+    if (quiet) return !failed.length;
+
     if (failed.length) this.toast(`${failed.length} file(s) failed.`, 'warn', 7000);
     else this.toast('Added.', 'ok');
     return true;

@@ -110,6 +110,20 @@ function issue(level, message, fix) {
 }
 
 /**
+ * A cheap fingerprint of a folder: when it last changed, and how many files
+ * are in it. Adding, removing or renaming a file moves the folder's own
+ * modified time, so this catches the ordinary ways a pack changes without
+ * having to stat every file inside it.
+ */
+function folderStamp(dir, fileCount) {
+  try {
+    return `${Math.round(fs.statSync(dir).mtimeMs)}:${fileCount}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Flags media the game cannot read. This is the single most common reason a
  * pack silently does nothing, and it is always fixable by converting.
  */
@@ -242,6 +256,11 @@ function inspectPlayer(dir, files) {
   const assignment = data.audio_assignment || {};
 
   // Every slot points at a filename without its extension.
+  const REACTIONS = [
+    'intro_greet', 'score_0', 'score_1', 'score_2', 'score_3', 'score_4', 'score_5',
+    'game_winner', 'game_loser',
+  ];
+
   let assigned = 0;
   for (const [slot, name] of Object.entries(assignment)) {
     if (!name) continue;
@@ -249,6 +268,17 @@ function inspectPlayer(dir, files) {
     if (!findFile(files, name, AUDIO_EXTS)) {
       issues.push(issue(ERROR, `"${slot}" points at "${name}", which is not in this folder`));
     }
+  }
+
+  // A reaction with no sound leaves the contestant silent at that moment,
+  // which plays as the game having broken rather than as a deliberate choice.
+  const silent = REACTIONS.filter((slot) => !assignment[slot]);
+  if (silent.length === REACTIONS.length) {
+    issues.push(issue(ERROR, 'No reaction sounds at all, so this contestant never speaks'));
+  } else if (silent.length) {
+    issues.push(issue(ERROR,
+      `${silent.length} reaction${silent.length > 1 ? 's have' : ' has'} no sound: `
+      + `${silent.join(', ')}`));
   }
 
   if (!data.name) issues.push(issue(WARN, 'No name set, so the game will show the folder name'));
@@ -311,6 +341,8 @@ function inspectHost(dir, files) {
   return {
     kind: 'host',
     title: data.name || null,
+    // The editor edits this in place, so it needs the whole thing.
+    config: data,
     subtitle: data.host_type ? `${data.host_type} host` : '',
     icon: image,
     summary: `${lines} lines of dialogue`,
@@ -339,13 +371,14 @@ function inspectJudges(dir, files) {
   else if (portraits < 5) issues.push(issue(WARN, `Only ${portraits} of 5 judge pictures`));
 
   if (voices && voices < 5) issues.push(issue(INFO, `${voices} of 5 judges have their own voice`));
-  // Blips play in sequence for however many points were earned, so a gap in
-  // the middle of the run is a real problem rather than a partial set.
-  if (blips && blips < 5) {
-    issues.push(issue(WARN,
-      `Only ${blips} of 5 score blips. They play in sequence, so a run of 5 points needs all five`));
+  // Blips play in sequence for however many points were earned, so a partial
+  // set means silence partway through a good round.
+  if (!blips) {
+    issues.push(issue(ERROR, 'No score blips, so awarding points makes no sound'));
+  } else if (blips < 5) {
+    issues.push(issue(ERROR,
+      `Only ${blips} of 5 score blips. They play in sequence, so a 5 point round runs out of sound`));
   }
-  if (!voices && !blips) issues.push(issue(INFO, 'No judge voices or score blips'));
   if (panels && !success) {
     issues.push(issue(INFO, `${panels} judge${panels > 1 ? 's have' : ' has'} their own success panel`));
   }
@@ -386,14 +419,17 @@ function inspectStudio(dir, files) {
   }
 
   const configName = findFile(files, 'config_studio', ['.json']);
+  let studioConfig = {};
   if (configName) {
     const config = readJson(path.join(dir, configName));
     if (!config.ok) issues.push(issue(ERROR, `config_studio.json is not valid JSON: ${config.error}`));
+    else studioConfig = config.data || {};
   }
 
   const parts = [model && '3D model', music && 'music', screen && 'screen video'].filter(Boolean);
   return {
     kind: 'studio',
+    config: studioConfig,
     title: null,
     subtitle: '',
     icon: findFile(files, 'absolute_image', IMAGE_EXTS),
@@ -456,6 +492,7 @@ function inspectMenu(dir, files) {
     kind: 'menu',
     title: null,
     subtitle: '',
+    config: (config && config.ok && config.data) || {},
     icon: background || unseen || noImage,
     background,
     overlay,
@@ -560,7 +597,7 @@ const PACK_TYPES = [
  * Walks every pack folder. `helpers` carries the ini parsing and audio lookup
  * from gamedata.js so the two modules cannot drift apart on format details.
  */
-function scanContent(gameDir, helpers) {
+function scanContent(gameDir, helpers, cache = null) {
   const types = [];
 
   for (const type of PACK_TYPES) {
@@ -571,16 +608,29 @@ function scanContent(gameDir, helpers) {
       const dir = path.join(root, name);
       const files = listFiles(dir);
 
+      // Inspecting a pack means parsing every config in it, which on a big
+      // library is the whole cost of a scan. A pack whose folder has not been
+      // touched since it was last read cannot have changed, so it is reused.
+      // Writes go through handlers that drop the entry for the folder they
+      // touched, which covers edits that leave the file count alone.
+      const stamp = cache ? folderStamp(dir, files.length) : null;
+      const hit = cache && stamp ? cache.get(dir) : null;
+
       let detail;
-      try {
-        detail = type.inspect(dir, files, helpers);
-      } catch (err) {
-        detail = {
-          kind: type.id,
-          title: null,
-          summary: 'could not be read',
-          issues: [issue(ERROR, `Could not read this pack: ${err.message}`)],
-        };
+      if (hit && hit.stamp === stamp) {
+        detail = hit.detail;
+      } else {
+        try {
+          detail = type.inspect(dir, files, helpers);
+        } catch (err) {
+          detail = {
+            kind: type.id,
+            title: null,
+            summary: 'could not be read',
+            issues: [issue(ERROR, `Could not read this pack: ${err.message}`)],
+          };
+        }
+        if (cache && stamp) cache.set(dir, { stamp, detail });
       }
 
       const counts = { error: 0, warn: 0, info: 0 };

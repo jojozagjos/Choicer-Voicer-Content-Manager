@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 1000" role="img"
+     aria-label="Cardboard cutout standing in for a missing picture">
+  <!--
+    The cardboard stand-in the game uses when a character has no picture.
+    Drawn rather than shipped as a bitmap so it stays sharp at any size, from a
+    34 pixel row thumbnail up to the full size viewer.
+  -->
+  <defs>
+    <linearGradient id="board" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#c9a678"/>
+      <stop offset="0.45" stop-color="#bd9868"/>
+      <stop offset="1" stop-color="#ab8757"/>
+    </linearGradient>
+
+    <!-- Fibre flecks, so it reads as board rather than flat paper. -->
+    <pattern id="grain" width="26" height="26" patternUnits="userSpaceOnUse">
+      <circle cx="5" cy="7" r="1.1" fill="#8f6c3d" opacity="0.18"/>
+      <circle cx="18" cy="15" r="0.9" fill="#8f6c3d" opacity="0.15"/>
+      <circle cx="11" cy="22" r="0.8" fill="#e0c49a" opacity="0.22"/>
+      <circle cx="23" cy="3" r="0.7" fill="#8f6c3d" opacity="0.13"/>
+    </pattern>
+  </defs>
+
+  <!--
+    The silhouette: a hand cut board. Wide domed head, a pinch for the neck,
+    an arm bumping out to the right, and a body that flares toward the base so
+    the thing can stand up.
+  -->
+  <path id="cut" d="
+      M 250 62
+      C 176 62, 92 118, 84 214
+      C 79 274, 104 316, 134 336
+      C 106 352, 78 386, 74 448
+      C 71 496, 92 522, 120 530
+      C 146 538, 160 566, 152 618
+      C 142 682, 116 806, 100 902
+      C 94 940, 108 962, 150 964
+      L 372 964
+      C 410 962, 424 942, 420 906
+      C 408 800, 388 686, 380 622
+      C 374 574, 386 546, 416 534
+      C 452 520, 470 486, 466 442
+      C 462 394, 432 368, 396 362
+      C 372 358, 356 344, 352 322
+      C 386 300, 412 258, 410 208
+      C 406 116, 322 62, 250 62 Z"
+    fill="url(#board)"/>
+  <use href="#cut" fill="url(#grain)"/>
+
+  <!-- A darker lip along the cut edge, the way corrugated board shows its core. -->
+  <use href="#cut" fill="none" stroke="#8a6838" stroke-width="4" opacity="0.55"/>
+
+  <!--
+    The figure drawn on the front in marker: an oval head, a spine, one long
+    sweep for both arms, and two legs from the hip.
+  -->
+  <g fill="none" stroke="#141414" stroke-width="7"
+     stroke-linecap="round" stroke-linejoin="round">
+    <ellipse cx="253" cy="205" rx="128" ry="102" transform="rotate(-4 253 205)"/>
+    <!-- The overshoot where the pen came back around past where it started. -->
+    <path d="M 137 178 C 150 140, 186 112, 226 104" opacity="0.9"/>
+
+    <path d="M 246 330 L 262 720"/>
+    <path d="M 84 516 C 180 496, 330 452, 462 424"/>
+    <path d="M 262 720 L 108 968"/>
+    <path d="M 262 720 L 356 968"/>
+  </g>
+</svg>

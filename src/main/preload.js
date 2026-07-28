@@ -64,6 +64,11 @@ contextBridge.exposeInMainWorld('api', {
     saveImage: (payload) => ipcRenderer.invoke('content:saveImage', payload),
     writePackInfo: (payload) => ipcRenderer.invoke('content:writePackInfo', payload),
     writeIniSections: (payload) => ipcRenderer.invoke('content:writeIniSections', payload),
+    // Both are per pack and only fetched when one is opened, because doing
+    // them for the whole library does not scale.
+    forget: () => ipcRenderer.invoke('content:forget'),
+    clipDurations: (packDir) => ipcRenderer.invoke('content:clipDurations', packDir),
+    packFiles: (packDir) => ipcRenderer.invoke('content:packFiles', packDir),
     buildBacking: (payload) => ipcRenderer.invoke('content:buildBacking', payload),
     trimVideo: (payload) => ipcRenderer.invoke('content:trimVideo', payload),
     saveRecording: (payload) => ipcRenderer.invoke('content:saveRecording', payload),

@@ -69,6 +69,30 @@ function findFile(files, base, exts = []) {
 const extOf = (name) => path.extname(name).toLowerCase();
 const baseOf = (name) => path.basename(name, path.extname(name));
 
+// The game reads clip metadata from .ini or .cfg. Some packs use .txt for the
+// same content, so it is accepted too.
+const CLIP_META_EXTS = ['.ini', '.cfg', '.txt'];
+
+/**
+ * A clip's caption. A plain `.txt` beside the clip beats the config, which is
+ * how the game resolves it. A `.txt` holding ini content is that clip's config
+ * rather than its caption, so it is left alone.
+ */
+function readClipCaption(dir, files, base, data) {
+  const lowered = new Map(files.map((n) => [n.toLowerCase(), n]));
+  const name = lowered.get(`${base}.txt`);
+
+  if (name) {
+    try {
+      const raw = fs.readFileSync(path.join(dir, name), 'utf8');
+      const looksLikeConfig = /^\s*\[[^\]]+\]/m.test(raw) || /^\s*\w+\s*=/m.test(raw);
+      if (!looksLikeConfig && raw.trim()) return raw.trim();
+    } catch { /* unreadable, fall through to the config */ }
+  }
+
+  return typeof data.caption === 'string' ? data.caption : '';
+}
+
 function readJson(file) {
   try {
     return { ok: true, data: JSON.parse(fs.readFileSync(file, 'utf8')) };
@@ -110,14 +134,18 @@ function inspectVoice(dir, files, { parseIni, findAudioSibling }) {
   const video = findFile(files, 'dub_video', VIDEO_EXTS);
   const isDub = Boolean(video);
 
-  const info = findFile(files, '_pack_info', ['.ini', '.txt']);
+  const info = findFile(files, '_pack_info', ['.ini', '.cfg', '.txt']);
   const meta = info ? parseIni(path.join(dir, info)) : {};
   const backingName = findFile(files, '_backing_track', AUDIO_EXTS);
+
+  // Any clip without a picture of its own falls back to this one. It covers
+  // the immediate folder only, and doubles as the pack icon when none is set.
+  const fillerImage = findFile(files, '_pack_filler_image', IMAGE_EXTS);
 
   // Clips are metadata files that actually declare a timestamp.
   const clips = [];
   for (const file of files) {
-    if (!['.ini', '.txt'].includes(extOf(file))) continue;
+    if (!CLIP_META_EXTS.includes(extOf(file))) continue;
     if (file.startsWith('_')) continue;
     const data = parseIni(path.join(dir, file));
     if (!('dub_timestamps' in data)) continue;
@@ -127,7 +155,7 @@ function inspectVoice(dir, files, { parseIni, findAudioSibling }) {
     clips.push({
       base,
       time: typeof times[0] === 'number' ? times[0] : parseFloat(times[0]) || 0,
-      caption: typeof data.caption === 'string' ? data.caption : '',
+      caption: readClipCaption(dir, files, base, data),
       character: Array.isArray(data.dub_characters) ? data.dub_characters[0] || '' : '',
       image: typeof data.image === 'string' ? data.image : '',
       audio: findAudioSibling(dir, base, files),
@@ -159,8 +187,16 @@ function inspectVoice(dir, files, { parseIni, findAudioSibling }) {
     issues.push(issue(INFO,
       `${orphanAudio.length} audio file${orphanAudio.length > 1 ? 's have' : ' has'} no metadata yet`));
   }
-  if (!findFile(files, '_icon', IMAGE_EXTS) && !meta.icon) {
-    issues.push(issue(INFO, 'No pack icon'));
+  if (!findFile(files, '_icon', IMAGE_EXTS) && !meta.icon && !fillerImage) {
+    issues.push(issue(INFO, 'No pack icon. Add _icon, or _pack_filler_image which doubles as one'));
+  }
+
+  const withoutPicture = clips.filter((c) =>
+    !c.image && !findFile(files, c.base, IMAGE_EXTS)).length;
+  if (withoutPicture && !fillerImage) {
+    issues.push(issue(INFO,
+      `${withoutPicture} clip${withoutPicture > 1 ? 's have' : ' has'} no picture. `
+      + 'Add _pack_filler_image to cover them all at once'));
   }
 
   return {
@@ -170,7 +206,11 @@ function inspectVoice(dir, files, { parseIni, findAudioSibling }) {
     authors: Array.isArray(meta.authors) ? meta.authors
       : typeof meta.authors === 'string' && meta.authors ? [meta.authors] : [],
     readme: typeof meta.readme === 'string' ? meta.readme : '',
-    icon: findFile(files, meta.icon || '_icon', IMAGE_EXTS) || findFile(files, 'icon', IMAGE_EXTS),
+    // The filler image is the game's last resort for the pack icon too.
+    icon: findFile(files, meta.icon || '_icon', IMAGE_EXTS)
+      || findFile(files, 'icon', IMAGE_EXTS)
+      || fillerImage,
+    fillerImage,
     video,
     // The editor needs the real file to cut clips out of.
     videoPath: video ? path.join(dir, video) : null,

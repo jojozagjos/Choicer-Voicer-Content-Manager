@@ -965,7 +965,10 @@ export class PackEditor {
       row.classList.toggle('on', this.timeline && this.timeline.selected === clip.base);
 
       const hasAudio = Boolean(clip.audio);
-      const picture = clip.imageUrl || null;
+      // Its own picture, or the pack's filler image, which is what the game
+      // itself falls back to. Marked as borrowed so it is clear which is which.
+      const own = Boolean(clip.imageUrl);
+      const picture = clip.imageUrl || this.pack.fillerUrl || null;
       row.innerHTML = `
         <div class="clip-head">
           <button type="button" class="line-time">${fmt(clip.time)}</button>
@@ -976,7 +979,8 @@ export class PackEditor {
           <button type="button" class="icon-btn danger" data-act="delete" title="Delete this clip">✕</button>
         </div>
         <div class="clip-main">
-          <div class="clip-thumb ${picture ? '' : 'blank'}">
+          <div class="clip-thumb ${picture ? '' : 'blank'}${own ? '' : ' filler'}"
+               title="${picture && !own ? 'Using the pack filler image' : ''}">
             ${picture
     ? `<img src="${picture}" alt="" />`
     : '<span>no picture</span>'}

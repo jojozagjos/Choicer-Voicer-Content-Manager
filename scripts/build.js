@@ -60,6 +60,72 @@ function moveInto(from, to) {
   }
 }
 
+/**
+ * Puts the licences of everything the build carries into `licenses/`.
+ *
+ * This is not decoration. The bundled ffmpeg is a GPL v3 build, and shipping it
+ * without its licence text and an offer of corresponding source does not meet
+ * the terms. The About screen claimed this was happening long before anything
+ * actually copied a file, so the check below fails the build rather than
+ * letting that drift back.
+ */
+function copyLicenses(appDir) {
+  const dest = path.join(appDir, 'licenses');
+  fs.mkdirSync(dest, { recursive: true });
+
+  const wanted = [
+    {
+      as: 'FFmpeg-GPLv3.txt',
+      from: path.join(ROOT, 'node_modules', 'ffmpeg-static', 'LICENSE'),
+      required: true,
+    },
+    {
+      as: 'THIRD-PARTY-NOTICES.md',
+      from: path.join(ROOT, 'THIRD-PARTY-NOTICES.md'),
+      required: true,
+    },
+    {
+      as: 'Choicer-Voicer-Content-Manager-LICENSE.txt',
+      from: path.join(ROOT, 'LICENSE'),
+      required: true,
+    },
+    {
+      as: 'ffprobe-static-LICENSE.txt',
+      from: path.join(ROOT, 'node_modules', 'ffprobe-static', 'LICENSE'),
+      required: false,
+    },
+    {
+      as: 'Electron-LICENSE.txt',
+      from: path.join(ROOT, 'node_modules', 'electron', 'dist', 'LICENSE'),
+      required: false,
+    },
+  ];
+
+  const copied = [];
+  for (const item of wanted) {
+    if (!fs.existsSync(item.from)) {
+      if (item.required) {
+        throw new Error(
+          `Cannot ship a build without ${item.as}: ${item.from} is missing. `
+          + 'The bundled ffmpeg is GPL v3 and its licence has to travel with it.'
+        );
+      }
+      continue;
+    }
+    fs.copyFileSync(item.from, path.join(dest, item.as));
+    copied.push(item.as);
+  }
+
+  // Sanity check the ffmpeg licence really is the GPL, in case the upstream
+  // package ever switches to an LGPL build without us noticing.
+  const gpl = fs.readFileSync(path.join(dest, 'FFmpeg-GPLv3.txt'), 'utf8');
+  if (!/GNU GENERAL PUBLIC LICENSE/i.test(gpl)) {
+    throw new Error('The ffmpeg licence file does not look like the GPL. Check what changed.');
+  }
+
+  return copied;
+}
+
 /** Zips the built folder so it can be attached to a release. */
 function makeZip(appDir, zipPath) {
   const sevenZip = path.join(ROOT, 'node_modules', '7zip-bin', 'win', 'x64', '7za.exe');
@@ -112,9 +178,12 @@ async function main() {
   moveInto(built, appDir);
   fs.rmSync(staging, { recursive: true, force: true });
 
+  const licenses = copyLicenses(appDir);
+
   const exe = path.join(appDir, `${APP_NAME}${platform === 'win32' ? '.exe' : ''}`);
   console.log('\nApp built:');
   console.log(`  ${exe}`);
+  console.log(`\nLicences shipped in licenses/: ${licenses.join(', ')}`);
   console.log('\nThe whole folder is the app. Move, copy or zip it as one piece.');
 
   if (WANT_ZIP) {

@@ -30,10 +30,14 @@ const os = require('os');
 const AUDIO_EXTS = ['.mp3', '.MP3', '.ogg', '.OGG', '.wav', '.WAV', '.opus'];
 const RECORD_PREFIX = '_dubrecord_';
 
-// Line metadata is usually `.ini`, but several packs ship the identical
-// content as `.txt`. Both are read; a file only counts as a line if it
-// actually carries a `dub_timestamps` key.
-const LINE_META_EXTS = ['.ini', '.txt'];
+// The game reads clip metadata from `.ini` or `.cfg`. Some packs in the wild
+// ship the identical content as `.txt` instead, so that is read too; a file
+// only counts as a line if it actually carries a `dub_timestamps` key.
+const LINE_META_EXTS = ['.ini', '.cfg', '.txt'];
+
+// A `.txt` beside a clip that is *not* ini content is the game's shorthand for
+// a caption, and it wins over whatever the config says.
+const CAPTION_EXT = '.txt';
 
 const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
 
@@ -239,6 +243,29 @@ function findAudioSibling(dir, base, files) {
  * outright (`image="Light.png"`), one drops the extension (`image="_icon"`),
  * and one omits the key entirely and just puts `<clip>.png` beside the audio.
  */
+/**
+ * A clip's caption.
+ *
+ * A plain `.txt` beside the clip beats whatever the config carries, which is
+ * how the game resolves it. The same `.txt` can also *be* the config in packs
+ * that use it that way, so a file holding ini content is not treated as a
+ * caption or the caption would come out as the raw file.
+ */
+function readCaption(dir, files, base, data) {
+  const lowered = new Map(files.map((n) => [n.toLowerCase(), n]));
+  const name = lowered.get(`${base}${CAPTION_EXT}`.toLowerCase());
+
+  if (name) {
+    try {
+      const raw = fs.readFileSync(path.join(dir, name), 'utf8');
+      const looksLikeConfig = /^\s*\[[^\]]+\]/m.test(raw) || /^\s*\w+\s*=/m.test(raw);
+      if (!looksLikeConfig && raw.trim()) return raw.trim();
+    } catch { /* unreadable, fall through to the config */ }
+  }
+
+  return typeof data.caption === 'string' ? data.caption : '';
+}
+
 function findImage(dir, files, imageName, base) {
   const lowered = new Map(files.map((n) => [n.toLowerCase(), n]));
 
@@ -253,7 +280,10 @@ function findImage(dir, files, imageName, base) {
     return null;
   };
 
-  return tryName(imageName) || tryName(base);
+  // `_pack_filler_image` is the game's own fallback: any clip without a picture
+  // of its own uses it. It only covers the immediate pack folder, never child
+  // folders, which is why it is looked for in `dir` rather than walked up.
+  return tryName(imageName) || tryName(base) || tryName('_pack_filler_image');
 }
 
 /** Default install location of the game's user data, per platform. */
@@ -380,7 +410,7 @@ function readPack(packsRoot, recordingsRoot, packName) {
       base,
       time: toSeconds(timestamps[0]),
       character: characters[0] || '',
-      caption: typeof data.caption === 'string' ? data.caption : '',
+      caption: readCaption(dir, files, base, data),
       imagePath: findImage(dir, files, data.image, base),
       sourceAudioPath: findAudioSibling(dir, base, files),
     });

@@ -1464,6 +1464,9 @@ function registerIpc() {
         // So the editor can play the backing track back and hear what the
         // ducking actually did.
         pack.backingUrl = pack.backingPath ? mediaUrl(pack.backingPath) : null;
+        // The game's own fallback picture for clips that have none.
+        pack.fillerPath = pack.fillerImage ? path.join(pack.dir, pack.fillerImage) : null;
+        pack.fillerUrl = pack.fillerPath ? mediaUrl(pack.fillerPath) : null;
         // findAudioSibling already hands back an absolute path.
         for (const clip of pack.clips || []) {
           clip.audioUrl = clip.audio ? mediaUrl(clip.audio) : null;

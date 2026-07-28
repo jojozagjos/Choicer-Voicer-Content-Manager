@@ -1,11 +1,31 @@
 # Pack formats
 
-Consolidated from the official [content guide](https://thechoicervoicer.neocities.org/v2/content_guide)
-and from reading real packs on disk. Where the two disagree, the real packs win, because that is
-what the game actually loads.
+Three sources, in order of authority:
 
-Host packs and menu packs are **not documented** on the site (they appear as unlinked list items),
-so those entries come entirely from inspecting real packs.
+1. **The game's own in-app documentation** (Extras, then the format screens). This is the
+   authoritative statement of what the game reads, and every pack type is covered there,
+   including host and menu packs.
+2. Real packs on disk, which show what people actually ship and where the docs are silent.
+3. The official [content guide](https://thechoicervoicer.neocities.org/v2/content_guide), which
+   is thinner and leaves host and menu packs as unlinked stubs.
+
+Where they disagree, the in-app docs win for what is *supported*, and the real packs win for what
+is *common*. Both are handled: a reader that only followed the docs would miss packs that use
+`.txt` for clip metadata, and one that only followed real packs would miss `.cfg` and
+`_pack_filler_image`, which no installed pack happens to use.
+
+## Things worth knowing up front
+
+- **Config files are `.ini` or `.cfg`.** The two are interchangeable everywhere a config is
+  accepted, and both hold Godot-flavoured ini. Some packs use `.txt` for the same content.
+- **A plain `.txt` beside a clip is a caption**, and it beats whatever caption the config carries.
+  A `.txt` holding ini content is that clip's config instead, so the two cases have to be told
+  apart by looking at the content rather than the extension.
+- **`_pack_filler_image` is the fallback picture** for every clip in a pack that has none of its
+  own, and doubles as the pack icon when no `_icon` is set. It applies to the immediate folder
+  only, never to child folders.
+- **Names inside configs are written without their extension** (`talk_cheer`, not
+  `talk_cheer.wav`), except in chatter configs, where keys are full filenames.
 
 All pack folders live under the game data directory:
 

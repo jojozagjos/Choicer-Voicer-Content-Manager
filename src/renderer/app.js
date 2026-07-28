@@ -187,6 +187,8 @@ const state = {
   loading: false,
   // Set when the setup overlay is dismissed, so it stays dismissed.
   setupSkipped: false,
+  // The newer release the update check found, if any.
+  update: null,
   // Content manager
   tab: 'dubs',
   content: null,
@@ -1261,15 +1263,33 @@ async function checkForUpdate() {
 
   if (!result.newer) {
     el.aboutUpdate.textContent = ' (up to date)';
+    el.versionBadge.title = `Version ${result.current}, up to date. Click for help and credits.`;
     return;
   }
 
+  state.update = result;
   el.aboutUpdate.innerHTML = ` — <b>${escapeHtml(result.latest)} available</b>`;
+
+  // The alert bar can be dismissed, and once it is there was nothing left to
+  // say an update existed. The version badge is always on screen, so it
+  // carries the notice from here on.
+  el.versionBadge.classList.add('update');
+  el.versionNumber.textContent = `${result.current} → ${result.latest}`;
+  el.versionBadge.title = `Version ${result.latest} is available. You have ${result.current}. `
+    + 'Click to go to the download page.';
+
   showAlert(
     `Version ${result.latest} is out. You have ${result.current}.`,
     'Get it',
-    () => window.api.shell.openExternalConfirmed(result.url, `version ${result.latest} on GitHub`)
+    () => openUpdatePage()
   );
+}
+
+/** Sends you to the release the update check found. */
+function openUpdatePage() {
+  const update = state.update;
+  if (!update) { el.aboutDialog.showModal(); return; }
+  window.api.shell.openExternalConfirmed(update.url, `version ${update.latest} on GitHub`);
 }
 
 /**
@@ -2316,7 +2336,12 @@ function wireEvents() {
   });
 
   el.btnAbout.addEventListener('click', () => el.aboutDialog.showModal());
-  el.versionBadge.addEventListener('click', () => el.aboutDialog.showModal());
+  // Straight to the release when there is one, otherwise it is just an About
+  // button that happens to show the version.
+  el.versionBadge.addEventListener('click', () => {
+    if (state.update) openUpdatePage();
+    else el.aboutDialog.showModal();
+  });
   el.btnAboutClose.addEventListener('click', () => el.aboutDialog.close());
 
   // Everything that leaves the app asks first, so a click never dumps you into

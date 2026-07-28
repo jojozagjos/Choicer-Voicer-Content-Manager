@@ -2018,3 +2018,38 @@ input[type="range"]::-webkit-slider-thumb {
 .picker-name { font-weight: 650; }
 
 .picker-actions { display: flex; align-items: center; gap: 7px; }
+
+/* The version badge doubles as the update notice, because the alert bar can be
+   dismissed and then nothing was left saying an update existed. */
+.version-badge.update {
+  color: var(--accent-ink);
+  background: linear-gradient(135deg, var(--accent), var(--accent-dim));
+  border-color: transparent;
+  padding-left: 20px;
+  position: relative;
+}
+.version-badge.update::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 50%;
+  background: var(--accent-ink);
+  animation: update-pulse 1.9s ease-in-out infinite;
+}
+.version-badge.update:hover { filter: brightness(1.1); color: var(--accent-ink); }
+
+@keyframes update-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .version-badge.update::before { animation: none; }
+}
+
+/* A clip showing the pack's filler image rather than one of its own. */
+.clip-thumb.filler { border-style: dashed; }
+.clip-thumb.filler img { opacity: 0.7; }

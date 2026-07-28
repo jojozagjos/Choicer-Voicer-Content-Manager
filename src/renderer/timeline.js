@@ -18,8 +18,14 @@ const HOLD_TO_CREATE = 320; // ms of holding still before a drag marks a clip
 
 // Dragging a clip's body used to move it, which meant panning across a busy
 // timeline knocked clips out of time. Moving now needs the grip: the ribbed bar
-// along the top of a block. Everywhere else, left-drag pans.
+// along the top of a block.
 const GRIP_H = 11;
+
+// Two people talking over each other is normal in a dub, and stacked clips used
+// to be drawn on top of one another so only the last was reachable. Overlapping
+// clips get their own lane instead.
+const MAX_LANES = 4;
+const LANE_GAP = 2;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -97,7 +103,33 @@ export class Timeline {
 
   setClips(clips) {
     this.clips = clips || [];
+    this._assignLanes();
     this.draw();
+  }
+
+  /**
+   * Puts each clip in the topmost lane where it does not overlap something
+   * already there. Clips that share a timestamp end up stacked rather than
+   * hidden behind each other, and a dub with no overlaps still uses one lane
+   * and looks exactly as it did.
+   */
+  _assignLanes() {
+    const ordered = [...this.clips].sort((a, b) => a.time - b.time);
+    const laneEnds = [];
+
+    for (const clip of ordered) {
+      const start = clip.time;
+      const end = clip.time + Math.max(clip.duration || 0, MIN_CLIP);
+
+      let lane = laneEnds.findIndex((endsAt) => start >= endsAt - 0.0001);
+      if (lane === -1) {
+        lane = laneEnds.length < MAX_LANES ? laneEnds.length : 0;
+      }
+      laneEnds[lane] = end;
+      clip._lane = lane;
+    }
+
+    this.laneCount = Math.max(1, laneEnds.length);
   }
 
   setPlayhead(time) {
@@ -149,29 +181,40 @@ export class Timeline {
   /** Where a clip's block sits, shared by the drawing and the hit testing. */
   clipBox(clip) {
     const { height } = this.canvas.getBoundingClientRect();
+    const lanes = this.laneCount || 1;
+    const band = Math.max(8, height - RULER_H - 12);
+    const laneH = Math.max(14, (band - LANE_GAP * (lanes - 1)) / lanes);
+    const lane = clip._lane || 0;
+
     return {
       left: this.timeToX(clip.time),
       right: this.timeToX(clip.time + Math.max(clip.duration || 0, MIN_CLIP)),
-      y: RULER_H + 6,
-      h: Math.max(8, height - RULER_H - 12),
+      y: RULER_H + 6 + lane * (laneH + LANE_GAP),
+      h: laneH,
     };
   }
 
   clipAt(x, y) {
-    // Backwards, so the topmost of two stacked clips wins.
+    // Backwards, so the topmost of two stacked clips wins. With lanes, the one
+    // whose own band contains the cursor wins outright.
+    const candidates = [];
     for (let i = this.clips.length - 1; i >= 0; i--) {
       const clip = this.clips[i];
       const box = this.clipBox(clip);
-      if (x >= box.left - EDGE_GRAB && x <= box.right + EDGE_GRAB) {
-        const edge = Math.abs(x - box.left) <= EDGE_GRAB ? 'start'
-          : Math.abs(x - box.right) <= EDGE_GRAB ? 'end' : null;
-        // y is optional so callers that only care which clip is under the
-        // cursor can leave it out.
-        const onGrip = !edge && y != null && y >= box.y && y <= box.y + GRIP_H;
-        return { clip, edge, onGrip };
-      }
+      if (x < box.left - EDGE_GRAB || x > box.right + EDGE_GRAB) continue;
+
+      const edge = Math.abs(x - box.left) <= EDGE_GRAB ? 'start'
+        : Math.abs(x - box.right) <= EDGE_GRAB ? 'end' : null;
+      const inLane = y != null && y >= box.y && y <= box.y + box.h;
+      const onGrip = !edge && inLane && y <= box.y + Math.min(GRIP_H, box.h * 0.45);
+
+      candidates.push({ clip, edge, onGrip, inLane });
     }
-    return null;
+
+    if (!candidates.length) return null;
+    // Prefer the clip the cursor is actually over vertically; fall back to the
+    // topmost match so a click just outside a lane still selects something.
+    return candidates.find((c) => c.inLane) || candidates[0];
   }
 
   // Drawing
@@ -301,54 +344,55 @@ export class Timeline {
     ctx.textBaseline = 'middle';
 
     for (const clip of this.clips) {
-      const left = this.timeToX(clip.time);
-      const right = this.timeToX(clip.time + Math.max(clip.duration || 0, MIN_CLIP));
+      const box = this.clipBox(clip);
+      const { left, right } = box;
       if (right < 0 || left > rect.width) continue;
 
       const w = Math.max(2, right - left);
       const isSelected = clip.base === this.selected;
+      const y = box.y;
+      const h = box.h;
+      const gripH = Math.min(GRIP_H, h * 0.45);
 
       ctx.fillStyle = isSelected ? accent : `${accent}55`;
       ctx.strokeStyle = accent;
       ctx.lineWidth = isSelected ? 2 : 1;
 
-      const y = top + 6;
-      const h = height - 12;
       ctx.beginPath();
       ctx.roundRect(left, y, w, h, 4);
       ctx.fill();
       ctx.stroke();
 
       // The grip. Ribbed so it reads as the part you can pick the clip up by,
-      // since dragging anywhere else pans instead.
-      if (w > 14) {
+      // since dragging anywhere else does not move it.
+      if (w > 14 && gripH >= 6) {
         ctx.save();
         ctx.beginPath();
-        ctx.roundRect(left, y, w, GRIP_H, [4, 4, 0, 0]);
+        ctx.roundRect(left, y, w, gripH, [4, 4, 0, 0]);
         ctx.clip();
         ctx.fillStyle = isSelected ? ink : accent;
         ctx.globalAlpha = isSelected ? 0.85 : 0.5;
-        ctx.fillRect(left, y, w, GRIP_H);
+        ctx.fillRect(left, y, w, gripH);
 
         ctx.globalAlpha = 1;
         ctx.fillStyle = isSelected ? accent : ink;
-        const midY = y + GRIP_H / 2;
+        const midY = y + gripH / 2;
         const cx = left + w / 2;
         for (const dx of [-4, 0, 4]) {
-          ctx.fillRect(Math.round(cx + dx) - 0.5, midY - 2.5, 1, 5);
+          ctx.fillRect(Math.round(cx + dx) - 0.5, midY - 2, 1, 4);
         }
         ctx.restore();
       }
 
       // Label only when there is room for it to mean anything.
-      if (w > 34) {
+      if (w > 34 && h - gripH > 11) {
         ctx.save();
         ctx.beginPath();
-        ctx.rect(left + 4, y + GRIP_H, w - 8, h - GRIP_H);
+        ctx.rect(left + 4, y + gripH, w - 8, h - gripH);
         ctx.clip();
         ctx.fillStyle = isSelected ? ink : colour('--text', '#e6f2fb');
         const label = clip.character || clip.caption || clip.base;
-        ctx.fillText(label, left + 6, y + GRIP_H + (h - GRIP_H) / 2);
+        ctx.fillText(label, left + 6, y + gripH + (h - gripH) / 2);
         ctx.restore();
       }
     }
@@ -409,8 +453,8 @@ export class Timeline {
         if (this.onSelect) this.onSelect(hit.clip);
         canvas.setPointerCapture(e.pointerId);
 
-        // Only the grip and the edges take hold of the clip. Dragging its body
-        // pans, so sweeping across the timeline can never retime anything.
+        // Only the grip and the edges take hold of the clip. Its body just
+        // selects, because left-drag never moves the view or a clip.
         if (hit.edge || hit.onGrip) {
           this.drag = {
             kind: hit.edge ? `resize-${hit.edge}` : 'move',
@@ -421,17 +465,17 @@ export class Timeline {
             moved: false,
           };
         } else {
-          this.drag = { kind: 'pan', startX: x, startView: this.viewStart };
+          this.drag = { kind: 'idle' };
         }
         this.draw();
         return;
       }
 
-      // Empty space: a quick drag pans, but holding still first arms a new
-      // clip. That way panning is the reflex and creating is deliberate,
-      // without needing a mode to switch between.
+      // Empty space. Holding still arms a new clip; letting go before that
+      // seeks and clears the selection. Panning is right or middle drag only,
+      // so nothing here can move the view by accident.
       const at = clamp(this.xToTime(x), 0, this.duration);
-      this.drag = { kind: 'maybe', startX: x, startView: this.viewStart, startTime: at };
+      this.drag = { kind: 'maybe', startX: x, startTime: at };
       canvas.setPointerCapture(e.pointerId);
 
       this.drag.timer = setTimeout(() => {
@@ -450,18 +494,20 @@ export class Timeline {
         const hit = this.clipAt(x, e.offsetY);
         canvas.style.cursor = e.offsetY < RULER_H ? 'text'
           : hit && hit.edge ? 'ew-resize'
-            : hit && hit.onGrip ? 'move' : 'grab';
+            : hit && hit.onGrip ? 'move' : 'default';
         return;
       }
 
-      // Moving before the hold expires means a pan was intended.
+      if (this.drag.kind === 'idle') return;
+
+      // Moving before the hold expires cancels it. Nothing takes its place:
+      // left-drag is not a pan, so the view stays where it is.
       if (this.drag.kind === 'maybe') {
         if (Math.abs(x - this.drag.startX) > 3) {
           clearTimeout(this.drag.timer);
-          this.drag = { kind: 'pan', startX: this.drag.startX, startView: this.drag.startView };
-        } else {
-          return;
+          this.drag = { kind: 'idle' };
         }
+        return;
       }
 
       const width = this.canvas.getBoundingClientRect().width;
@@ -534,7 +580,7 @@ export class Timeline {
         return;
       }
 
-      if (drag.kind === 'scrub' || drag.kind === 'pan') return;
+      if (drag.kind === 'scrub' || drag.kind === 'pan' || drag.kind === 'idle') return;
 
       if (drag.moved && this.onCommit) {
         this.onCommit(drag.clip, {

@@ -309,14 +309,16 @@ export class PackEditor {
 
         <span class="grow"></span>
 
+        <button type="button" class="btn btn-small" data-act="caption-here">+ Caption here</button>
         <button type="button" class="btn btn-small" data-act="captions" aria-pressed="true">Captions</button>
-        <button type="button" class="btn btn-small" data-act="crop">Crop video</button>
-        <button type="button" class="btn btn-small" data-act="backing">Make backing track</button>
+        <button type="button" class="btn btn-small" data-act="trim">Trim video</button>
+        <button type="button" class="btn btn-small" data-act="backing">Backing track</button>
+        <button type="button" class="btn btn-small" data-act="play-backing" hidden>♪ Backing</button>
         <button type="button" class="btn btn-small" data-act="zoom-fit">Fit</button>
       </div>
       <p class="muted small editor-hint">
         Click a clip to select it. Drag its grip to move it, or an edge to change its timing.
-        Dragging anywhere else pans. Hold still a moment then drag to cut a new clip.
+        Hold still a moment then drag to cut a new clip. Right or middle drag pans.
       </p>
       <canvas class="timeline" data-role="timeline"></canvas>`;
     stage.append(controls);
@@ -389,12 +391,20 @@ export class PackEditor {
       } else if (act === 'captions') {
         this.setCaptionsVisible(this.captionsOn === false);
         this.api.settings.set({ showEditorCaptions: this.captionsOn });
-      } else if (act === 'crop') {
-        this.toggleCrop(event.target);
+      } else if (act === 'caption-here') {
+        this.addCaptionAtPlayhead(video);
+      } else if (act === 'trim') {
+        this.toggleTrim(event.target);
       } else if (act === 'backing') {
         this.makeBackingTrack();
+      } else if (act === 'play-backing') {
+        this.playBacking(event.target);
       }
     });
+
+    // Only offered once there is something to play.
+    const backingBtn = controls.querySelector('[data-act="play-backing"]');
+    if (backingBtn) backingBtn.hidden = !this.pack.backingUrl;
 
     // Preview volume only. It never touches what is written into the pack, so
     // it is deliberately not saved anywhere.
@@ -487,6 +497,26 @@ export class PackEditor {
     const set = (this.settings && this.settings.characterColors) || {};
     if (name && set[name]) return set[name];
     return 'var(--accent)';
+  }
+
+  /**
+   * Every picture already in the pack, with who uses it.
+   *
+   * Clips do not borrow each other's pictures automatically: two people can
+   * share a name and still look different, and guessing wrong is worse than
+   * showing nothing. Reuse is offered instead, and a reused picture is pointed
+   * at rather than copied, so one file serves however many lines want it.
+   */
+  packPictures() {
+    const byFile = new Map();
+    for (const clip of this.pack.clips || []) {
+      if (!clip.imageUrl || !clip.image) continue;
+      if (!byFile.has(clip.image)) {
+        byFile.set(clip.image, { file: clip.image, url: clip.imageUrl, users: [] });
+      }
+      byFile.get(clip.image).users.push(clip.character || clip.base);
+    }
+    return [...byFile.values()];
   }
 
   // Pack details
@@ -600,74 +630,184 @@ export class PackEditor {
     if (this.onChanged) await this.onChanged(pack.id, { keepEditor: true });
   }
 
-  // Cropping
+  // Trimming the video
 
-  toggleCrop(button) {
-    if (this.crop) { this.endCrop(); return; }
-    if (!this.video || !this.video.videoWidth) {
+  toggleTrim(button) {
+    if (this.trim) { this.endTrim(); return; }
+    if (!this.video || !this.video.duration) {
       this.toast('Let the video load first.', 'warn');
       return;
     }
     this.video.pause();
     button.classList.add('on');
-    this.crop = new CropBox(this.cropLayer, {
-      onApply: (rect) => this.applyCrop(rect),
-      onCancel: () => this.endCrop(),
-      size: { width: this.video.videoWidth, height: this.video.videoHeight },
+    this.trim = new TrimBar(this.cropLayer, {
+      duration: this.video.duration,
+      onPreview: (time) => { this.video.currentTime = time; },
+      onApply: (range) => this.applyTrim(range),
+      onCancel: () => this.endTrim(),
     });
     this.cropLayer.hidden = false;
   }
 
-  endCrop() {
-    if (this.crop) { this.crop.destroy(); this.crop = null; }
+  endTrim() {
+    if (this.trim) { this.trim.destroy(); this.trim = null; }
     if (this.cropLayer) this.cropLayer.hidden = true;
-    const button = this.root.querySelector('[data-act="crop"]');
+    const button = this.root.querySelector('[data-act="trim"]');
     if (button) button.classList.remove('on');
   }
 
   /**
-   * Crops the pack's video. The original is kept aside so this can be undone,
-   * which matters because cropping re-encodes and is otherwise one way.
+   * Cuts the video down to the chosen range.
+   *
+   * Everything in the pack is timed against the video, so dropping seconds off
+   * the front moves every clip with it. Both the video and the timestamps have
+   * to change together or the whole dub slips, and undo has to put both back.
    */
-  async applyCrop(rect) {
+  async applyTrim(range) {
     const pack = this.pack;
-    this.endCrop();
+    this.endTrim();
 
-    const result = await this.run('Cropping the video…', () => this.api.content.cropVideo({
+    const clipsBefore = (pack.clips || []).map((c) => ({
+      base: c.base,
+      time: c.time,
+      caption: c.caption || '',
+      character: c.character || '',
+      image: c.image || '',
+    }));
+
+    const result = await this.run('Trimming the video…', () => this.api.content.trimVideo({
       packDir: pack.dir,
       videoPath: pack.videoPath,
-      crop: rect,
+      start: range.start,
+      end: range.end,
     }));
 
     if (!result.ok) {
-      this.toast(`Could not crop it: ${result.error}`, 'error', 8000);
+      if (!result.cancelled) this.toast(`Could not trim it: ${result.error}`, 'error', 8000);
       return;
     }
 
-    this.toast(`Cropped to ${result.to.width}×${result.to.height}.`, 'ok', 4000);
+    // Clips move with the picture. Any that fall outside what is left keep a
+    // clamped time rather than vanishing, since deleting someone's work as a
+    // side effect of a trim would be worse than leaving it at zero.
+    const shifted = clipsBefore.map((c) => ({
+      ...c,
+      time: Math.max(0, Math.min(c.time + result.shift, result.nowSeconds)),
+    }));
+    await this.writeClipTimes(shifted);
 
-    // Undo puts the original file back. Both directions reopen the editor,
-    // since the proxy the editor plays has to be rebuilt from the new file.
+    const lost = clipsBefore.filter((c) =>
+      c.time < range.start - 0.01 || c.time > range.end + 0.01).length;
+    this.toast(
+      `Trimmed to ${result.nowSeconds.toFixed(1)}s.`
+      + (lost ? ` ${lost} clip${lost > 1 ? 's' : ''} fell outside and moved to the edge.` : ''),
+      lost ? 'warn' : 'ok',
+      lost ? 8000 : 4000
+    );
+
     const reopen = async () => {
       if (this.onChanged) await this.onChanged(pack.id);
     };
+
     this.push({
-      label: 'crop video',
+      label: 'trim video',
       undo: async () => {
         await this.api.content.restoreClip({ moved: result.moved });
+        await this.writeClipTimes(clipsBefore);
         await reopen();
       },
       redo: async () => {
-        const again = await this.api.content.cropVideo({
-          packDir: pack.dir, videoPath: pack.videoPath, crop: rect,
+        const again = await this.api.content.trimVideo({
+          packDir: pack.dir, videoPath: pack.videoPath, start: range.start, end: range.end,
         });
         if (!again.ok) throw new Error(again.error);
         result.moved = again.moved;
+        await this.writeClipTimes(shifted);
         await reopen();
       },
     });
 
     await reopen();
+  }
+
+  /** Writes a set of clip timestamps back, leaving everything else as it was. */
+  async writeClipTimes(clips) {
+    for (const clip of clips) {
+      await this.api.content.writeClipMeta({
+        destDir: this.pack.dir,
+        base: clip.base,
+        meta: {
+          caption: clip.caption || '',
+          character: clip.character || '',
+          image: clip.image || `${clip.base}.png`,
+          timestamp: clip.time,
+        },
+      });
+    }
+  }
+
+  // Captions
+
+  /**
+   * Cuts a clip at the playhead so a caption can be typed straight in. Its
+   * length runs to the next clip, capped at the game's limit, which is almost
+   * always what you want when captioning a line you just heard.
+   */
+  async addCaptionAtPlayhead(video) {
+    const start = video.currentTime;
+    const max = (this.timeline && this.timeline.maxClip) || 6;
+
+    const next = (this.pack.clips || [])
+      .map((c) => c.time)
+      .filter((t) => t > start + 0.05)
+      .sort((a, b) => a - b)[0];
+
+    const room = next != null ? next - start : (video.duration || start + max) - start;
+    const duration = Math.max(0.3, Math.min(max, room));
+
+    if (duration < 0.3) {
+      this.toast('No room for a clip here. Move the playhead somewhere clearer.', 'warn', 6000);
+      return;
+    }
+
+    const clipList = this.root.querySelector('[data-role="clips"]');
+    await this.addClip(start, duration, video, clipList);
+
+    // Straight into typing, which is the whole point of the button.
+    const row = this.root.querySelector(`.clip-row[data-base="${CSS.escape(this._lastAdded || '')}"]`);
+    const field = row && row.querySelector('[data-field="caption"]');
+    if (field) { field.focus(); field.scrollIntoView({ block: 'nearest' }); }
+  }
+
+  /** Plays the pack's backing track, so the ducking can be checked by ear. */
+  playBacking(button) {
+    if (this.backingAudio) {
+      this.backingAudio.pause();
+      this.backingAudio = null;
+      button.textContent = '♪ Backing';
+      button.classList.remove('on');
+      return;
+    }
+    if (!this.pack.backingUrl) {
+      this.toast('This pack has no backing track yet.', 'warn');
+      return;
+    }
+
+    if (this.video) this.video.pause();
+    const audio = new Audio(this.pack.backingUrl);
+    // Starts where the playhead is, so you can check one line rather than
+    // sitting through the whole track.
+    audio.currentTime = this.video ? this.video.currentTime : 0;
+    audio.addEventListener('ended', () => {
+      button.textContent = '♪ Backing';
+      button.classList.remove('on');
+      this.backingAudio = null;
+    });
+    audio.play().catch(() => this.toast('Could not play the backing track.', 'warn'));
+
+    button.textContent = '■ Backing';
+    button.classList.add('on');
+    this.backingAudio = audio;
   }
 
   /** Decodes the preview audio once and hands the timeline its peaks. */
@@ -788,6 +928,7 @@ export class PackEditor {
     video.currentTime = wasAt;
 
     pack.clipCount = index;
+    this._lastAdded = result.base;
     this.toast(`Added ${result.base}.`, 'ok');
     if (this.onChanged) await this.onChanged(pack.id, { keepEditor: true });
 
@@ -824,6 +965,7 @@ export class PackEditor {
       row.classList.toggle('on', this.timeline && this.timeline.selected === clip.base);
 
       const hasAudio = Boolean(clip.audio);
+      const picture = clip.imageUrl || null;
       row.innerHTML = `
         <div class="clip-head">
           <button type="button" class="line-time">${fmt(clip.time)}</button>
@@ -834,15 +976,17 @@ export class PackEditor {
           <button type="button" class="icon-btn danger" data-act="delete" title="Delete this clip">✕</button>
         </div>
         <div class="clip-main">
-          <div class="clip-thumb ${clip.imageUrl ? '' : 'blank'}">
-            ${clip.imageUrl
-    ? `<img src="${clip.imageUrl}" alt="" />`
+          <div class="clip-thumb ${picture ? '' : 'blank'}">
+            ${picture
+    ? `<img src="${picture}" alt="" />`
     : '<span>no picture</span>'}
             <div class="clip-thumb-actions">
               <button type="button" class="icon-btn" data-act="grab"
                       title="Use the frame showing now">⧉</button>
               <button type="button" class="icon-btn" data-act="upload"
                       title="Choose a picture file">↑</button>
+              <button type="button" class="icon-btn" data-act="reuse"
+                      title="Reuse a picture already in this pack">⧉↺</button>
             </div>
           </div>
           <div class="clip-fields">
@@ -853,6 +997,7 @@ export class PackEditor {
 
       row.querySelector('[data-act="grab"]').addEventListener('click', () => this.grabClipImage(clip));
       row.querySelector('[data-act="upload"]').addEventListener('click', () => this.uploadClipImage(clip));
+      row.querySelector('[data-act="reuse"]').addEventListener('click', () => this.reuseClipImage(clip));
 
       // Set through the property, never through the attribute: captions are
       // full of double quotes and putting one in value="" ends the attribute,
@@ -943,6 +1088,97 @@ export class PackEditor {
     this.refreshClips();
   }
 
+  /**
+   * Picks a picture already in the pack for this clip to use.
+   *
+   * The metadata points at the existing file rather than copying it, which is
+   * what makes this a link: change that one picture later and every clip using
+   * it changes too.
+   */
+  async reuseClipImage(clip) {
+    const options = this.packPictures().filter((p) => p.file !== clip.image);
+    if (!options.length) {
+      this.toast('No other pictures in this pack yet. Grab or upload one first.', 'info', 6000);
+      return;
+    }
+
+    const sheet = el('div', 'picker-sheet');
+    sheet.innerHTML = `
+      <div class="picker-card">
+        <h4>Reuse a picture for ${escapeHtml(clip.character || clip.base)}</h4>
+        <p class="muted small">The clip points at the same file, so editing that picture later
+           updates every line using it.</p>
+        <div class="picker-grid">
+          ${options.map((p) => `
+            <button type="button" class="picker-item" data-file="${escapeHtml(p.file)}">
+              <img src="${p.url}" alt="" />
+              <span class="picker-name">${escapeHtml(p.file)}</span>
+              <span class="picker-users muted small">${escapeHtml(
+    [...new Set(p.users)].slice(0, 3).join(', '))}</span>
+            </button>`).join('')}
+        </div>
+        <div class="picker-actions">
+          ${clip.image ? '<button type="button" class="btn btn-small" data-role="clear">Remove this clip\'s picture</button>' : ''}
+          <span class="grow"></span>
+          <button type="button" class="btn btn-small" data-role="cancel">Cancel</button>
+        </div>
+      </div>`;
+
+    const close = () => sheet.remove();
+    sheet.addEventListener('click', (e) => { if (e.target === sheet) close(); });
+    sheet.querySelector('[data-role="cancel"]').addEventListener('click', close);
+
+    const clearBtn = sheet.querySelector('[data-role="clear"]');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', async () => {
+        close();
+        await this.setClipImage(clip, '');
+      });
+    }
+
+    for (const button of sheet.querySelectorAll('.picker-item')) {
+      button.addEventListener('click', async () => {
+        close();
+        await this.setClipImage(clip, button.dataset.file);
+      });
+    }
+
+    this.root.append(sheet);
+  }
+
+  /** Writes which picture file a clip uses, or none. */
+  async setClipImage(clip, file) {
+    const before = clip.image || '';
+    const write = async (value) => {
+      const result = await this.api.content.writeClipMeta({
+        destDir: this.pack.dir,
+        base: clip.base,
+        meta: {
+          caption: clip.caption || '',
+          character: clip.character || '',
+          image: value,
+          timestamp: clip.time,
+        },
+      });
+      if (!result.ok) throw new Error(result.error);
+      clip.image = value;
+      if (this.onChanged) await this.onChanged(this.pack.id, { keepEditor: true });
+      this.refreshClips();
+    };
+
+    try {
+      await write(file);
+      this.toast(file ? `Now using ${file}.` : 'Picture removed.', 'ok', 2500);
+      this.push({
+        label: 'clip picture',
+        undo: () => write(before),
+        redo: () => write(file),
+      });
+    } catch (err) {
+      this.toast(`Could not save that: ${err.message}`, 'error', 7000);
+    }
+  }
+
   /** Points a clip's metadata at its picture, keeping the name in step. */
   async writeImageRef(clip) {
     clip.image = `${clip.base}.png`;
@@ -1017,7 +1253,7 @@ export class PackEditor {
     if (list) this.renderClipList(list);
   }
 
-  // Contestants
+  // Players
 
   renderPlayerEditor(body) {
     const pack = this.pack;
@@ -1221,49 +1457,52 @@ export class PackEditor {
 }
 
 /**
- * The crop rectangle drawn over the video.
+ * The trim bar over the video: two handles marking what to keep.
  *
- * It works in fractions of the frame rather than pixels, so it survives the
- * window being resized and does not care what size the video is displayed at.
- * Only the corners resize; dragging inside moves the whole rectangle, which is
- * what people reach for first.
+ * Times are held in seconds rather than fractions, because everything else in
+ * the pack is in seconds and converting back and forth invites rounding drift
+ * in the clip timestamps that have to shift with the cut.
  */
-const HANDLES = ['nw', 'ne', 'sw', 'se'];
-
-class CropBox {
-  constructor(layer, { onApply, onCancel, size }) {
+class TrimBar {
+  constructor(layer, { duration, onPreview, onApply, onCancel }) {
     this.layer = layer;
+    this.duration = duration;
+    this.onPreview = onPreview;
     this.onApply = onApply;
     this.onCancel = onCancel;
-    this.size = size;
 
-    // Starts as the whole frame, so the first drag pulls an edge in rather
-    // than having to find an invisible rectangle first.
-    this.rect = { x: 0, y: 0, width: 1, height: 1 };
-    this.aspect = null;
+    this.start = 0;
+    this.end = duration;
 
     layer.innerHTML = `
-      <div class="crop-rect">
-        ${HANDLES.map((h) => `<i class="crop-handle ${h}" data-handle="${h}"></i>`).join('')}
-      </div>
-      <div class="crop-bar">
-        <span class="crop-size" data-role="size"></span>
-        <label class="crop-aspect">
-          <span>Shape</span>
-          <select class="select" data-role="aspect">
-            <option value="">Free</option>
-            <option value="16:9">16:9 wide</option>
-            <option value="4:3">4:3</option>
-            <option value="1:1">Square</option>
-            <option value="9:16">9:16 tall</option>
-          </select>
-        </label>
-        <button type="button" class="btn btn-small" data-role="reset">Reset</button>
-        <button type="button" class="btn btn-small" data-role="cancel">Cancel</button>
-        <button type="button" class="btn btn-small btn-primary" data-role="apply">Crop</button>
+      <div class="trim-panel">
+        <p class="trim-title">Keep this part of the video</p>
+        <div class="trim-track" data-role="track">
+          <div class="trim-dim" data-role="dim-left"></div>
+          <div class="trim-dim" data-role="dim-right"></div>
+          <div class="trim-keep" data-role="keep"></div>
+          <i class="trim-handle" data-handle="start" title="Where it starts"></i>
+          <i class="trim-handle" data-handle="end" title="Where it ends"></i>
+        </div>
+        <div class="trim-times">
+          <label class="trim-field"><span>From</span>
+            <input class="input" data-role="from" inputmode="decimal" /></label>
+          <button type="button" class="btn btn-small" data-role="set-from">Use playhead</button>
+          <span class="trim-length" data-role="length"></span>
+          <button type="button" class="btn btn-small" data-role="set-to">Use playhead</button>
+          <label class="trim-field"><span>To</span>
+            <input class="input" data-role="to" inputmode="decimal" /></label>
+        </div>
+        <p class="muted small trim-note" data-role="note"></p>
+        <div class="trim-actions">
+          <button type="button" class="btn btn-small" data-role="reset">Reset</button>
+          <span class="grow"></span>
+          <button type="button" class="btn btn-small" data-role="cancel">Cancel</button>
+          <button type="button" class="btn btn-small btn-primary" data-role="apply">Trim video</button>
+        </div>
       </div>`;
 
-    this.box = layer.querySelector('.crop-rect');
+    this.q = (role) => layer.querySelector(`[data-role="${role}"]`);
     this._onResize = () => this.paint();
     window.addEventListener('resize', this._onResize);
 
@@ -1276,137 +1515,93 @@ class CropBox {
     this.layer.innerHTML = '';
   }
 
-  /**
-   * Where the picture actually is inside the layer. The video is object-fit:
-   * contain, so on a wide window there are black bars either side that are not
-   * part of the frame and must not be croppable.
-   */
-  contentBox() {
-    const outer = this.layer.getBoundingClientRect();
-    const scale = Math.min(outer.width / this.size.width, outer.height / this.size.height);
-    const width = this.size.width * scale;
-    const height = this.size.height * scale;
-    return {
-      left: (outer.width - width) / 2,
-      top: (outer.height - height) / 2,
-      width,
-      height,
-    };
+  clamp() {
+    const min = 0.5;
+    this.start = Math.max(0, Math.min(this.start, this.duration - min));
+    this.end = Math.min(this.duration, Math.max(this.end, this.start + min));
   }
 
   paint() {
-    const content = this.contentBox();
-    const r = this.rect;
-    Object.assign(this.box.style, {
-      left: `${content.left + r.x * content.width}px`,
-      top: `${content.top + r.y * content.height}px`,
-      width: `${r.width * content.width}px`,
-      height: `${r.height * content.height}px`,
-    });
+    this.clamp();
+    const pct = (t) => `${(t / this.duration) * 100}%`;
 
-    const even = (n) => Math.max(2, Math.round(n / 2) * 2);
-    const w = even(this.size.width * r.width);
-    const h = even(this.size.height * r.height);
-    this.layer.querySelector('[data-role="size"]').textContent =
-      `${w} × ${h}  (from ${this.size.width} × ${this.size.height})`;
-  }
+    this.q('keep').style.left = pct(this.start);
+    this.q('keep').style.width = pct(this.end - this.start);
+    this.q('dim-left').style.width = pct(this.start);
+    this.q('dim-right').style.left = pct(this.end);
+    this.q('dim-right').style.width = pct(this.duration - this.end);
+    this.layer.querySelector('[data-handle="start"]').style.left = pct(this.start);
+    this.layer.querySelector('[data-handle="end"]').style.left = pct(this.end);
 
-  /** Keeps a rectangle inside the frame and above the minimum useful size. */
-  clampRect(r) {
-    const minW = 16 / this.size.width;
-    const minH = 16 / this.size.height;
-    const width = Math.min(1, Math.max(minW, r.width));
-    const height = Math.min(1, Math.max(minH, r.height));
-    return {
-      width,
-      height,
-      x: Math.min(Math.max(0, r.x), 1 - width),
-      y: Math.min(Math.max(0, r.y), 1 - height),
-    };
-  }
+    // Fields are not rewritten while they are being typed in, or the caret
+    // jumps to the end after every keystroke.
+    const from = this.q('from');
+    const to = this.q('to');
+    if (document.activeElement !== from) from.value = this.start.toFixed(2);
+    if (document.activeElement !== to) to.value = this.end.toFixed(2);
 
-  /** Forces a rectangle to a chosen shape, anchored on its centre. */
-  applyAspect(r) {
-    if (!this.aspect) return r;
-    const target = this.aspect;
-    const frame = this.size.width / this.size.height;
-    // The rectangle is in fractions of a frame that is not itself square, so
-    // the ratio has to be expressed in frame units before it means anything.
-    const wanted = target / frame;
-
-    let { width, height } = r;
-    if (width / height > wanted) width = height * wanted;
-    else height = width / wanted;
-
-    const cx = r.x + r.width / 2;
-    const cy = r.y + r.height / 2;
-    return this.clampRect({ x: cx - width / 2, y: cy - height / 2, width, height });
+    this.q('length').textContent = `${(this.end - this.start).toFixed(2)}s kept`;
+    const cut = this.duration - (this.end - this.start);
+    this.q('note').textContent = cut < 0.01
+      ? 'Nothing is being cut yet. Drag a handle in.'
+      : `${cut.toFixed(2)}s removed. Every clip shifts by ${(-this.start).toFixed(2)}s to stay in sync.`;
+    this.q('apply').disabled = cut < 0.01;
   }
 
   _bind() {
     const layer = this.layer;
+    const track = this.q('track');
 
-    layer.querySelector('[data-role="cancel"]').addEventListener('click', () => this.onCancel());
-    layer.querySelector('[data-role="apply"]').addEventListener('click', () => {
-      this.onApply(this.rect);
+    this.q('cancel').addEventListener('click', () => this.onCancel());
+    this.q('apply').addEventListener('click', () => {
+      this.onApply({ start: this.start, end: this.end });
     });
-    layer.querySelector('[data-role="reset"]').addEventListener('click', () => {
-      this.rect = { x: 0, y: 0, width: 1, height: 1 };
-      this.paint();
-    });
-    layer.querySelector('[data-role="aspect"]').addEventListener('change', (e) => {
-      const value = e.target.value;
-      if (!value) { this.aspect = null; return; }
-      const [w, h] = value.split(':').map(Number);
-      this.aspect = w / h;
-      this.rect = this.applyAspect(this.rect);
+    this.q('reset').addEventListener('click', () => {
+      this.start = 0;
+      this.end = this.duration;
       this.paint();
     });
 
-    // The bar must not start a drag on the rectangle behind it.
-    layer.querySelector('.crop-bar').addEventListener('pointerdown', (e) => e.stopPropagation());
+    for (const [role, which] of [['set-from', 'start'], ['set-to', 'end']]) {
+      this.q(role).addEventListener('click', () => {
+        const video = layer.closest('.editor-video').querySelector('video');
+        if (video) { this[which] = video.currentTime; this.paint(); }
+      });
+    }
 
-    const start = (e) => {
-      if (e.button !== 0) return;
-      const content = this.contentBox();
-      const handle = e.target.dataset.handle || null;
-      if (!handle && !e.target.closest('.crop-rect')) return;
+    for (const [role, which] of [['from', 'start'], ['to', 'end']]) {
+      this.q(role).addEventListener('change', (e) => {
+        const value = parseFloat(e.target.value);
+        if (Number.isFinite(value)) this[which] = value;
+        this.paint();
+        this.onPreview(this[which]);
+      });
+    }
 
+    track.addEventListener('pointerdown', (e) => {
+      const which = e.target.dataset.handle;
+      if (!which) return;
       e.preventDefault();
-      const origin = { ...this.rect };
-      const from = { x: e.clientX, y: e.clientY };
-      layer.setPointerCapture(e.pointerId);
+      track.setPointerCapture(e.pointerId);
 
       const move = (ev) => {
-        const dx = (ev.clientX - from.x) / content.width;
-        const dy = (ev.clientY - from.y) / content.height;
-
-        let next;
-        if (!handle) {
-          next = this.clampRect({ ...origin, x: origin.x + dx, y: origin.y + dy });
-        } else {
-          const left = handle.includes('w');
-          const top = handle.includes('n');
-          const x = left ? origin.x + dx : origin.x;
-          const y = top ? origin.y + dy : origin.y;
-          const width = left ? origin.width - dx : origin.width + dx;
-          const height = top ? origin.height - dy : origin.height + dy;
-          next = this.applyAspect(this.clampRect({ x, y, width, height }));
-        }
-        this.rect = next;
+        const box = track.getBoundingClientRect();
+        const t = ((ev.clientX - box.left) / box.width) * this.duration;
+        this[which] = Math.max(0, Math.min(this.duration, t));
         this.paint();
+        // Seeking as you drag is what makes picking a cut point possible at
+        // all, since the numbers alone say nothing about what is on screen.
+        this.onPreview(this[which]);
       };
 
       const end = (ev) => {
-        layer.removeEventListener('pointermove', move);
-        layer.removeEventListener('pointerup', end);
-        try { layer.releasePointerCapture(ev.pointerId); } catch { /* already released */ }
+        track.removeEventListener('pointermove', move);
+        track.removeEventListener('pointerup', end);
+        try { track.releasePointerCapture(ev.pointerId); } catch { /* already released */ }
       };
 
-      layer.addEventListener('pointermove', move);
-      layer.addEventListener('pointerup', end);
-    };
-
-    layer.addEventListener('pointerdown', start);
+      track.addEventListener('pointermove', move);
+      track.addEventListener('pointerup', end);
+    });
   }
 }

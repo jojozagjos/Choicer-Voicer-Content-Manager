@@ -157,8 +157,20 @@ const MIME = {
 // Pack names contain spaces, apostrophes and '#', and Windows paths contain
 // backslashes that Chromium rewrites when canonicalising a standard scheme.
 // base64url sidesteps all of it.
+/**
+ * A URL the renderer can load a pack file through.
+ *
+ * The modified time rides along as a query parameter. Without it the URL for
+ * a given path never changes, so replacing a pack icon or re-grabbing a clip's
+ * picture left the old bytes on screen: same URL, so Chromium reused what it
+ * already had. The protocol handler strips the query before decoding the path,
+ * so this only ever affects caching.
+ */
 function mediaUrl(filePath) {
-  return `${MEDIA_SCHEME}://file/${Buffer.from(filePath, 'utf8').toString('base64url')}`;
+  const encoded = Buffer.from(filePath, 'utf8').toString('base64url');
+  let stamp = 0;
+  try { stamp = Math.round(fs.statSync(filePath).mtimeMs); } catch { /* gone, let it 404 */ }
+  return `${MEDIA_SCHEME}://file/${encoded}?v=${stamp}`;
 }
 
 function pathFromMediaUrl(url) {
@@ -473,11 +485,25 @@ function removeSmokePack(gameDir) {
 function runSmokeTest(win) {
   const errors = [];
 
+  // A throw anywhere in here used to end the run with no output and exit 0,
+  // which reads as a pass. Anything unexpected is reported and fails instead.
+  process.on('unhandledRejection', (err) => {
+    console.log(`SMOKE_CRASH ${err && err.stack ? err.stack : err}`);
+    app.exit(1);
+  });
+  process.on('uncaughtException', (err) => {
+    console.log(`SMOKE_CRASH ${err && err.stack ? err.stack : err}`);
+    app.exit(1);
+  });
+
   // Made before the renderer loads, so the app's own first scan picks it up
   // without needing to be told to look again.
-  const gameDir = gamedata.resolveGameDir(settings.gameDir || gamedata.defaultGameDir());
+  let gameDir = null;
   let scratch = null;
-  try { scratch = makeSmokePack(gameDir); } catch (err) {
+  try {
+    gameDir = gamedata.resolveGameDir(settings.gameDir || gamedata.defaultGameDir());
+    scratch = makeSmokePack(gameDir);
+  } catch (err) {
     errors.push(`could not make the scratch pack: ${err.message}`);
   }
   win.webContents.on('console-message', (_e, level, message) => {
@@ -878,14 +904,14 @@ function runSmokeTest(win) {
         await new Promise((r) => setTimeout(r, 200));
         const typeCount = document.querySelectorAll('.create-type').length;
 
-        // Pick "Contestant", which has extra fields worth exercising.
+        // Pick "Player", which has extra fields worth exercising.
         const buttons = [...document.querySelectorAll('.create-type')];
-        const contestant = buttons.find((b) => b.textContent.includes('Contestant'));
+        const contestant = buttons.find((b) => b.textContent.includes('Player'));
         contestant.click();
         await new Promise((r) => setTimeout(r, 150));
 
         const fields = document.querySelectorAll('#create-extra [data-field]').length;
-        $('#create-name').value = 'Smoke Test Contestant';
+        $('#create-name').value = 'Smoke Test Player';
         $('#btn-create-go').click();
 
         for (let i = 0; i < 60; i++) {
@@ -900,7 +926,7 @@ function runSmokeTest(win) {
           extraFields: fields,
           dialogClosed: !$('#create-dialog').open,
           landedOn: $('#content-title').textContent,
-          madeIt: tiles.some((t) => t.includes('Smoke Test Contestant')),
+          madeIt: tiles.some((t) => t.includes('Smoke Test Player')),
         };
       })()`);
       if (createCheck && createCheck.typeCount !== 7) {
@@ -914,7 +940,7 @@ function runSmokeTest(win) {
       if (gameDir) {
         const players = path.join(gameDir, 'packs_player');
         for (const name of fs.readdirSync(players)) {
-          if (name.startsWith('Smoke Test Contestant')) {
+          if (name.startsWith('Smoke Test Player')) {
             fs.rmSync(path.join(players, name), { recursive: true, force: true });
             createCheck.cleanedUp = true;
           }
@@ -1187,7 +1213,8 @@ function runSmokeTest(win) {
           videoW: video ? video.videoWidth : 0,
           hasVolume: Boolean(q('[data-role="volume"]')),
           hasCaptionToggle: Boolean(q('[data-act="captions"]')),
-          hasCropButton: Boolean(q('[data-act="crop"]')),
+          hasTrimButton: Boolean(q('[data-act="trim"]')),
+          hasCaptionHere: Boolean(q('[data-act="caption-here"]')),
           hasBackingButton: Boolean(q('[data-act="backing"]')),
           clipRows: root.querySelectorAll('.clip-row').length,
           thumbs: root.querySelectorAll('.clip-thumb').length,
@@ -1213,8 +1240,18 @@ function runSmokeTest(win) {
           out.captionShown = box ? !box.hidden : null;
           out.captionText = box && !box.hidden ? box.textContent.trim().slice(0, 60) : '';
 
-          video.currentTime = Math.max(0, video.duration - 0.25);
-          await wait(500);
+          // Waiting a fixed time here was flaky: a seek across a long proxy
+          // can take longer than the wait, so the check ran while the playhead
+          // was still inside the line it was meant to have left.
+          const target = Math.max(0, video.duration - 0.5);
+          await new Promise((resolve) => {
+            const done = () => resolve();
+            video.addEventListener('seeked', done, { once: true });
+            video.currentTime = target;
+            setTimeout(done, 5000);
+          });
+          await wait(250);
+          out.seekedTo = video.currentTime;
           out.captionHiddenAfter = box ? box.hidden : null;
         }
 
@@ -1227,16 +1264,64 @@ function runSmokeTest(win) {
           out.titleField = (q('[data-info="title"]') || {}).value;
         }
 
-        // The crop overlay opens, sizes itself to the frame, and closes again.
-        q('[data-act="crop"]').click();
+        // Grabbing a pack icon, then leaving the editor and coming back. The
+        // picture used to vanish on reopening, because the URL for a given
+        // path never changed and the stale response was reused.
+        const grab = q('[data-act="grab-icon"]');
+        if (grab) {
+          const packTab = q('[data-side-tab="pack"]');
+          if (packTab) packTab.click();
+          await wait(150);
+          grab.click();
+          await wait(2500);
+
+          const back = root.querySelector('.editor-head button');
+          if (back) back.click();
+          await wait(600);
+
+          let again = null;
+          for (let i = 0; i < 40; i++) {
+            await wait(250);
+            again = [...document.querySelectorAll('.pack-tile')]
+              .find((t) => t.textContent.includes(${JSON.stringify(SMOKE_PACK)}));
+            if (again) break;
+          }
+          if (again) {
+            again.click();
+            await wait(300);
+            document.querySelector('#btn-detail-edit').click();
+            for (let i = 0; i < 120; i++) {
+              await wait(500);
+              if (!root.hidden && root.querySelector('canvas.timeline')) break;
+            }
+            const tab2 = root.querySelector('[data-side-tab="pack"]');
+            if (tab2) tab2.click();
+            await wait(250);
+
+            const img = root.querySelector('.pack-detail-icon img');
+            out.iconShownAfterReopen = Boolean(img);
+            if (img) {
+              // Being in the DOM is not the same as having actually decoded.
+              out.iconLoaded = await new Promise((resolve) => {
+                if (img.complete) { resolve(img.naturalWidth > 0); return; }
+                img.addEventListener('load', () => resolve(img.naturalWidth > 0), { once: true });
+                img.addEventListener('error', () => resolve(false), { once: true });
+                setTimeout(() => resolve(img.naturalWidth > 0), 3000);
+              });
+            }
+          }
+        }
+
+        // The trim overlay opens and closes again.
+        q('[data-act="trim"]').click();
         await wait(250);
         const layer = q('.crop-layer');
-        const rect = q('.crop-rect');
-        out.cropOpened = Boolean(layer && !layer.hidden && rect);
-        out.cropSizeLabel = q('.crop-size') ? q('.crop-size').textContent : null;
+        const rect = q('.trim-panel');
+        out.trimOpened = Boolean(layer && !layer.hidden && rect);
+        out.trimLength = q('.trim-length') ? q('.trim-length').textContent : null;
         if (q('[data-role="cancel"]')) q('[data-role="cancel"]').click();
         await wait(150);
-        out.cropClosed = layer.hidden;
+        out.trimClosed = layer.hidden;
 
         return out;
       })()`);
@@ -1247,13 +1332,15 @@ function runSmokeTest(win) {
         if (!toolsCheck.volumeApplied) errors.push('volume slider does not reach the video');
         if (!toolsCheck.hasCaptionToggle) errors.push('editor has no caption toggle');
         if (!toolsCheck.hasBackingButton) errors.push('editor has no backing track button');
-        if (!toolsCheck.cropOpened) errors.push('crop overlay did not open');
-        if (!toolsCheck.cropClosed) errors.push('crop overlay did not close');
+        if (!toolsCheck.trimOpened) errors.push('trim overlay did not open');
+        if (!toolsCheck.trimClosed) errors.push('trim overlay did not close');
         if (toolsCheck.clipRows && toolsCheck.thumbs !== toolsCheck.clipRows) {
           errors.push('not every clip row has a thumbnail');
         }
         if (toolsCheck.captionShown === false) errors.push('no caption shown on a line with one');
         if (toolsCheck.captionHiddenAfter === false) errors.push('caption stayed up past its line');
+        if (toolsCheck.iconShownAfterReopen === false) errors.push('pack icon vanished on reopening');
+        if (toolsCheck.iconLoaded === false) errors.push('pack icon is present but does not load');
       }
     } catch (err) {
       toolsCheck = { error: err.message };
@@ -1262,7 +1349,7 @@ function runSmokeTest(win) {
 
     // The scratch pack goes whatever happened above, and its absence is
     // asserted rather than assumed.
-    const scratchRemoved = scratch ? removeSmokePack(gameDir) : null;
+    const scratchRemoved = scratch && gameDir ? removeSmokePack(gameDir) : null;
     if (scratch && !scratchRemoved) errors.push('the scratch pack was left behind');
 
     console.log('SMOKE ' + JSON.stringify(
@@ -1374,6 +1461,9 @@ function registerIpc() {
     for (const type of model.types) {
       for (const pack of type.packs) {
         pack.iconUrl = pack.iconPath ? mediaUrl(pack.iconPath) : null;
+        // So the editor can play the backing track back and hear what the
+        // ducking actually did.
+        pack.backingUrl = pack.backingPath ? mediaUrl(pack.backingPath) : null;
         // findAudioSibling already hands back an absolute path.
         for (const clip of pack.clips || []) {
           clip.audioUrl = clip.audio ? mediaUrl(clip.audio) : null;
@@ -1671,21 +1761,24 @@ function registerIpc() {
     // asks, and so the one thing it cannot do is stated before it happens.
     const answer = await dialog.showMessageBox(mainWindow, {
       type: 'question',
-      buttons: [replacing ? 'Replace it' : 'Build it', 'Cancel'],
+      buttons: ['Muffle under lines', 'Silence under lines', 'Cancel'],
       defaultId: 0,
-      cancelId: 1,
+      cancelId: 2,
       message: replacing ? 'Replace the existing backing track?' : 'Build a backing track?',
-      detail: `The video's own audio is used, silenced under each of the ${(ranges || []).length} `
-        + 'lines so your dub sits in the gaps.\n\n'
-        + 'Music playing underneath a line goes quiet along with it. Separating a voice out from '
-        + 'music properly needs a trained model, which is far too large to ship inside this app.'
+      detail: `The video's own audio is used, quietened under each of the ${(ranges || []).length} `
+        + 'lines so your dub sits in front of it.\n\n'
+        + 'Muffle rolls the top off and pulls it down, keeping the room tone and music underneath. '
+        + 'Silence removes it completely, which can sound like the audio dropped out.\n\n'
+        + 'Either way, music playing underneath a line is affected along with the voice. Separating '
+        + 'a voice out properly needs a trained model, which is far too large to ship in this app.'
         + (replacing ? '\n\nThe current backing track is overwritten.' : ''),
     });
-    if (answer.response !== 0) return { ok: false, cancelled: true };
+    if (answer.response === 2) return { ok: false, cancelled: true };
 
     try {
       const result = await convert.buildBackingTrack(videoPath, ranges || [], packDir, {
-        level: Number.isFinite(level) ? level : 0,
+        mode: answer.response === 1 ? 'silence' : 'muffle',
+        level: Number.isFinite(level) ? level : null,
         onProgress: ({ percent }) => {
           if (!event.sender.isDestroyed()) {
             event.sender.send('import:progress', { dir: packDir, phase: 'backing', percent });
@@ -1698,19 +1791,19 @@ function registerIpc() {
     }
   });
 
-  /** Crops a pack's video, keeping the original so the crop can be undone. */
-  ipcMain.handle('content:cropVideo', async (event, { packDir, videoPath, crop }) => {
+  /** Trims a pack's video, keeping the original so the trim can be undone. */
+  ipcMain.handle('content:trimVideo', async (event, { packDir, videoPath, start, end }) => {
     if (!isAllowed(packDir) || !isAllowed(videoPath)) {
       return { ok: false, error: 'That folder is outside the game folder' };
     }
     try {
-      const bin = path.join(app.getPath('userData'), 'deleted-clips', `${Date.now()}_crop`);
+      const bin = path.join(app.getPath('userData'), 'deleted-clips', `${Date.now()}_trim`);
       const backup = path.join(bin, path.basename(videoPath));
 
-      const result = await convert.cropVideo(videoPath, crop, backup, {
+      const result = await convert.trimVideo(videoPath, start, end, backup, {
         onProgress: ({ percent }) => {
           if (!event.sender.isDestroyed()) {
-            event.sender.send('import:progress', { dir: packDir, phase: 'crop', percent });
+            event.sender.send('import:progress', { dir: packDir, phase: 'trim', percent });
           }
         },
       });
@@ -1720,6 +1813,28 @@ function registerIpc() {
     } catch (err) {
       return { ok: false, error: err.message };
     }
+  });
+
+  /**
+   * Opens a link in the real browser, after asking. The app is offline apart
+   * from its update check, so leaving it should never be a surprise.
+   */
+  ipcMain.handle('shell:openExternalConfirmed', async (_e, { url, what }) => {
+    let host = url;
+    try { host = new URL(url).host; } catch { /* show it verbatim */ }
+
+    const answer = await dialog.showMessageBox(mainWindow, {
+      type: 'question',
+      buttons: ['Open in my browser', 'Cancel'],
+      defaultId: 0,
+      cancelId: 1,
+      message: what ? `Open ${what}?` : 'Leave the app?',
+      detail: `This opens ${host} in your normal browser.\n\n${url}`,
+    });
+    if (answer.response !== 0) return { ok: false, cancelled: true };
+
+    await shell.openExternal(url);
+    return { ok: true };
   });
 
   /** Stores a frame grabbed from the video as a clip's picture. */
@@ -1859,6 +1974,13 @@ function registerIpc() {
 // Lifecycle
 
 if (!app.requestSingleInstanceLock()) {
+  // A silent exit 0 is right for a real second launch, but in a smoke run it
+  // is indistinguishable from a clean pass. A leftover instance from an
+  // interrupted run would quietly turn every later run green.
+  if (SMOKE) {
+    console.log('SMOKE_CRASH another instance is already running, so this run did nothing');
+    app.exit(1);
+  }
   app.quit();
 } else {
   app.on('second-instance', () => {

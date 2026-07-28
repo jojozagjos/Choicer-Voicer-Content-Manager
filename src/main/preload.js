@@ -64,7 +64,7 @@ contextBridge.exposeInMainWorld('api', {
     saveImage: (payload) => ipcRenderer.invoke('content:saveImage', payload),
     writePackInfo: (payload) => ipcRenderer.invoke('content:writePackInfo', payload),
     buildBacking: (payload) => ipcRenderer.invoke('content:buildBacking', payload),
-    cropVideo: (payload) => ipcRenderer.invoke('content:cropVideo', payload),
+    trimVideo: (payload) => ipcRenderer.invoke('content:trimVideo', payload),
     saveRecording: (payload) => ipcRenderer.invoke('content:saveRecording', payload),
     writeConfig: (payload) => ipcRenderer.invoke('content:writeConfig', payload),
     describe: (files) => ipcRenderer.invoke('content:describe', files),
@@ -99,5 +99,8 @@ contextBridge.exposeInMainWorld('api', {
     reveal: (target) => ipcRenderer.invoke('shell:reveal', target),
     openPath: (target) => ipcRenderer.invoke('shell:openPath', target),
     openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
+    // Asks first, so a click never silently throws you out to a browser.
+    openExternalConfirmed: (url, what) =>
+      ipcRenderer.invoke('shell:openExternalConfirmed', { url, what }),
   },
 });

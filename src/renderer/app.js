@@ -13,6 +13,8 @@ const el = {
   btnAbout: $('#btn-about'),
   aboutDialog: $('#about-dialog'),
   aboutVersion: $('#about-version'),
+  versionBadge: $('#version-badge'),
+  versionNumber: $('#version-number'),
   aboutUpdate: $('#about-update'),
   btnAboutClose: $('#btn-about-close'),
   btnAboutPage: $('#btn-about-page'),
@@ -20,7 +22,7 @@ const el = {
   btnAboutRepo: $('#btn-about-repo'),
   btnAboutDonate: $('#btn-about-donate'),
   donateBlurb: $('#donate-blurb'),
-  helpTabs: document.querySelectorAll('.help-tab'),
+  helpTabs: document.querySelectorAll('.help-tabs [data-help]'),
 
   alertBar: $('#alert-bar'),
   alertText: $('#alert-text'),
@@ -54,8 +56,15 @@ const el = {
   video: $('#video'),
   portrait: $('#portrait'),
   caption: $('#caption'),
+  videoWrap: $('#video-wrap'),
   loadingOverlay: $('#loading-overlay'),
   loadingText: $('#loading-text'),
+  loadingBar: $('#loading-bar'),
+  prepOverlay: $('#prep-overlay'),
+  prepTitle: $('#prep-title'),
+  prepNote: $('#prep-note'),
+  prepFill: $('#prep-fill'),
+  prepPct: $('#prep-pct'),
 
   btnPlay: $('#btn-play'),
   btnBack: $('#btn-back'),
@@ -683,7 +692,11 @@ function renderContentGrid() {
          </span>`
       : `<span class="muted small">${escapeHtml(pack.summary || '')}</span>`;
 
+    // A pack mid-conversion has files half written, so opening it would show
+    // a broken pack and editing it would race the converter.
     tile.classList.toggle('working', Boolean(job));
+    tile.disabled = Boolean(job);
+    if (job) tile.title = 'Still converting. This opens when it finishes.';
     tile.innerHTML = `
       ${icon}
       <span class="tile-body">
@@ -693,6 +706,7 @@ function renderContentGrid() {
       </span>`;
 
     tile.addEventListener('click', () => {
+      if (state.converting.has(pack.dir)) return;
       state.contentPackId = pack.id;
       renderContentGrid();
       renderContentDetail(pack);
@@ -756,16 +770,28 @@ function renderContentDetail(pack) {
  * behind it so closing the editor puts you back where you were.
  */
 async function openEditorFor(pack) {
+  // Belt and braces with the tile being disabled: the detail panel can still
+  // be open for a pack that started converting after it was selected.
+  if (state.converting.has(pack.dir)) {
+    toast('That pack is still converting. Give it a moment.', 'warn', 5000);
+    return;
+  }
   el.contentView.hidden = true;
 
   // The pack's own video is Ogg Theora, which Chromium cannot decode, so the
   // editor shows the same cached MP4 proxy the preview uses. Clips are still
   // cut from the original file.
   if (pack.type === 'voice' && pack.videoPath && !pack.videoUrl) {
-    toast('Preparing the video…');
-    const proxy = await window.api.media.proxy(pack.videoPath);
-    if (proxy.ok) pack.videoUrl = proxy.url;
-    else toast(`Could not prepare the video: ${proxy.error}`, 'error', 8000);
+    showPrep(true, pack.title);
+    state.loadingVideoPath = pack.videoPath;
+    try {
+      const proxy = await window.api.media.proxy(pack.videoPath);
+      if (proxy.ok) pack.videoUrl = proxy.url;
+      else toast(`Could not prepare the video: ${proxy.error}`, 'error', 8000);
+    } finally {
+      state.loadingVideoPath = null;
+      showPrep(false);
+    }
   }
 
   // The editor reads the caption toggle and the character colours from here,
@@ -881,7 +907,7 @@ const CREATE_TYPES = [
     opensEditor: true,
   },
   {
-    id: 'player', icon: '🧍', label: 'Contestant',
+    id: 'player', icon: '🧍', label: 'Player',
     blurb: 'A character who plays the game, with reaction sounds.',
     accepts: 'all',
     dropHint: 'Drop a picture (becomes player.png) and any reaction sounds.',
@@ -1166,7 +1192,7 @@ async function maybeAskForDonation() {
     'Glad this is useful. It is free and stays free, but donations help me keep building it.',
     '♥ Donate',
     () => {
-      window.api.shell.openExternal(url);
+      window.api.shell.openExternalConfirmed(url, 'the donation page');
       hideAlert();
     }
   );
@@ -1206,6 +1232,7 @@ async function boot() {
   // Theme first, so the splash and shell paint in the right palette.
   applyTheme(state.settings.theme || 'system');
   el.aboutVersion.textContent = state.info.version;
+  el.versionNumber.textContent = state.info.version;
 
   const wantSplash = state.settings.showSplash !== false;
   const splashUntil = Date.now() + SPLASH_MIN_MS;
@@ -1241,7 +1268,7 @@ async function checkForUpdate() {
   showAlert(
     `Version ${result.latest} is out. You have ${result.current}.`,
     'Get it',
-    () => window.api.shell.openExternal(result.url)
+    () => window.api.shell.openExternalConfirmed(result.url, `version ${result.latest} on GitHub`)
   );
 }
 
@@ -1547,6 +1574,30 @@ async function loadSession(session) {
 function showLoading(visible, text) {
   el.loadingOverlay.hidden = !visible;
   if (text) el.loadingText.textContent = text;
+
+  // The video underneath is still a live element with the previous pack's
+  // proxy in it. Without this, Space or a click on it played the old pack
+  // behind the overlay while the new one was still being prepared.
+  if (visible) {
+    el.video.pause();
+    el.video.controls = false;
+  }
+  el.videoWrap.classList.toggle('busy', visible);
+
+  if (!visible) {
+    el.loadingBar.hidden = true;
+    el.loadingBar.firstElementChild.style.width = '0%';
+  }
+}
+
+/** Full screen wait for the one job long enough to need explaining. */
+function showPrep(visible, packTitle) {
+  el.prepOverlay.hidden = !visible;
+  if (!visible) return;
+
+  el.prepTitle.textContent = packTitle ? `Preparing ${packTitle}` : 'Preparing the video';
+  el.prepFill.style.width = '0%';
+  el.prepPct.textContent = '0%';
 }
 
 /**
@@ -1593,10 +1644,13 @@ function renderLines() {
 
     const hasTake = Boolean(item.takeUrl);
     const hasOriginal = Boolean(item.originalUrl);
+    // Whatever the pack itself points this line at. Lines are not given each
+    // other's pictures on the strength of a matching name.
+    const portrait = item.imageUrl;
 
     row.innerHTML = `
       <button class="line-time" title="Jump to this line">${formatTime(item.time)}</button>
-      ${item.imageUrl ? `<img class="line-portrait" src="${item.imageUrl}" alt="" />` : ''}
+      ${portrait ? `<img class="line-portrait" src="${portrait}" alt="" />` : ''}
       <div class="line-body">
         <div class="line-top">
           <span class="line-char" style="color:${characterColor(item.character)}">${escapeHtml(item.character || 'Unknown')}</span>
@@ -2262,18 +2316,23 @@ function wireEvents() {
   });
 
   el.btnAbout.addEventListener('click', () => el.aboutDialog.showModal());
+  el.versionBadge.addEventListener('click', () => el.aboutDialog.showModal());
   el.btnAboutClose.addEventListener('click', () => el.aboutDialog.close());
 
+  // Everything that leaves the app asks first, so a click never dumps you into
+  // a browser without warning.
   const links = (state.info && state.info.links) || {};
-  el.btnAboutPage.addEventListener('click', () => window.api.shell.openExternal(links.game));
-  el.btnAboutDiscord.addEventListener('click', () => window.api.shell.openExternal(links.discord));
-  el.btnAboutRepo.addEventListener('click', () => window.api.shell.openExternal(links.releases));
+  const leaveFor = (url, what) => () => window.api.shell.openExternalConfirmed(url, what);
+
+  el.btnAboutPage.addEventListener('click', leaveFor(links.game, 'the game on itch.io'));
+  el.btnAboutDiscord.addEventListener('click', leaveFor(links.discord, "jojozagjos's Discord"));
+  el.btnAboutRepo.addEventListener('click', leaveFor(links.releases, 'the updates page on GitHub'));
 
   // Donation links stay hidden entirely until a page is configured.
   if (links.donate) {
     el.btnAboutDonate.hidden = false;
     el.donateBlurb.hidden = false;
-    el.btnAboutDonate.addEventListener('click', () => window.api.shell.openExternal(links.donate));
+    el.btnAboutDonate.addEventListener('click', leaveFor(links.donate, 'the donation page'));
   }
 
   for (const tab of el.helpTabs) {
@@ -2407,7 +2466,10 @@ function wireEvents() {
     if (type) window.api.shell.openPath(type.dir);
   });
   el.btnContentGuide.addEventListener('click', () => {
-    window.api.shell.openExternal('https://thechoicervoicer.neocities.org/v2/content_guide');
+    window.api.shell.openExternalConfirmed(
+      'https://thechoicervoicer.neocities.org/v2/content_guide',
+      "the game's official content guide"
+    );
   });
 
   el.sessionSelect.addEventListener('change', () => {
@@ -2415,9 +2477,16 @@ function wireEvents() {
     loadSession(session || null);
   });
 
-  el.btnPlay.addEventListener('click', () => player.toggle());
-  el.btnBack.addEventListener('click', () => player.seek(el.video.currentTime - 5));
-  el.btnFwd.addEventListener('click', () => player.seek(el.video.currentTime + 5));
+  // Nothing may drive the player while a pack is still being prepared: the
+  // element still holds the last pack's video, so playing it plays the wrong
+  // thing behind the overlay.
+  el.btnPlay.addEventListener('click', () => { if (!state.loading) player.toggle(); });
+  el.btnBack.addEventListener('click', () => {
+    if (!state.loading) player.seek(el.video.currentTime - 5);
+  });
+  el.btnFwd.addEventListener('click', () => {
+    if (!state.loading) player.seek(el.video.currentTime + 5);
+  });
   el.video.addEventListener('loadedmetadata', renderMarkers);
 
   player.onStateChange = (playing) => {
@@ -2511,7 +2580,16 @@ function wireEvents() {
   // Ignore progress from a pack you have already clicked away from.
   window.api.media.onProxyProgress(({ videoPath, percent }) => {
     if (percent == null || videoPath !== state.loadingVideoPath) return;
-    el.loadingText.textContent = `Preparing preview… ${percent.toFixed(0)}%`;
+
+    // The editor's own overlay when it is up, the export player's otherwise.
+    if (!el.prepOverlay.hidden) {
+      el.prepFill.style.width = `${percent.toFixed(1)}%`;
+      el.prepPct.textContent = `${percent.toFixed(0)}%`;
+      return;
+    }
+    el.loadingText.textContent = 'Preparing preview…';
+    el.loadingBar.hidden = false;
+    el.loadingBar.firstElementChild.style.width = `${percent.toFixed(1)}%`;
   });
 
   window.api.exporter.on('export:started', ({ id }) => { state.runningExportId = id; });
@@ -2531,9 +2609,12 @@ function wireEvents() {
     // The editor has its own shortcuts. Without this, Space reached both and
     // started the export preview playing behind the editor.
     if (!el.editorView.hidden || state.tab !== 'export') return;
-    if (event.code === 'Space') { event.preventDefault(); player.toggle(); }
-    else if (event.code === 'ArrowLeft') player.seek(el.video.currentTime - (event.shiftKey ? 1 : 5));
-    else if (event.code === 'ArrowRight') player.seek(el.video.currentTime + (event.shiftKey ? 1 : 5));
+    // Same reason the transport buttons check it: mid-load the element still
+    // holds the previous pack.
+    const busy = state.loading;
+    if (event.code === 'Space') { event.preventDefault(); if (!busy) player.toggle(); }
+    else if (event.code === 'ArrowLeft') { if (!busy) player.seek(el.video.currentTime - (event.shiftKey ? 1 : 5)); }
+    else if (event.code === 'ArrowRight') { if (!busy) player.seek(el.video.currentTime + (event.shiftKey ? 1 : 5)); }
     else if (event.key === 'r' || event.key === 'R') rescan(state.settings.gameDir);
     else if (event.key === 'e' || event.key === 'E') { if (state.pack) openExportDialog(); }
   });

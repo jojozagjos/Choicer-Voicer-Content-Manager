@@ -185,7 +185,7 @@ function inspectVoice(dir, files, { parseIni, findAudioSibling }) {
   };
 }
 
-/** Contestant packs: an image, a config, and up to nine reaction sounds. */
+/** Player packs: an image, a config, and up to nine reaction sounds. */
 function inspectPlayer(dir, files) {
   const issues = [];
   const image = findFile(files, 'player', IMAGE_EXTS);
@@ -194,7 +194,7 @@ function inspectPlayer(dir, files) {
 
   checkForeignMedia(files, issues);
 
-  if (!image) issues.push(issue(ERROR, 'No player.png, so this contestant has no picture'));
+  if (!image) issues.push(issue(ERROR, 'No player.png, so this player has no picture'));
   if (!configName) issues.push(issue(ERROR, 'No config_player.json'));
   else if (!config.ok) issues.push(issue(ERROR, `config_player.json is not valid JSON: ${config.error}`));
 
@@ -431,7 +431,9 @@ function inspectChatter(dir, files, { parseIniSections }) {
 
 const PACK_TYPES = [
   { id: 'voice', dir: 'packs_voice', label: 'Voice & dub packs', singular: 'voice pack', inspect: inspectVoice },
-  { id: 'player', dir: 'packs_player', label: 'Contestants', singular: 'contestant', inspect: inspectPlayer },
+  // Named for the folder the game reads, packs_player, so what you see here
+  // and what is on disk are the same word.
+  { id: 'player', dir: 'packs_player', label: 'Players', singular: 'player', inspect: inspectPlayer },
   { id: 'host', dir: 'packs_host', label: 'Hosts', singular: 'host', inspect: inspectHost },
   { id: 'judges', dir: 'packs_judges', label: 'Judges', singular: 'judge panel', inspect: inspectJudges },
   { id: 'studio', dir: 'packs_studio', label: 'Studios', singular: 'studio', inspect: inspectStudio },

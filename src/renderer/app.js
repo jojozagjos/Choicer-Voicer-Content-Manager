@@ -2843,8 +2843,16 @@ function wireEvents() {
   el.btnProgressCancelAll.addEventListener('click', cancelAllExports);
 
   // Conversion progress lands on the tile of the pack it belongs to.
-  window.api.content.onImportProgress(({ destDir, percent, done, total }) => {
-    const job = state.converting.get(destDir);
+  window.api.content.onImportProgress(({ destDir, dir, phase, percent, done, total }) => {
+    // Trimming a video and building a backing track report through the same
+    // channel, but against the pack folder rather than an import job, so this
+    // handler never matched them and both ran with no progress shown at all.
+    if (phase === 'trim' || phase === 'backing') {
+      if (!el.editorView.hidden) editor.setBusyProgress(percent);
+      return;
+    }
+
+    const job = state.converting.get(destDir || dir);
     if (!job) return;
     if (percent != null) job.percent = percent;
     if (done != null && total > 1) job.label = `Converting ${done} of ${total}…`;

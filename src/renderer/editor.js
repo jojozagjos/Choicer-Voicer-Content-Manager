@@ -137,6 +137,27 @@ export class PackEditor {
     if (!bar) return;
     bar.hidden = this.busy === 0;
     if (message) bar.querySelector('span').textContent = message;
+
+    // Each job starts without a figure and only shows one if it reports.
+    if (on) {
+      const pct = bar.querySelector('.editor-busy-pct');
+      if (pct) { pct.hidden = true; pct.textContent = ''; }
+    }
+  }
+
+  /**
+   * How far along the current job is, when it says.
+   *
+   * Trimming a video takes long enough that a spinner alone leaves you
+   * wondering whether it has hung. Recutting a clip is over too quickly to
+   * report anything, so the figure stays hidden unless it arrives.
+   */
+  setBusyProgress(percent) {
+    if (!this.busy || percent == null) return;
+    const pct = this.root.querySelector('.editor-busy-pct');
+    if (!pct) return;
+    pct.hidden = false;
+    pct.textContent = `${Math.min(100, Math.max(0, percent)).toFixed(0)}%`;
   }
 
   async run(label, task) {
@@ -254,7 +275,12 @@ export class PackEditor {
     head.append(undo, redo, keys, openFolder);
     this.root.append(head);
 
-    const busy = el('div', 'editor-busy', '<div class="spinner spinner-small"></div><span></span>');
+    const busy = el('div', 'editor-busy', `
+      <div class="editor-busy-card">
+        <div class="spinner"></div>
+        <span></span>
+        <b class="editor-busy-pct" hidden></b>
+      </div>`);
     busy.hidden = true;
     this.root.append(busy);
 
@@ -703,6 +729,12 @@ export class PackEditor {
     });
     if (answer !== 0 && answer !== 1) return;
 
+    // Let go of the existing track before it is overwritten. The lane keeps an
+    // <audio> element pointed at the file, and Windows will not let anything
+    // replace a file another handle still has open, so building a second track
+    // straight after a first one failed with a permission error.
+    this.releaseBackingAudio();
+
     const result = await this.run('Building the backing track…', () =>
       this.api.content.buildBacking({
         packDir: pack.dir,
@@ -740,16 +772,27 @@ export class PackEditor {
     const controls = this.root.querySelector('.editor-controls');
     if (!controls || !this.video) return;
 
+    this.releaseBackingAudio();
+    this.setupBackingLane(controls, this.video);
+  }
+
+  /**
+   * Closes the lane's handle on the backing track file.
+   *
+   * Clearing `src` and calling `load()` is what actually makes the browser let
+   * the file go; pausing alone leaves it open. That matters because anything
+   * writing over the file, on Windows, cannot do so while a handle is held.
+   */
+  releaseBackingAudio() {
     if (this.backingAudio) {
       this.backingAudio.pause();
-      this.backingAudio.src = '';
+      this.backingAudio.removeAttribute('src');
+      this.backingAudio.load();
       this.backingAudio = null;
     }
     if (this._backingSync) { clearInterval(this._backingSync); this._backingSync = null; }
     this.backingPeaks = null;
     this.backingDuration = 0;
-
-    this.setupBackingLane(controls, this.video);
   }
 
   // Trimming the video

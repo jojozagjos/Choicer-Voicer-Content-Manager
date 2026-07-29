@@ -217,11 +217,12 @@ async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
   const {
     mode = 'muffle',      // 'muffle' keeps a dulled bed, 'silence' removes it
     level = null,         // overrides the mode's own attenuation
-    // Where the muffle rolls the top off. 500 Hz took nearly everything with
-    // it and left a barely audible rumble, which was not the point: the bed is
-    // meant to still be there, just behind the voice. 1.4 kHz keeps the body
-    // of music and room tone while taking the edge that competes with speech.
-    cutoff = 1400,
+    // Where the muffle rolls the top off. This has been tuned from both ends:
+    // 500 Hz took nearly everything with it and left a barely audible rumble,
+    // 1.4 kHz left the original dialogue clear enough to compete with the dub.
+    // 900 Hz sits above the body of music and room tone but below where speech
+    // becomes intelligible, so the scene stays present without being followed.
+    cutoff = 900,
     fade = 0.08,          // seconds of ramp, so the duck does not click
     audioFormat = 'wav',
     baseName = '_backing_track',
@@ -252,8 +253,10 @@ async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
   // like the audio dropped out. Muffling instead rolls the top off and pulls it
   // down, so the scene keeps its atmosphere and the dub still sits in front.
   // 0.22 was about 13 dB down, which on top of the filtering left almost
-  // nothing. 0.45 is roughly 7 dB down: clearly behind the dub, still present.
-  const gain = level != null ? level : (mode === 'silence' ? 0 : 0.45);
+  // nothing; 0.45, about 7 dB, was loud enough to hear the original lines
+  // through. 0.30 is roughly 10 dB down: the scene is still there underneath
+  // without drawing attention to itself.
+  const gain = level != null ? level : (mode === 'silence' ? 0 : 0.30);
   const chain = mode === 'silence'
     ? [`volume=${gain}:enable='${when}'`]
     : [`lowpass=f=${cutoff}:enable='${when}'`, `volume=${gain}:enable='${when}'`];
@@ -276,7 +279,7 @@ async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
         if (onProgress && duration) onProgress({ percent: Math.min(100, (seconds / duration) * 100) });
       },
     });
-    fs.renameSync(partial, target);
+    await replaceFile(partial, target);
   } catch (err) {
     try { fs.unlinkSync(partial); } catch { /* never created */ }
     throw err;
@@ -345,6 +348,46 @@ async function trimVideo(source, start, end, backupPath, options = {}) {
     wasSeconds: duration,
     nowSeconds: length,
   };
+}
+
+/**
+ * Moves a freshly written file over the one it replaces.
+ *
+ * Windows refuses to replace a file while anything still holds it open, and
+ * the app itself is the likely holder: the editor keeps an audio element
+ * pointed at a pack's backing track so it can play it. The renderer lets go
+ * before asking for a rebuild, but a handle can linger for a moment after
+ * that, and something else entirely could be holding it. So this retries
+ * briefly rather than failing on the first attempt, and only gives up once it
+ * is clear the file is genuinely locked.
+ */
+async function replaceFile(from, to) {
+  const LOCKED = new Set(['EPERM', 'EACCES', 'EBUSY']);
+  let lastErr = null;
+
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      fs.renameSync(from, to);
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (!LOCKED.has(err.code)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+  }
+
+  // Copying into the existing file writes through the handle that is open on
+  // it, which Windows does allow, where swapping the directory entry is not.
+  try {
+    fs.copyFileSync(from, to);
+    fs.unlinkSync(from);
+    return;
+  } catch { /* fall through to the original failure, which is more useful */ }
+
+  throw new Error(
+    `Could not replace ${path.basename(to)}: it is open in another program. `
+    + `Close whatever is playing it and try again. (${lastErr && lastErr.code})`
+  );
 }
 
 /** Details useful for showing what will happen before committing to it. */

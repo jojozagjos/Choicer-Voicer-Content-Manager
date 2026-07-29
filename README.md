@@ -143,42 +143,6 @@ the app with a newer version keeps them.
 There is a **Help** button in the app covering all of this in more detail, including what every
 file in every pack type is for.
 
-## Building it yourself
-
-Requires [Node.js](https://nodejs.org/) 18 or newer.
-
-```bash
-npm install
-npm start          # run it
-npm run build      # build the standalone app into dist/
-npm run build:zip  # the same, plus a zip for a release
-npm run icon       # rebuild the app icon from assets/icon-source.png
-npm run shots      # retake the screenshots above
-```
-
-`npm run icon` is worth knowing about if you change the artwork. Windows wants
-one `.ico` holding several sizes, so the taskbar, alt-tab and Explorer each get
-a bitmap meant for them; that command renders `assets/icon-source.png` at seven
-sizes and packs them into one file. A PNG renamed to `.ico` is not the same
-thing and the packager will refuse it.
-
-Releasing is documented in [docs/RELEASING.md](docs/RELEASING.md). Every pack format the app
-understands is written down in [docs/PACK_FORMATS.md](docs/PACK_FORMATS.md).
-
-> Building inside OneDrive, Dropbox or Google Drive is worth avoiding: the output is around 400 MB
-> and your sync client will try to upload all of it, sometimes locking files mid-build. Send it
-> elsewhere with `CV_BUILD_OUT=%LOCALAPPDATA%\CVCM npm run build`.
-
-## Licensing
-
-The app is MIT, see [LICENSE](LICENSE).
-
-The download also carries **FFmpeg**, which does the video and audio work and is under the
-**GPL v3**. Every release ships its licence and a written offer for its source in a `licenses`
-folder beside the app. FFmpeg runs as a separate program rather than being linked in, which is why
-the two licences sit side by side. If you plan to redistribute builds yourself, read
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) first. It is not legal advice.
-
 ## Credits
 
 Made by **[@jojozagjos](https://discord.com/users/jojozagjos)**.

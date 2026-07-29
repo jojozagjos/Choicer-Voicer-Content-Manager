@@ -176,6 +176,11 @@ const state = {
   info: null,
   settings: null,
   model: null,
+  // Whether the alert bar is currently showing one of the dub-recording
+  // nudges from rescan(), as opposed to something like a missing-ffmpeg
+  // warning. Only these are safe to dismiss on our own when the Content tab
+  // opens; anything else showing there is left alone.
+  dubAlertActive: false,
   pack: null,
   session: null,
   durations: {},      // absolute path -> seconds
@@ -486,6 +491,15 @@ async function switchTab(tab) {
   el.sidebar.hidden = tab !== 'export';
   el.stage.hidden = tab !== 'export';
   el.contentView.hidden = tab !== 'content';
+
+  // The dub-recording nudge can already be up from an earlier rescan on
+  // Export, with nothing new happening here to clear it. Content is not the
+  // place for it, so arriving here dismisses it directly rather than waiting
+  // for the next rescan to notice.
+  if (tab === 'content' && state.dubAlertActive) {
+    hideAlert();
+    state.dubAlertActive = false;
+  }
 
   if (tab === 'content') await refreshContent();
   if (tab === 'home') await renderHome();
@@ -1483,15 +1497,27 @@ async function rescan(dir) {
     renderPacks();
 
     const withRecordings = state.model.packs.filter((p) => p.sessions.length);
-    if (!state.model.packs.length) {
+
+    // These two are guidance for the Export workflow specifically: go find or
+    // choose a game folder, go record a dub. They used to fire from Content
+    // actions too, since installing a pack, deleting one, or just clicking
+    // Rescan while browsing the library all run through here, and the same
+    // alert kept nagging about dub recordings while someone was in the middle
+    // of building an unrelated pack, or inside the pack editor.
+    if (state.tab === 'content') {
+      if (state.dubAlertActive) { hideAlert(); state.dubAlertActive = false; }
+    } else if (!state.model.packs.length) {
+      state.dubAlertActive = true;
       showAlert('No voice packs found in that folder.', 'Choose folder', pickGameDir);
     } else if (!withRecordings.length) {
+      state.dubAlertActive = true;
       showAlert(
         'Packs found, but you have not recorded any dubs yet. Record one in the game first.',
         'How it works',
         () => el.aboutDialog.showModal()
       );
     } else if (state.info.ffmpeg.ok) {
+      state.dubAlertActive = false;
       hideAlert();
     }
   } catch (err) {

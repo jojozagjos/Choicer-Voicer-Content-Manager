@@ -14,7 +14,7 @@
 const EDGE_GRAB = 7;      // pixels either side of a boundary that resize
 const MIN_CLIP = 0.15;    // seconds, below which a clip is not worth having
 const RULER_H = 18;
-const HOLD_TO_CREATE = 320; // ms of holding still before a drag marks a clip
+const HOLD_TO_CREATE = 120; // ms of holding still before a drag marks a clip
 
 // Dragging a clip's body used to move it, which meant panning across a busy
 // timeline knocked clips out of time. Moving now needs the grip: the ribbed bar

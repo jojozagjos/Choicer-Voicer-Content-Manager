@@ -50,8 +50,9 @@ const ignore = [
   /^\/assets\/icon-source\.png$/,
   /^\/assets\/icon\.ico$/,
   /^\/build($|\/)/,
+  // docs/ is already excluded above, which covers the notices file living
+  // there now; it is copied into licenses/ by copyLicenses instead.
   /^\/README\.md$/,
-  /^\/THIRD-PARTY-NOTICES\.md$/,
   new RegExp(`^/node_modules/ffprobe-static/bin/(${otherPlatforms.join('|')})($|/)`),
   new RegExp(`^/node_modules/ffprobe-static/bin/[^/]+/(${otherArchs.join('|')})($|/)`),
 ];
@@ -88,7 +89,7 @@ function copyLicenses(appDir) {
     },
     {
       as: 'THIRD-PARTY-NOTICES.md',
-      from: path.join(ROOT, 'THIRD-PARTY-NOTICES.md'),
+      from: path.join(ROOT, 'docs', 'THIRD-PARTY-NOTICES.md'),
       required: true,
     },
     {

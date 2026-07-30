@@ -1628,7 +1628,7 @@ async function loadChangelog() {
     const isRunning = r.version === running;
     return `<button type="button" class="changelog-pill${i === 0 ? ' on' : ''}"
       data-version="${escapeHtml(r.version)}"
-      title="${isRunning ? 'The version you are running' : `What changed in ${escapeHtml(r.version)}`}"
+      title="${isRunning ? 'The installed version' : `What changed in ${escapeHtml(r.version)}`}"
       >${escapeHtml(r.version)}${isRunning ? '<i class="changelog-dot"></i>' : ''}</button>`;
   }).join('');
 
@@ -1637,7 +1637,7 @@ async function loadChangelog() {
       <div class="changelog-heading">
         <h3>${escapeHtml(r.version)}</h3>
         ${r.version === running
-    ? '<span class="changelog-tag">You are running this</span>'
+    ? '<span class="changelog-tag">Installed</span>'
     : ''}
       </div>
       ${r.html}

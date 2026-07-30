@@ -316,8 +316,19 @@ async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
 async function trimVideo(source, start, end, backupPath, options = {}) {
   const { signal, onProgress } = options;
 
+  // A video with no readable duration is not a video this can work from, and
+  // saying so plainly matters: the most likely reason is that the file itself is
+  // damaged, and "could not read how long it is" sent people looking for a
+  // problem with the trim instead of with the video.
   const duration = probeDuration(source);
-  if (!duration) throw new Error('Could not read how long the video is');
+  if (!duration) {
+    throw new Error(
+      "This pack's video cannot be read, so there is nothing to trim from. "
+      + 'The file looks damaged. Undo will put the previous one back if the trim '
+      + 'that made it is still in this editor session; otherwise replace '
+      + `${path.basename(source)} in the pack folder.`
+    );
+  }
 
   const from = Math.max(0, Math.min(start, duration));
   const to = Math.min(end == null ? duration : end, duration);
@@ -336,7 +347,11 @@ async function trimVideo(source, start, end, backupPath, options = {}) {
   let cut = null;
   const snapped = snapToKeyframe(source, from);
   if (snapped != null) {
-    cut = await fastTrim(source, snapped, to, partial, { signal, onProgress });
+    const tried = await fastTrim(source, snapped, to, partial, { signal, onProgress });
+    // A copy that does not come out right is not a failure, just a sign that this
+    // video needs the slow path.
+    if (tried && isGoodTrim(partial, tried.to - tried.from)) cut = tried;
+    else if (tried) { try { fs.unlinkSync(partial); } catch { /* already gone */ } }
   }
 
   // Either there was no keyframe close enough to cut on, or the copy came out
@@ -359,6 +374,19 @@ async function trimVideo(source, start, end, backupPath, options = {}) {
       try { fs.unlinkSync(partial); } catch { /* never created */ }
       throw err;
     });
+
+    // Checked as closely as the copy is. A trim that writes a video the game
+    // cannot read is worse than one that fails outright, because it takes the
+    // original's place and only shows up the next time somebody opens the pack.
+    // Not hypothetical: two trims once shared a scratch path and left a pack
+    // holding two encodes spliced together, which ffprobe cannot read at all.
+    if (!isGoodTrim(partial, length)) {
+      try { fs.unlinkSync(partial); } catch { /* already gone */ }
+      throw new Error(
+        'The trim produced a video that could not be read back, so the original '
+        + 'has been left exactly as it was.'
+      );
+    }
     cut = { from, to, method: 'encode' };
   }
 
@@ -433,8 +461,10 @@ function snapToKeyframe(source, time) {
  * zero: copied Vorbis drags a lead-in with it and everything in the pack is
  * timed from the first frame.
  *
- * Returns null rather than throwing if the result is not trustworthy, so the
- * caller re-encodes. A fast path that goes wrong should cost time, not a pack.
+ * Returns null rather than throwing if ffmpeg refuses, so the caller re-encodes.
+ * Whether what it wrote is fit to keep is the caller's judgement, made with the
+ * same check the slow path answers to. A fast path that goes wrong should cost
+ * time, not a pack.
  */
 async function fastTrim(source, from, to, partial, { signal, onProgress } = {}) {
   const length = to - from;
@@ -453,11 +483,6 @@ async function fastTrim(source, from, to, partial, { signal, onProgress } = {}) 
   } catch (err) {
     try { fs.unlinkSync(partial); } catch { /* never created */ }
     if (err.cancelled) throw err; // a cancel is not a reason to try again slowly
-    return null;
-  }
-
-  if (!isGoodTrim(partial, length)) {
-    try { fs.unlinkSync(partial); } catch { /* already gone */ }
     return null;
   }
 

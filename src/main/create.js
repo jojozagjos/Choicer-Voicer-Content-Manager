@@ -444,6 +444,13 @@ function restoreClip(moved) {
     if (!fs.existsSync(to)) continue;
     fs.mkdirSync(path.dirname(from), { recursive: true });
     fs.renameSync(to, from);
+
+    // Taking the file back out leaves its holding folder behind, and undoing a
+    // few trims left a row of empty ones sitting in the app's data folder.
+    try {
+      const bin = path.dirname(to);
+      if (!fs.readdirSync(bin).length) fs.rmdirSync(bin);
+    } catch { /* not empty, or not ours to remove */ }
   }
   return { restored: moved.length };
 }

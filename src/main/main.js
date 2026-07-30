@@ -467,7 +467,7 @@ function startupBackground() {
 // than an exact count, because a colour draws two controls and an exact number
 // would break on any cosmetic change. It exists to catch a form quietly showing
 // a handful of a config file's settings, which the menu did.
-const SETTINGS_COUNT = { menu: 20 };
+const SETTINGS_COUNT = { menu: 20, studio: 2 };
 
 // CVE_SMOKE=1 boots the whole app windowless, reports whether the renderer
 // came up clean, and exits. Used to verify changes without stealing focus.

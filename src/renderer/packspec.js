@@ -131,6 +131,29 @@ const SPECS = {
       },
     ],
     config: 'config_studio.json',
+    settings: [
+      {
+        title: 'Studio options',
+        fields: [
+          {
+            path: 'use_builtin_light',
+            label: "Light the studio with the game's own lighting",
+            kind: 'bool',
+            fallback: true,
+            note: 'Turn this off when the model brings its own lighting with it.',
+          },
+          {
+            path: 'music_studio_loop_start',
+            label: 'Music loop start',
+            kind: 'number',
+            fallback: 0,
+            step: 'any',
+            note: 'Where the music jumps back to when it loops. A sample count if the music is a '
+              + 'WAV, a time in seconds if it is an OGG or MP3.',
+          },
+        ],
+      },
+    ],
   },
 
   menu: {

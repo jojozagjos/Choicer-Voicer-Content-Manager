@@ -36,6 +36,8 @@ Fixes for trimming, undo and pack audio.
   disc, button colours and the music loop point. It previously offered two of
   them. Colours are picked from a swatch, with an alpha slider where the setting
   takes one.
+- The studio editor offers its two settings, the built in lighting and the music
+  loop point. It previously offered neither.
 - Menu and session music is saved as OGG rather than WAV, which was turning a few
   minutes of music into a file of well over a hundred megabytes.
 

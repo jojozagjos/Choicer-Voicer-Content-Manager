@@ -21,7 +21,8 @@
     "build": "node scripts/build.js",
     "build:zip": "node scripts/build.js --zip",
     "icon": "electron scripts/make-icon.js",
-    "shots": "node scripts/make-screenshots.js"
+    "shots": "node scripts/make-screenshots.js",
+    "demo": "node scripts/make-demo.js"
   },
   "devDependencies": {
     "@electron/packager": "^20.0.4",

@@ -6,7 +6,7 @@ const fsp = require('fs/promises');
 const os = require('os');
 const path = require('path');
 const { Readable } = require('stream');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 
 const gamedata = require('./gamedata');
@@ -440,6 +440,10 @@ const SMOKE = process.env.CVE_SMOKE === '1';
 // Capturing the README's screenshots. Also runs hidden, for the same reason.
 const SHOTS = process.env.CVE_SHOTS === '1';
 
+// Recording the demo video. Unlike the other two, this one needs the window
+// actually painted, so it is shown without focus and parked off screen.
+const DEMO = process.env.CVE_DEMO === '1';
+
 function createWindow() {
   // The packager bakes the icon into the exe, so a packaged build already has
   // it. Running from source has no exe to carry one, hence this.
@@ -464,12 +468,27 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
-  mainWindow.once('ready-to-show', () => { if (!SMOKE && !SHOTS) mainWindow.show(); });
+  // Demo mode shows the window itself, unfocused and off screen, so this must
+  // not also call show() and pull it into view.
+  mainWindow.once('ready-to-show', () => {
+    if (!SMOKE && !SHOTS && !DEMO) mainWindow.show();
+  });
 
   if (SMOKE) runSmokeTest(mainWindow);
   if (SHOTS) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(() => runScreenshots(mainWindow), 4500);
+    });
+  }
+
+  if (DEMO) {
+    // Off screen and unfocused. A window the compositor considers hidden is
+    // not painted, and capturePage on one gives blank or stale frames, but
+    // showing it normally would take focus and cover whatever you are doing.
+    mainWindow.setPosition(-4000, 0);
+    mainWindow.showInactive();
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => runDemo(mainWindow), 5000);
     });
   }
 
@@ -937,6 +956,311 @@ async function runScreenshots(win) {
   }
 
   console.log(`\nWritten to ${OUT}`);
+  app.exit(0);
+}
+
+/**
+ * Records a short tour of the app as an MP4, into docs/images.
+ *
+ *   npm run demo
+ *
+ * Frames come from webContents.capturePage, the same way the screenshots are
+ * taken, then the bundled ffmpeg stitches them. The window is shown without
+ * being focused and parked off screen: it has to be visible for the compositor
+ * to paint it at all, but it never takes focus or covers what you are doing.
+ *
+ * Where the tour needs the video to appear to play, it steps currentTime along
+ * itself rather than pressing play. Seeking forces a decode of exactly the
+ * frame about to be captured, which makes the result deterministic instead of
+ * depending on how fast a background window is allowed to run.
+ */
+async function runDemo(win) {
+  const FPS = 12;
+  const OUT = path.join(__dirname, '..', '..', 'docs', 'images');
+  const frames = fs.mkdtempSync(path.join(os.tmpdir(), 'cvcm-demo-'));
+  fs.mkdirSync(OUT, { recursive: true });
+
+  let n = 0;
+  const grab = async (count = 1) => {
+    for (let i = 0; i < count; i++) {
+      const image = await win.webContents.capturePage();
+      const png = image.toPNG();
+      // The first captures after the window appears come back empty, before it
+      // has painted anything. Writing those produced a run of zero byte files,
+      // and ffmpeg reads the pixel format from the first frame, so one empty
+      // frame at the front made the whole sequence unreadable.
+      if (!png.length) continue;
+      fs.writeFileSync(path.join(frames, `f${String(n++).padStart(5, '0')}.png`), png);
+    }
+  };
+
+  // Wait for the window to actually be painting before the tour starts.
+  for (let i = 0; i < 40; i++) {
+    const probe = await win.webContents.capturePage();
+    if (probe.toPNG().length) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  /** Holds the current view for a number of seconds. */
+  const hold = (seconds) => grab(Math.round(seconds * FPS));
+
+  /**
+   * Runs a step in the page, with a ceiling on how long it may take.
+   *
+   * A step that waits for something which never arrives would otherwise stop
+   * the whole recording with no output and no clue where it stuck. Giving up on
+   * one step and carrying on costs a few seconds of tour; hanging costs
+   * everything.
+   */
+  const run = (js, limitMs = 45000) => {
+    const step = win.webContents.executeJavaScript(`(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      ${js}
+      return null;
+    })()`);
+
+    return Promise.race([
+      step,
+      new Promise((resolve) => setTimeout(() => {
+        console.log('  (a step timed out, carrying on)');
+        resolve(null);
+      }, limitMs)),
+    ]).catch((err) => {
+      console.log(`  (a step failed, carrying on: ${err.message})`);
+      return null;
+    });
+  };
+
+  const caption = (text, seconds = 2.4) => run(`
+    let tag = document.getElementById('demo-caption');
+    if (!tag) {
+      tag = document.createElement('div');
+      tag.id = 'demo-caption';
+      tag.style.cssText = 'position:fixed;left:50%;bottom:34px;transform:translateX(-50%);'
+        + 'z-index:9999;padding:12px 22px;border-radius:11px;font:600 19px system-ui,sans-serif;'
+        + 'background:rgba(6,14,22,.93);color:#eaf6ff;border:1px solid #2b7fa8;'
+        + 'box-shadow:0 10px 34px rgba(0,0,0,.6);max-width:78vw;text-align:center';
+      document.body.append(tag);
+    }
+    tag.textContent = ${JSON.stringify(text)};
+    tag.hidden = false;
+  `).then(() => hold(seconds));
+
+  const clearCaption = () => run(`
+    const t = document.getElementById('demo-caption');
+    if (t) t.hidden = true;
+  `);
+
+  console.log('Recording…');
+
+  // Nothing to film behind the splash or the first run panel.
+  await run(`
+    const s = document.getElementById('splash');
+    if (s) s.hidden = true;
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  `);
+
+  // --- the library ---------------------------------------------------------
+  await run(`
+    document.querySelector('[data-tab="content"]').click();
+    await wait(700);
+    const voice = document.querySelector('#content-types button');
+    if (voice) voice.click();
+    await wait(600);
+  `);
+  await caption('Every pack the game reads, in one place');
+  await clearCaption();
+  await hold(0.8);
+
+  // A pack selected, so its checks panel is showing.
+  await run(`
+    const tiles = [...document.querySelectorAll('.pack-tile')];
+    const best = tiles
+      .map((t) => ({ t, n: parseInt((t.textContent.match(/(\\d+)\\s+lines/) || [0, 0])[1], 10) }))
+      .sort((a, b) => b.n - a.n)[0];
+    if (best) best.t.click();
+    await wait(700);
+  `);
+  await caption('Checked against what the game will actually load');
+  await clearCaption();
+
+  // --- the editor ----------------------------------------------------------
+  await run(`
+    const edit = document.querySelector('#btn-detail-edit');
+    if (edit) edit.click();
+    for (let i = 0; i < 200; i++) {
+      await wait(500);
+      if (document.querySelector('canvas.timeline')) break;
+    }
+    await wait(1200);
+  `, 150000);
+  await caption('Dub packs open in a timeline editor');
+  await clearCaption();
+
+  // Step the video along by hand. Pressing play would depend on how fast a
+  // background window is allowed to run; seeking decodes exactly what is about
+  // to be captured.
+  await run(`
+    const stamp = document.querySelector('.clip-row .line-time');
+    if (stamp) stamp.click();
+    await wait(900);
+  `);
+  for (let i = 0; i < 44; i++) {
+    await run(`
+      const v = document.querySelector('.editor-video video');
+      if (v) {
+        v.currentTime = Math.min(v.duration || 0, v.currentTime + ${(1 / FPS).toFixed(3)});
+        await new Promise((r) => {
+          const done = () => r();
+          v.addEventListener('seeked', done, { once: true });
+          setTimeout(done, 220);
+        });
+      }
+    `);
+    await grab();
+  }
+
+  await caption('Captions show over the video as it plays');
+  await clearCaption();
+
+  // The picture menu, opened by script since a real hover cannot be faked.
+  await run(`
+    const thumb = document.querySelector('.clip-thumb');
+    if (thumb) {
+      thumb.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }));
+      const menu = thumb.querySelector('.clip-pic-actions');
+      if (menu) { menu.style.opacity = '1'; menu.style.pointerEvents = 'auto'; }
+    }
+    await wait(400);
+  `);
+  await caption('A picture per line: grab a frame, upload, or reuse one');
+  await run(`
+    const menu = document.querySelector('.clip-pic-actions');
+    if (menu) { menu.style.opacity = ''; menu.style.pointerEvents = ''; }
+  `);
+  await clearCaption();
+
+  // The backing track lane, if this pack has one.
+  const hasLane = await win.webContents.executeJavaScript(`
+    !document.querySelector('[data-role="backing-lane"]').hidden
+  `).catch(() => false);
+
+  if (hasLane) {
+    await run(`
+      const lane = document.querySelector('[data-role="backing-lane"]');
+      if (lane) lane.scrollIntoView({ block: 'center' });
+      await wait(600);
+    `);
+    await caption('The backing track sits under the timeline');
+    await run(`
+      const b = [...document.querySelectorAll('[data-listen]')].find((x) => x.dataset.listen === 'backing');
+      if (b) b.click();
+      await wait(500);
+    `);
+    await caption('Listen to it on its own to check the ducking');
+    await run(`
+      const v = [...document.querySelectorAll('[data-listen]')].find((x) => x.dataset.listen === 'video');
+      if (v) v.click();
+    `);
+    await clearCaption();
+  }
+
+  // Trimming, which keeps the picture visible while you choose a cut.
+  await run(`
+    const trim = document.querySelector('[data-act="trim"]');
+    if (trim) trim.click();
+    await wait(800);
+  `);
+  await caption('Trim the video, and every clip shifts to stay in sync');
+  await run(`
+    // Scoped to the trim panel. A bare [data-role="cancel"] also matches the
+    // first run panel's button, so it could close the wrong thing and leave
+    // the trim overlay sitting over everything that followed.
+    const cancel = document.querySelector('.trim-panel [data-role="cancel"]');
+    if (cancel) cancel.click();
+    await wait(400);
+  `);
+  await clearCaption();
+
+  // --- exporting -----------------------------------------------------------
+  await run(`
+    const root = document.getElementById('editor-view');
+    if (!root.hidden) {
+      const back = root.querySelector('.editor-head button');
+      if (back) back.click();
+      await wait(700);
+    }
+    document.querySelector('[data-tab="export"]').click();
+    await wait(800);
+
+    const cards = [...document.querySelectorAll('.pack-card')];
+    const withTakes = cards.find((c) => !/no dubs/i.test(c.textContent)) || cards[0];
+    if (withTakes) withTakes.click();
+
+    const overlay = document.getElementById('loading-overlay');
+    for (let i = 0; i < 240; i++) {
+      await wait(500);
+      if (overlay.hidden && document.querySelectorAll('.line-row').length) break;
+    }
+    await wait(900);
+  `, 150000);
+  await caption('Your recorded takes, laid back over the video');
+  await clearCaption();
+  await hold(0.8);
+
+  await run(`
+    const rows = [...document.querySelectorAll('.line-row')];
+    if (rows[1]) rows[1].scrollIntoView({ block: 'center' });
+    await wait(500);
+  `);
+  await caption('Per line: which take, how loud, how far to nudge it');
+  await clearCaption();
+
+  await run(`
+    const btn = document.getElementById('btn-export');
+    if (btn && !btn.disabled) btn.click();
+    await wait(900);
+  `);
+  await caption('Then export it as a video you can post');
+  await run(`
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+    await wait(400);
+  `);
+  await clearCaption();
+
+  console.log(`  ${n} frames`);
+
+  // --- stitch --------------------------------------------------------------
+  const target = path.join(OUT, 'demo.mp4');
+  const ffmpegPath = ffmpeg.status().ffmpeg;
+
+  await new Promise((resolve, reject) => {
+    const proc = spawn(ffmpegPath, [
+      '-y',
+      '-framerate', String(FPS),
+      '-i', path.join(frames, 'f%05d.png'),
+      '-c:v', 'libx264',
+      '-preset', 'slow',
+      '-crf', '23',
+      // Reddit and most players want even dimensions and this pixel format.
+      '-pix_fmt', 'yuv420p',
+      '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+      '-movflags', '+faststart',
+      target,
+    ], { windowsHide: true });
+
+    let err = '';
+    proc.stderr.on('data', (d) => { err += d.toString(); });
+    proc.on('error', reject);
+    proc.on('close', (code) => (code === 0
+      ? resolve()
+      : reject(new Error(err.split('\n').slice(-8).join('\n')))));
+  });
+
+  fs.rmSync(frames, { recursive: true, force: true });
+
+  const size = fs.statSync(target).size;
+  console.log(`\n${target}`);
+  console.log(`  ${(n / FPS).toFixed(1)}s, ${(size / 1e6).toFixed(1)} MB, ${FPS} fps`);
   app.exit(0);
 }
 

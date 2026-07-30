@@ -79,10 +79,9 @@ packs, and a list of what each version changed.
 
 ### Around the app
 
-- Messages appear under the header rather than in the bottom right corner, where
-  they covered the buttons at the foot of the pack details and the clip list.
-  They no longer take a click meant for what is behind them, and can be clicked
-  away early.
+- Messages no longer block anything. They sit in the corner as before, but take
+  no clicks at all, so the buttons under them stay usable, and they fade almost
+  out of sight when the pointer reaches them.
 - Rescan reloads the pack being edited, rather than only the library behind the
   editor.
 

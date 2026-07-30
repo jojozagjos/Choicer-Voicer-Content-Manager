@@ -1441,23 +1441,20 @@ input[type="range"]::-webkit-slider-thumb {
   transition: width 0.25s;
 }
 
-/* Under the header rather than in the bottom right corner, where they used to
-   cover the buttons at the foot of the pack details and the clip list. The top
-   is set from JS, since the alert bar above them comes and goes. */
+/* Out of the way in the corner. Nothing here takes a pointer event, so the
+   buttons underneath stay clickable through them; reaching them with the
+   pointer fades them instead, which JS drives since :hover cannot fire on
+   something that takes no pointer events. */
 .toasts {
   position: fixed;
-  top: 64px;
-  left: 50%;
-  transform: translateX(-50%);
+  right: 16px;
+  bottom: 16px;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-end;
   gap: 8px;
   z-index: 70;
-  width: max-content;
-  max-width: min(560px, calc(100vw - 32px));
-  /* The stack never swallows a click meant for what is underneath it; only the
-     messages themselves take one, to dismiss. */
+  max-width: min(420px, calc(100vw - 32px));
   pointer-events: none;
 }
 
@@ -1473,14 +1470,15 @@ input[type="range"]::-webkit-slider-thumb {
   backdrop-filter: blur(10px);
   font-size: 13px;
   line-height: 1.45;
-  cursor: pointer;
-  pointer-events: auto;
+  pointer-events: none;
   opacity: 0;
-  transform: translateY(-10px) scale(0.97);
+  transform: translateY(10px) scale(0.97);
   transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1);
 }
 .toast.in { opacity: 1; transform: none; }
-.toast:hover { border-color: var(--hover-line); }
+/* Reaching one with the pointer gets it out of the way without waiting for it
+   to time out. Enough is left to see that something is still there. */
+.toast.in.faded { opacity: 0.12; }
 
 /* A round mark carrying the colour, which reads faster than a coloured edge and
    survives the message wrapping onto two lines. */

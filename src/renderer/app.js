@@ -246,17 +246,35 @@ function sanitizeFilename(name) {
 const TOAST_MARKS = { ok: '✓', warn: '!', error: '✕', info: 'i' };
 
 /**
- * Puts the stack of messages just under the header, whichever of the header and
- * the alert bar is currently the last thing there.
+ * Fades the messages out of the way when the pointer reaches them.
  *
- * They used to sit in the bottom right corner, on top of the buttons at the foot
- * of the pack details and the clip list, so a message about what just happened
- * covered the controls for doing the next thing.
+ * They sit in the corner over the buttons at the foot of the pack details, and
+ * take no pointer events, so a click goes straight through to whatever is
+ * underneath. That also means they never receive a hover, and CSS :hover can
+ * never fire on them, so the pointer is tested against their boxes instead.
+ *
+ * The listener only runs while something is on screen.
  */
-function placeToasts() {
-  const bar = el.alertBar && !el.alertBar.hidden ? el.alertBar : document.querySelector('.topbar');
-  const bottom = bar ? bar.getBoundingClientRect().bottom : 0;
-  el.toasts.style.top = `${Math.round(bottom) + 12}px`;
+let toastWatch = null;
+function watchToastHover() {
+  if (toastWatch) return;
+  toastWatch = (event) => {
+    const notes = el.toasts.children;
+    if (!notes.length) { stopToastHover(); return; }
+    for (const note of notes) {
+      const box = note.getBoundingClientRect();
+      const over = event.clientX >= box.left && event.clientX <= box.right
+        && event.clientY >= box.top && event.clientY <= box.bottom;
+      note.classList.toggle('faded', over);
+    }
+  };
+  document.addEventListener('mousemove', toastWatch);
+}
+
+function stopToastHover() {
+  if (!toastWatch) return;
+  document.removeEventListener('mousemove', toastWatch);
+  toastWatch = null;
 }
 
 function toast(message, kind = 'info', timeout = 4200) {
@@ -266,19 +284,17 @@ function toast(message, kind = 'info', timeout = 4200) {
     <span class="toast-text"></span>`;
   node.querySelector('.toast-text').textContent = message;
 
-  // Anything can be got rid of early, which matters more now that they sit over
-  // the middle of the window rather than out of the way in a corner.
-  node.title = 'Click to dismiss';
-  const close = () => {
-    node.classList.remove('in');
-    setTimeout(() => node.remove(), 220);
-  };
-  node.addEventListener('click', close);
-
-  placeToasts();
   el.toasts.append(node);
   requestAnimationFrame(() => node.classList.add('in'));
-  setTimeout(close, timeout);
+  watchToastHover();
+
+  setTimeout(() => {
+    node.classList.remove('in');
+    setTimeout(() => {
+      node.remove();
+      if (!el.toasts.children.length) stopToastHover();
+    }, 220);
+  }, timeout);
   return node;
 }
 

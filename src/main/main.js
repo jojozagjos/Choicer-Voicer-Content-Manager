@@ -1691,6 +1691,12 @@ function runSmokeTest(win) {
           hasBackingButton: Boolean(q('[data-act="backing"]')),
           clipRows: root.querySelectorAll('.clip-row').length,
           thumbs: root.querySelectorAll('.clip-thumb').length,
+          // Character names are offered rather than retyped, so the field has
+          // to actually be wired to a list holding the pack's own speakers.
+          characterListId: (root.querySelector('[data-field="character"]') || {}).getAttribute
+            ? root.querySelector('[data-field="character"]').getAttribute('list')
+            : null,
+          characterOptions: [...root.querySelectorAll('datalist option')].map((o) => o.value),
         };
 
         // Volume actually reaches the element.
@@ -1814,6 +1820,16 @@ function runSmokeTest(win) {
         if (toolsCheck.captionHiddenAfter === false) errors.push('caption stayed up past its line');
         if (toolsCheck.iconShownAfterReopen === false) errors.push('pack icon vanished on reopening');
         if (toolsCheck.iconLoaded === false) errors.push('pack icon is present but does not load');
+
+        // A field pointing at a list that does not exist silently offers
+        // nothing, which looks exactly like it working until you use it.
+        if (toolsCheck.clipRows) {
+          if (!toolsCheck.characterListId) {
+            errors.push('the character field offers no list of existing names');
+          } else if (!toolsCheck.characterOptions.length) {
+            errors.push('the character list is empty despite the pack having clips');
+          }
+        }
       }
     } catch (err) {
       toolsCheck = { error: err.message };

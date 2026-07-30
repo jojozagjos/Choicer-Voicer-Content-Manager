@@ -1276,6 +1276,18 @@ export class PackEditor {
       return;
     }
 
+    // Everyone already speaking in this pack, offered as suggestions on each
+    // line. Typing a name out every time invites a misspelling, and a name
+    // that differs by one letter is a different character as far as the game,
+    // the captions and the colours are concerned. Taken from the clips
+    // themselves rather than a stored list, so it follows renames.
+    const known = [...new Set(clips.map((c) => c.character).filter(Boolean))].sort();
+    const listId = 'clip-characters';
+    const datalist = el('datalist');
+    datalist.id = listId;
+    datalist.innerHTML = known.map((name) => `<option value="${escapeHtml(name)}"></option>`).join('');
+    container.append(datalist);
+
     for (const clip of clips) {
       const row = el('div', 'clip-row');
       row.dataset.base = clip.base;
@@ -1313,13 +1325,16 @@ export class PackEditor {
           <div class="clip-fields">
             <textarea class="input" data-field="caption" rows="2"
                       placeholder="What they say"></textarea>
-            <input class="input" data-field="character" placeholder="Who says it" />
+            <input class="input" data-field="character" list="${listId}"
+                   placeholder="Who says it" autocomplete="off" />
           </div>
         </div>`;
 
       row.querySelector('[data-act="grab"]').addEventListener('click', () => this.grabClipImage(clip));
       row.querySelector('[data-act="upload"]').addEventListener('click', () => this.uploadClipImage(clip));
       row.querySelector('[data-act="reuse"]').addEventListener('click', () => this.reuseClipImage(clip));
+
+      this.placePictureMenu(row.querySelector('.clip-thumb'));
 
       // Set through the property, never through the attribute: captions are
       // full of double quotes and putting one in value="" ends the attribute,
@@ -1514,6 +1529,51 @@ export class PackEditor {
         timestamp: clip.time,
       },
     });
+  }
+
+  /**
+   * Opens a clip's picture buttons to the left of its thumbnail.
+   *
+   * Positioned from script rather than in the stylesheet because the clip list
+   * scrolls, and a scrolling box clips on both axes even when only one is set
+   * to scroll. An absolutely placed panel reaching left, out of that box, was
+   * simply cut in half. Fixed coordinates escape it entirely.
+   *
+   * It flips to the right if there is no room on the left, so the buttons stay
+   * reachable on a narrow window instead of running off the edge.
+   */
+  placePictureMenu(thumb) {
+    if (!thumb) return;
+    const menu = thumb.querySelector('.clip-pic-actions');
+    if (!menu) return;
+
+    const place = () => {
+      const at = thumb.getBoundingClientRect();
+      // Measured while shown, since a hidden element reports no size.
+      menu.style.visibility = 'hidden';
+      menu.style.display = 'flex';
+      const size = menu.getBoundingClientRect();
+      menu.style.display = '';
+      menu.style.visibility = '';
+
+      const GAP = 8;
+      const room = at.left - GAP;
+      const toLeft = room >= size.width;
+
+      menu.classList.toggle('flipped', !toLeft);
+      menu.style.left = toLeft
+        ? `${at.left - size.width - GAP}px`
+        : `${at.right + GAP}px`;
+
+      // Centred on the thumbnail, then kept on screen.
+      const wanted = at.top + at.height / 2 - size.height / 2;
+      const top = Math.max(8, Math.min(wanted, window.innerHeight - size.height - 8));
+      menu.style.top = `${top}px`;
+    };
+
+    thumb.addEventListener('pointerenter', place);
+    // A scroll or resize mid-hover would leave it pointing at nothing.
+    thumb.addEventListener('focusin', place);
   }
 
   /** Plays a single clip so you can hear what you cut. */

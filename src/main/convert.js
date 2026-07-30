@@ -167,12 +167,39 @@ async function convertInto(source, destDir, baseName, options = {}) {
     throw err;
   }
 
+  // Replacing a slot's sound means replacing it, whatever format it was in. A
+  // slot holding menu.ogg and given a .wav would otherwise keep both, and which
+  // one the game picks is not something the person choosing it decided.
+  const replaced = overwrite && kind === 'audio'
+    ? dropOtherAudio(destDir, baseName, target)
+    : [];
+
   return {
     path: target,
     converted: true,
     trimmed: needsTrim,
     duration: needsTrim ? maxSeconds : duration,
+    replaced,
   };
+}
+
+// The files a pack uses for music rather than for a sound effect. Minutes long,
+// where everything else here is a click or a line.
+const MUSIC_BASES = ['music_menu', 'music_studio'];
+
+/**
+ * What format a piece of audio should be stored as, decided by where it is
+ * going rather than by which part of the app is putting it there.
+ *
+ * WAV is right for a button click: it decodes instantly and costs nothing at a
+ * few kilobytes. It is wrong for a music loop, where the same choice turned a
+ * nine minute track into a 105 MB file. Keying this on the destination name
+ * means a file reaches the right format whether it arrived through the slot that
+ * names it, a drop onto the pack, or a folder dragged in whole.
+ */
+function audioFormatFor(baseName, asked) {
+  if (MUSIC_BASES.includes(String(baseName).toLowerCase())) return 'ogg';
+  return asked || 'wav';
 }
 
 /**
@@ -185,7 +212,10 @@ async function convertMany(sources, destDir, options = {}) {
   for (const source of sources) {
     const base = options.baseName || path.basename(source, path.extname(source));
     try {
-      const result = await convertInto(source, destDir, base, options);
+      const result = await convertInto(source, destDir, base, {
+        ...options,
+        audioFormat: audioFormatFor(base, options.audioFormat),
+      });
       results.push({ ok: true, source, ...result });
     } catch (err) {
       results.push({ ok: false, source, error: err.message });

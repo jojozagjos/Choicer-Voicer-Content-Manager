@@ -27,6 +27,16 @@ const fmt = (seconds) => {
   return `${m}:${s.toFixed(2).padStart(5, '0')}`;
 };
 
+// Pack types that are a person on screen. Only these stand in the game's
+// cardboard cutout when they have no picture; the rest get their type's glyph,
+// matching what the library grid does.
+const CHARACTER_PACKS = new Set(['player', 'host', 'judges']);
+
+const TYPE_GLYPH = {
+  voice: '🎙️', player: '🧍', host: '🎤', judges: '⭐',
+  studio: '🏛️', menu: '🖼️', chatter: '💬',
+};
+
 const escapeHtml = (text) => {
   const div = document.createElement('div');
   div.textContent = text == null ? '' : String(text);
@@ -2046,11 +2056,26 @@ export class PackEditor {
    * like, and how to get files into it. Having one of these is most of what
    * makes the editors feel like the same app.
    */
+  /**
+   * The picture at the top of an editor.
+   *
+   * The cardboard cutout only stands in for a pack that is a person on screen,
+   * because that is what the game does with one. A menu or a studio is not a
+   * person, and showing a cutout for one said the pack was missing a character
+   * picture it never had.
+   */
+  packIconHtml() {
+    const pack = this.pack;
+    if (pack.iconUrl) return `<img src="${escapeHtml(pack.iconUrl)}" alt="" />`;
+    if (CHARACTER_PACKS.has(pack.type)) {
+      return '<img src="../../assets/placeholder.png" alt="No picture yet" class="placeholder-art" />';
+    }
+    return `<span class="slot-glyph">${TYPE_GLYPH[pack.type] || '📦'}</span>`;
+  }
+
   buildEditorHeader(blurb) {
     const pack = this.pack;
-    const icon = pack.iconUrl
-      ? `<img src="${pack.iconUrl}" alt="" />`
-      : '<img src="../../assets/placeholder.png" alt="No picture yet" class="placeholder-art" />';
+    const icon = this.packIconHtml();
 
     const head = el('div', 'pack-head');
     head.innerHTML = `
@@ -2376,11 +2401,7 @@ export class PackEditor {
     // The pack's own picture at the top is the one most likely to have just
     // been changed, so it repaints too.
     const head = this.root.querySelector('.pack-head-icon');
-    if (head) {
-      head.innerHTML = this.pack.iconUrl
-        ? `<img src="${this.pack.iconUrl}" alt="" />`
-        : '<img src="../../assets/placeholder.png" alt="No picture yet" class="placeholder-art" />';
-    }
+    if (head) head.innerHTML = this.packIconHtml();
 
     for (const card of [...this.root.querySelectorAll('.slot-card[data-slot]')]) {
       const slot = card._slot;

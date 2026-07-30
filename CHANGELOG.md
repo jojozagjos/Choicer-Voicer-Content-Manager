@@ -55,7 +55,9 @@ packs, and a list of what each version changed.
 - The studio editor offers its two settings, the built in lighting and the music
   loop point. It previously offered neither.
 - Menu and session music is saved as OGG rather than WAV, which was turning a few
-  minutes of music into a file of well over a hundred megabytes.
+  minutes of music into a file of well over a hundred megabytes. This applies
+  however the music arrives: through the slot that names it, dropped onto the
+  pack, or in a folder added whole.
 
 ### Packs
 
@@ -65,7 +67,13 @@ packs, and a list of what each version changed.
   A clip with two audio files could be played twice by the game.
 - A clip that already has more than one audio file is reported, with the names of
   the files.
+- Recording over a slot's sound replaces it, as the prompt says it will. It was
+  being saved alongside as a second file, with the old one left in the pack.
+- Replacing a slot's sound clears out what was there even when the new one is a
+  different format, so a slot never holds two files.
 - Recording a take no longer fades in at the start.
+- The cardboard cutout only stands in for packs that are a person on screen. A
+  menu or studio pack with no picture shows its own symbol instead.
 - An interrupted conversion no longer leaves a part finished file in a pack
   folder.
 

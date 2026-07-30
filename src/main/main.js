@@ -736,6 +736,10 @@ async function runTypeEditorChecks(win, gameDir, errors) {
           slots: root.querySelectorAll('.slot-card').length,
           filledSlots: root.querySelectorAll('.slot-card.filled').length,
           chatterRows: root.querySelectorAll('.chatter-row').length,
+          // The cardboard cutout belongs to packs that are a person on screen.
+          // A menu showing one claimed it was missing a character picture that
+          // a menu pack does not have in the first place.
+          headerCutout: Boolean(root.querySelector('.pack-head-icon .placeholder-art')),
           sidePanel: Boolean(root.querySelector('.editor-side h3')),
           sideTitle: (root.querySelector('.editor-side h3') || {}).textContent || '',
           // Both shapes: the hand-written forms mark their controls with
@@ -763,6 +767,9 @@ async function runTypeEditorChecks(win, gameDir, errors) {
       errors.push(`${type} editor rendered no slots`);
     }
     if (!r.sidePanel) errors.push(`${type} editor has no side panel`);
+    if (r.headerCutout && !['player', 'host', 'judges'].includes(type)) {
+      errors.push(`${type} editor shows the character cutout for its pack picture`);
+    }
 
     // A type whose spec lists settings must actually render them. The menu form
     // used to offer two of the twenty-three settings its config file holds, and
@@ -2625,6 +2632,11 @@ function registerIpc() {
         kind: 'audio',
         audioFormat: audioFormat || 'wav',
         maxSeconds: maxSeconds || null,
+        // Recording over a slot replaces its sound, which is what the app asks
+        // about before it starts. Without this the take was written alongside as
+        // <slot>_2, the config was pointed at the new name, and the sound that
+        // was supposedly replaced stayed in the pack.
+        overwrite: true,
       });
       return { ok: true, path: result.path, base: path.basename(result.path, path.extname(result.path)) };
     } catch (err) {

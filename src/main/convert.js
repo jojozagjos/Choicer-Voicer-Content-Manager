@@ -17,7 +17,10 @@
 
 const fs = require('fs');
 const path = require('path');
-const { runFfmpeg, probeVideo, probeDuration } = require('./ffmpeg');
+const {
+  runFfmpeg, probeVideo, probeDuration,
+  probeStartTime, probeFirstFrameDecodes, probeKeyframesNear,
+} = require('./ffmpeg');
 
 const OK_VIDEO = ['.ogv'];
 const OK_AUDIO = ['.wav', '.mp3', '.ogg'];
@@ -29,6 +32,19 @@ const THEORA_QUALITY = 7;
 const VORBIS_QUALITY = 4;
 
 const extOf = (f) => path.extname(f).toLowerCase();
+
+/**
+ * A scratch path for a job to write into before it replaces the real file.
+ *
+ * The counter matters. These used to be named by process id alone, which is the
+ * same for every job in the app, so two jobs working on one pack wrote to the
+ * same scratch file and raced to rename it over the video. That is reachable by
+ * ordinary use: start a trim, leave the tab, come back and start another.
+ */
+let partialSeq = 0;
+function partialPath(target, tag, ext) {
+  return `${target}.${process.pid}.${++partialSeq}.${tag}.${ext}`;
+}
 
 function uniquePath(target) {
   if (!fs.existsSync(target)) return target;
@@ -123,7 +139,7 @@ async function convertInto(source, destDir, baseName, options = {}) {
 
   // Written to a temp name first so a failure cannot leave a half-file in a
   // pack folder, where the game would try to load it.
-  const partial = `${target}.${process.pid}.part${targetExt}`;
+  const partial = partialPath(target, 'part', targetExt.replace(/^\./, ''));
   args.push('-y', partial);
 
   try {
@@ -179,7 +195,7 @@ async function extractAudioRange(source, destDir, baseName, start, duration, opt
   let target = path.join(destDir, `${baseName}.${audioFormat}`);
   if (!overwrite) target = uniquePath(target);
 
-  const partial = `${target}.${process.pid}.part.${audioFormat}`;
+  const partial = partialPath(target, 'part', audioFormat);
 
   // -ss before -i seeks quickly; -t after it bounds the copy.
   const args = ['-ss', String(Math.max(0, start)), '-i', source, '-t', String(Math.max(0.05, duration)), '-vn'];
@@ -234,7 +250,7 @@ async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
 
   fs.mkdirSync(destDir, { recursive: true });
   const target = path.join(destDir, `${baseName}.${audioFormat}`);
-  const partial = `${target}.${process.pid}.part.${audioFormat}`;
+  const partial = partialPath(target, 'part', audioFormat);
 
   // One enable window per line, widened slightly so the ramp sits outside the
   // speech rather than clipping its first syllable.
@@ -310,26 +326,41 @@ async function trimVideo(source, start, end, backupPath, options = {}) {
   if (length < 0.5) throw new Error('That would leave less than half a second of video');
   if (from <= 0.001 && to >= duration - 0.001) throw new Error('That is the whole video already');
 
-  const partial = `${source}.${process.pid}.trim.ogv`;
+  const partial = partialPath(source, 'trim', 'ogv');
 
-  // -ss before -i seeks quickly, but re-encoding is still needed: cutting on a
-  // non-keyframe with a stream copy leaves a frozen or blank opening.
-  await runFfmpeg([
-    '-ss', String(from),
-    '-i', source,
-    '-t', String(length),
-    '-c:v', 'libtheora', '-q:v', String(THEORA_QUALITY),
-    '-c:a', 'libvorbis', '-q:a', String(VORBIS_QUALITY),
-    '-f', 'ogv', '-y', partial,
-  ], {
-    signal,
-    onProgress: (seconds) => {
-      if (onProgress && length) onProgress({ percent: Math.min(100, (seconds / length) * 100) });
-    },
-  }).catch((err) => {
-    try { fs.unlinkSync(partial); } catch { /* never created */ }
-    throw err;
-  });
+  // Copying the picture is worth a lot of trouble to get right. Re-encoding
+  // Theora runs at about half real time on 1080p, so trimming a four minute
+  // video took six and a half minutes, and nobody is going to sit through that
+  // to shave a few seconds off the front. Copying the same packets takes about
+  // two seconds. See fastTrim for what it costs.
+  let cut = null;
+  const snapped = snapToKeyframe(source, from);
+  if (snapped != null) {
+    cut = await fastTrim(source, snapped, to, partial, { signal, onProgress });
+  }
+
+  // Either there was no keyframe close enough to cut on, or the copy came out
+  // wrong and was thrown away. Re-encoding always works, and is what this did
+  // in every case before.
+  if (!cut) {
+    await runFfmpeg([
+      '-ss', String(from),
+      '-i', source,
+      '-t', String(length),
+      '-c:v', 'libtheora', '-q:v', String(THEORA_QUALITY),
+      '-c:a', 'libvorbis', '-q:a', String(VORBIS_QUALITY),
+      '-f', 'ogv', '-y', partial,
+    ], {
+      signal,
+      onProgress: (seconds) => {
+        if (onProgress && length) onProgress({ percent: Math.min(100, (seconds / length) * 100) });
+      },
+    }).catch((err) => {
+      try { fs.unlinkSync(partial); } catch { /* never created */ }
+      throw err;
+    });
+    cut = { from, to, method: 'encode' };
+  }
 
   // The original moves out of the pack before the trim takes its place, so a
   // failure at any point leaves either the old video or the new one, never
@@ -341,13 +372,119 @@ async function trimVideo(source, start, end, backupPath, options = {}) {
   return {
     path: source,
     backup: backupPath,
-    from,
-    to,
-    // How far every clip has to move to stay in sync with the picture.
-    shift: -from,
+    from: cut.from,
+    to: cut.to,
+    // How far every clip has to move to stay in sync with the picture. Taken
+    // from where the cut actually landed, not where it was asked for, so a cut
+    // nudged back to a keyframe still leaves every line against the right frame.
+    shift: -cut.from,
+    method: cut.method,
     wasSeconds: duration,
-    nowSeconds: length,
+    nowSeconds: cut.to - cut.from,
   };
+}
+
+// How far back a cut may be nudged to land on a keyframe. Pack videos here have
+// keyframes about every 0.4s, so this is never reached in practice; it exists so
+// a video with sparse keyframes re-encodes rather than silently keeping seconds
+// the person asked to remove.
+const SNAP_LIMIT = 0.5;
+
+/**
+ * The latest keyframe at or before `time`, if one is close enough to cut on.
+ *
+ * At or before rather than nearest, so the trim never removes a moment somebody
+ * wanted to keep. Erring the other way keeps a fraction of a second they wanted
+ * gone, which is the kinder mistake.
+ */
+function snapToKeyframe(source, time) {
+  if (time <= 0.001) return 0; // the start of the file is always a keyframe
+
+  let times;
+  try {
+    times = probeKeyframesNear(source, time);
+  } catch {
+    return null; // no keyframe list, so no fast path
+  }
+
+  let best = null;
+  for (const candidate of times) {
+    if (candidate <= time + 0.001 && (best == null || candidate > best)) best = candidate;
+  }
+  if (best == null || time - best > SNAP_LIMIT) return null;
+  return best;
+}
+
+/**
+ * Trims by copying the video packets instead of re-encoding them.
+ *
+ * Two things make this work, and both are easy to get wrong:
+ *
+ * - The cut has to start on a keyframe. A copy that starts mid-GOP has nothing
+ *   to decode the opening frames against.
+ * - `-avoid_negative_ts make_zero` is not optional. Ogg carries Theora timing in
+ *   a granulepos that encodes the distance back to the last keyframe, and a
+ *   plain copy hands the muxer values it cannot rebase. Without the flag the
+ *   result comes out with a start time around 9.6e15 seconds and will not play
+ *   at all, which is why this used to re-encode unconditionally.
+ *
+ * The audio is re-encoded even though it could be copied. It is a small part of
+ * the cost, and re-encoding it is what pulls the output back to starting at
+ * zero: copied Vorbis drags a lead-in with it and everything in the pack is
+ * timed from the first frame.
+ *
+ * Returns null rather than throwing if the result is not trustworthy, so the
+ * caller re-encodes. A fast path that goes wrong should cost time, not a pack.
+ */
+async function fastTrim(source, from, to, partial, { signal, onProgress } = {}) {
+  const length = to - from;
+  if (onProgress) onProgress({ percent: 0 });
+
+  try {
+    await runFfmpeg([
+      '-ss', String(from),
+      '-i', source,
+      '-t', String(length),
+      '-c:v', 'copy',
+      '-c:a', 'libvorbis', '-q:a', String(VORBIS_QUALITY),
+      '-avoid_negative_ts', 'make_zero',
+      '-f', 'ogv', '-y', partial,
+    ], { signal });
+  } catch (err) {
+    try { fs.unlinkSync(partial); } catch { /* never created */ }
+    if (err.cancelled) throw err; // a cancel is not a reason to try again slowly
+    return null;
+  }
+
+  if (!isGoodTrim(partial, length)) {
+    try { fs.unlinkSync(partial); } catch { /* already gone */ }
+    return null;
+  }
+
+  if (onProgress) onProgress({ percent: 100 });
+  return { from, to, method: 'copy' };
+}
+
+/**
+ * Whether a copied trim is fit to keep.
+ *
+ * Checked rather than assumed because the failure this guards against is not a
+ * non-zero exit code: ffmpeg writes the file happily and the damage only shows
+ * up in the timestamps, or later in the game, where it is far more expensive to
+ * discover.
+ */
+function isGoodTrim(file, wantLength) {
+  const probed = probeVideo(file);
+  if (!probed.duration) return false;
+  if (Math.abs(probed.duration - wantLength) > 0.5) return false;
+
+  // A start time of anything but the first frame means every clip in the pack
+  // would sit that far out from the picture.
+  const start = probeStartTime(file);
+  if (start == null) return false;
+  if (start > 1.5 / (probed.fps || 30)) return false;
+
+  return probeFirstFrameDecodes(file);
 }
 
 /**

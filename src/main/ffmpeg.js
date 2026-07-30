@@ -94,6 +94,70 @@ function probeDuration(file) {
   return Number.isFinite(value) ? value : null;
 }
 
+/**
+ * When the video stream starts presenting, in seconds, or null if unreadable.
+ *
+ * Worth checking on anything freshly muxed. A file whose picture starts late
+ * looks fine on a duration check and plays fine on its own, but everything in a
+ * pack is timed from the first frame, so the whole dub would sit out by that
+ * much.
+ */
+function probeStartTime(file) {
+  const res = spawnSync(ffprobePath(), [
+    '-v', 'error',
+    '-select_streams', 'v:0',
+    '-show_entries', 'stream=start_time',
+    '-of', 'default=noprint_wrappers=1:nokey=1',
+    file,
+  ], { encoding: 'utf8', windowsHide: true });
+
+  const value = parseFloat((res.stdout || '').trim());
+  return Number.isFinite(value) ? value : null;
+}
+
+/** Whether the first video frame actually decodes. */
+function probeFirstFrameDecodes(file) {
+  const res = spawnSync(ffprobePath(), [
+    '-v', 'error',
+    '-select_streams', 'v:0',
+    '-read_intervals', '%+#1',
+    '-show_entries', 'frame=pict_type',
+    '-of', 'default=noprint_wrappers=1:nokey=1',
+    file,
+  ], { encoding: 'utf8', windowsHide: true });
+
+  return /\S/.test(res.stdout || '');
+}
+
+/**
+ * Keyframe timestamps in a window around a point in the video.
+ *
+ * Only a window, because listing every keyframe in a long video means decoding
+ * the whole thing. `-read_intervals` keeps it to the seconds that matter, which
+ * is all a cut needs: somewhere close by to land on.
+ */
+function probeKeyframesNear(file, time, window = 6) {
+  const from = Math.max(0, time - window);
+  const res = spawnSync(ffprobePath(), [
+    '-v', 'error',
+    '-select_streams', 'v:0',
+    '-show_entries', 'packet=pts_time,flags',
+    '-of', 'csv=print_section=0',
+    '-read_intervals', `${from}%+${window * 2}`,
+    file,
+  ], { encoding: 'utf8', windowsHide: true, maxBuffer: 8 * 1024 * 1024 });
+
+  const times = [];
+  for (const line of (res.stdout || '').split(/\r?\n/)) {
+    // "12.100000,K_" — the flags field carries K on a keyframe.
+    const [stamp, flags] = line.split(',');
+    if (!flags || !flags.includes('K')) continue;
+    const value = parseFloat(stamp);
+    if (Number.isFinite(value)) times.push(value);
+  }
+  return times.sort((a, b) => a - b);
+}
+
 /** Video dimensions + frame rate, used to drive export presets. */
 function probeVideo(file) {
   const res = spawnSync(ffprobePath(), [
@@ -189,5 +253,8 @@ module.exports = {
   ffprobePath,
   probeDuration,
   probeVideo,
+  probeStartTime,
+  probeFirstFrameDecodes,
+  probeKeyframesNear,
   runFfmpeg,
 };

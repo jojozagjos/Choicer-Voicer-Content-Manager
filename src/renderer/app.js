@@ -890,7 +890,11 @@ async function openEditorFor(pack) {
       // remembering to refresh its own corner and some of them not.
       editor.refreshAfterChange();
     } else {
-      openEditorFor(fresh);
+      // Awaited, so that a change which reopens the editor has actually finished
+      // reopening it by the time it says so. Reopening rebuilds the preview from
+      // a fresh transcode, so without this whatever ran the change carried on
+      // against the editor as it was on the way in.
+      await openEditorFor(fresh);
     }
   };
 }
@@ -2843,12 +2847,14 @@ function wireEvents() {
   el.btnProgressCancelAll.addEventListener('click', cancelAllExports);
 
   // Conversion progress lands on the tile of the pack it belongs to.
-  window.api.content.onImportProgress(({ destDir, dir, phase, percent, done, total }) => {
+  window.api.content.onImportProgress(({ destDir, dir, phase, percent, done, total, jobId }) => {
     // Trimming a video and building a backing track report through the same
     // channel, but against the pack folder rather than an import job, so this
     // handler never matched them and both ran with no progress shown at all.
     if (phase === 'trim' || phase === 'backing') {
-      if (!el.editorView.hidden) editor.setBusyProgress(percent);
+      // The job id is what keeps an abandoned job from driving this. The editor
+      // ignores anything that is not the job its overlay is showing.
+      if (!el.editorView.hidden) editor.setBusyProgress(percent, jobId);
       return;
     }
 

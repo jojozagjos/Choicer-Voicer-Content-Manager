@@ -77,6 +77,36 @@ function handleWrite(channel, dirFrom, handler) {
 /** The folder a file sits in, for writes that name a file rather than a pack. */
 const dirOfFile = (file) => (file ? path.dirname(file) : null);
 
+/**
+ * Long jobs the app can call off again, by the id it gave them.
+ *
+ * Trimming a video and building a backing track both take long enough that
+ * somebody will wander off mid-way, and the editor closing has to actually stop
+ * the work rather than just stop looking at it. An abandoned job still finishes
+ * writing and still renames its output over the pack.
+ */
+const runningJobs = new Map();
+
+function startJob(jobId) {
+  const controller = new AbortController();
+  // No id means the caller does not intend to cancel, which is fine; it just
+  // gets a controller nothing will ever abort.
+  if (jobId) runningJobs.set(jobId, controller);
+  return controller;
+}
+
+function endJob(jobId) {
+  if (jobId) runningJobs.delete(jobId);
+}
+
+function cancelJob(jobId) {
+  const controller = jobId && runningJobs.get(jobId);
+  if (!controller) return false;
+  controller.abort();
+  runningJobs.delete(jobId);
+  return true;
+}
+
 const GITHUB_REPO = 'jojozagjos/Choicer-Voicer-Content-Manager';
 const DISCORD_URL = 'https://discord.com/users/jojozagjos';
 
@@ -1016,6 +1046,82 @@ function runSmokeTest(win) {
       videoCheck = { ok: false, message: err.message };
       errors.push(`proxy build failed: ${err.message}`);
     }
+
+    // Trimming, measured against a copy of a real pack video rather than
+    // through the UI, because the two things worth asserting are how long it
+    // takes and whether it can be stopped.
+    let trimSpeedCheck = null;
+    try {
+      const model = gamedata.scanGame(settings.gameDir || gamedata.defaultGameDir());
+      const source = (model.packs.find((p) => p.videoPath) || {}).videoPath;
+      if (!source) trimSpeedCheck = { skipped: 'no pack video to work from' };
+      else {
+        const scratchDir = path.join(app.getPath('userData'), 'smoke-trim');
+        fs.rmSync(scratchDir, { recursive: true, force: true });
+        fs.mkdirSync(scratchDir, { recursive: true });
+        const copy = path.join(scratchDir, 'subject.ogv');
+        fs.copyFileSync(source, copy);
+
+        const wholeLength = ffmpeg.probeDuration(copy);
+        const keepTo = Math.max(2, wholeLength - 3);
+
+        const began = Date.now();
+        const done = await convert.trimVideo(copy, 1.5, keepTo,
+          path.join(scratchDir, 'backup', 'subject.ogv'));
+        const seconds = (Date.now() - began) / 1000;
+
+        // Cancelling: a second copy, aborted almost immediately. What matters is
+        // that it stops, and that it leaves the video it was working on alone.
+        const other = path.join(scratchDir, 'cancel-me.ogv');
+        fs.copyFileSync(source, other);
+        const beforeBytes = fs.statSync(other).size;
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), 150);
+        let cancelled = null;
+        try {
+          await convert.trimVideo(other, 1.5, keepTo,
+            path.join(scratchDir, 'backup', 'cancel-me.ogv'), { signal: controller.signal });
+          cancelled = false;
+        } catch (err) {
+          cancelled = Boolean(err.cancelled);
+        }
+
+        trimSpeedCheck = {
+          sourceLength: Number(wholeLength.toFixed(2)),
+          method: done.method,
+          seconds: Number(seconds.toFixed(2)),
+          askedFrom: 1.5,
+          landedFrom: done.from,
+          nowSeconds: Number(done.nowSeconds.toFixed(2)),
+          cancelStopped: cancelled,
+          cancelLeftSourceAlone: fs.existsSync(other) && fs.statSync(other).size === beforeBytes,
+          strays: fs.readdirSync(scratchDir).filter((f) => /\.\d+\.(trim|part)\./.test(f)),
+        };
+        fs.rmSync(scratchDir, { recursive: true, force: true });
+
+        if (done.method !== 'copy') {
+          warnings.push(`trim re-encoded rather than copied (${seconds.toFixed(1)}s)`);
+        }
+        // Copying a cut is I/O bound. Anything near a minute means it fell back
+        // to re-encoding without saying so, which is the whole regression.
+        if (done.method === 'copy' && seconds > 60) {
+          errors.push(`a copied trim took ${seconds.toFixed(1)}s, which is far too slow`);
+        }
+        // Never later than asked, or the trim removes something wanted.
+        if (done.from > 1.5 + 0.001) errors.push('the trim landed later than it was asked to');
+        if (1.5 - done.from > 0.5) errors.push('the trim landed too far before where it was asked to');
+        if (!cancelled) errors.push('a trim could not be cancelled');
+        if (!trimSpeedCheck.cancelLeftSourceAlone) {
+          errors.push('a cancelled trim damaged the video it was working on');
+        }
+        if (trimSpeedCheck.strays.length) {
+          errors.push(`a trim left scratch files behind: ${trimSpeedCheck.strays.join(', ')}`);
+        }
+      }
+    } catch (err) {
+      trimSpeedCheck = { error: err.message };
+      errors.push(`trim check failed: ${err.message}`);
+    }
     try {
       report = await win.webContents.executeJavaScript(`(() => ({
         theme: document.documentElement.dataset.theme,
@@ -1824,6 +1930,80 @@ function runSmokeTest(win) {
           editorVideo.pause();
         }
 
+        // A trim actually carried out, then undone, then redone. The scratch
+        // pack is a throwaway copy, so this is safe to really do, and really
+        // doing it is the only way to reach the reopen that used to leave the
+        // history in place but both buttons looking dead.
+        //
+        // Everything here is re-fetched through q() after each step: applying a
+        // trim reopens the editor, so any element held from before is stale.
+        const undoBtn = () => q('.editor-head [data-act="undo"]');
+        const redoBtn = () => q('.editor-head [data-act="redo"]');
+        const seconds = () => {
+          const v = q('.editor-video video');
+          return v && v.duration ? v.duration : null;
+        };
+
+        // A trim reopens the editor, and reopening rebuilds the preview from a
+        // fresh transcode behind its own overlay. So waiting on the job's overlay
+        // alone samples the editor as it was on the way in; this waits for the
+        // whole round trip, which is what the person sitting there waits for too.
+        const settled = async (wasSeconds) => {
+          const prep = document.getElementById('prep-overlay');
+          for (let i = 0; i < 400; i++) {
+            await wait(250);
+            const bar = q('.editor-busy');
+            if (!bar || !bar.hidden) continue;
+            if (prep && !prep.hidden) continue;
+            const now = seconds();
+            if (!now) continue;
+            // Either the length changed, or there was no length to change from.
+            if (wasSeconds == null || Math.abs(now - wasSeconds) > 0.25) {
+              await wait(400);
+              return true;
+            }
+          }
+          return false;
+        };
+
+        const startLength = seconds();
+        if (startLength && startLength > 8) {
+          q('[data-act="trim"]').click();
+          await wait(300);
+
+          const from = q('[data-role="from"]');
+          const to = q('[data-role="to"]');
+          if (from && to) {
+            from.value = '2';
+            from.dispatchEvent(new Event('change', { bubbles: true }));
+            to.value = String(Math.floor(startLength - 2));
+            to.dispatchEvent(new Event('change', { bubbles: true }));
+
+            out.lengthBeforeTrim = Number(startLength.toFixed(2));
+            q('[data-role="apply"]').click();
+            out.trimSettled = await settled(startLength);
+            const trimmed = seconds();
+            out.lengthAfterTrim = trimmed ? Number(trimmed.toFixed(2)) : null;
+            out.undoEnabledAfterTrim = Boolean(undoBtn() && !undoBtn().disabled);
+
+            if (out.undoEnabledAfterTrim) {
+              undoBtn().click();
+              out.undoSettled = await settled(trimmed);
+              const restored = seconds();
+              out.lengthAfterUndo = restored ? Number(restored.toFixed(2)) : null;
+              // The reported bug: undo worked, and then there was no way back.
+              out.redoEnabledAfterUndo = Boolean(redoBtn() && !redoBtn().disabled);
+
+              if (out.redoEnabledAfterUndo) {
+                redoBtn().click();
+                out.redoSettled = await settled(restored);
+                const again = seconds();
+                out.lengthAfterRedo = again ? Number(again.toFixed(2)) : null;
+              }
+            }
+          }
+        }
+
         return out;
       })()`);
 
@@ -1841,6 +2021,33 @@ function runSmokeTest(win) {
         }
         if (toolsCheck.playedAfterTrim === false) {
           errors.push('video would not play again after the trim closed');
+        }
+
+        // Trim, undo, redo. Skipped rather than failed when the scratch pack's
+        // video is too short to cut, since that is about the pack, not the code.
+        if (toolsCheck.lengthBeforeTrim) {
+          const before = toolsCheck.lengthBeforeTrim;
+          if (!toolsCheck.trimSettled) errors.push('the trim never finished');
+          else if (!(toolsCheck.lengthAfterTrim < before - 1)) {
+            errors.push('the trim finished but the video is not shorter');
+          }
+          if (!toolsCheck.undoEnabledAfterTrim) {
+            errors.push('Undo is not offered after a trim');
+          }
+          if (toolsCheck.undoEnabledAfterTrim) {
+            if (!toolsCheck.undoSettled) errors.push('undoing the trim never finished');
+            else if (!(toolsCheck.lengthAfterUndo > before - 1)) {
+              errors.push('undoing the trim did not put the whole video back');
+            }
+            if (!toolsCheck.redoEnabledAfterUndo) {
+              errors.push('Redo is not offered after undoing a trim');
+            } else {
+              if (!toolsCheck.redoSettled) errors.push('redoing the trim never finished');
+              else if (!(toolsCheck.lengthAfterRedo < before - 1)) {
+                errors.push('redoing the trim did not cut the video again');
+              }
+            }
+          }
         }
         if (toolsCheck.clipRows && toolsCheck.thumbs !== toolsCheck.clipRows) {
           errors.push('not every clip row has a thumbnail');
@@ -1881,7 +2088,7 @@ function runSmokeTest(win) {
     if (scratch && !scratchRemoved) errors.push('the scratch pack was left behind');
 
     console.log('SMOKE ' + JSON.stringify(
-      { report, scratch, scratchRemoved, videoCheck, captionCheck, editorCheck, homeCheck,
+      { report, scratch, scratchRemoved, videoCheck, trimSpeedCheck, captionCheck, editorCheck, homeCheck,
         contentCheck, createCheck, sessionCheck, staleCheck, packCheck, toolsCheck, typesCheck,
         queueCheck, warnings, errors },
       null, 2));
@@ -2329,40 +2536,46 @@ function registerIpc() {
    * See convert.buildBackingTrack for why this is done from the clip times
    * rather than by trying to separate the voice out.
    */
-  handleWrite('content:buildBacking', (p) => p.packDir, async (event, { packDir, videoPath, ranges, level, mode }) => {
+  handleWrite('content:buildBacking', (p) => p.packDir, async (event, { packDir, videoPath, ranges, level, mode, jobId }) => {
     if (!isAllowed(packDir)) return { ok: false, error: 'That folder is outside the game folder' };
 
     // Which of muffle or silence was chosen is decided in the app, where the
     // difference can be explained properly.
+    const job = startJob(jobId);
     try {
       const result = await convert.buildBackingTrack(videoPath, ranges || [], packDir, {
         mode: mode === 'silence' ? 'silence' : 'muffle',
         level: Number.isFinite(level) ? level : null,
+        signal: job.signal,
         onProgress: ({ percent }) => {
           if (!event.sender.isDestroyed()) {
-            event.sender.send('import:progress', { dir: packDir, phase: 'backing', percent });
+            event.sender.send('import:progress', { dir: packDir, phase: 'backing', percent, jobId });
           }
         },
       });
       return { ok: true, ...result };
     } catch (err) {
-      return { ok: false, error: err.message };
+      return { ok: false, error: err.message, cancelled: Boolean(err.cancelled) };
+    } finally {
+      endJob(jobId);
     }
   });
 
   /** Trims a pack's video, keeping the original so the trim can be undone. */
-  handleWrite('content:trimVideo', (p) => p.packDir, async (event, { packDir, videoPath, start, end }) => {
+  handleWrite('content:trimVideo', (p) => p.packDir, async (event, { packDir, videoPath, start, end, jobId }) => {
     if (!isAllowed(packDir) || !isAllowed(videoPath)) {
       return { ok: false, error: 'That folder is outside the game folder' };
     }
+    const job = startJob(jobId);
     try {
       const bin = path.join(app.getPath('userData'), 'deleted-clips', `${Date.now()}_trim`);
       const backup = path.join(bin, path.basename(videoPath));
 
       const result = await convert.trimVideo(videoPath, start, end, backup, {
+        signal: job.signal,
         onProgress: ({ percent }) => {
           if (!event.sender.isDestroyed()) {
-            event.sender.send('import:progress', { dir: packDir, phase: 'trim', percent });
+            event.sender.send('import:progress', { dir: packDir, phase: 'trim', percent, jobId });
           }
         },
       });
@@ -2370,9 +2583,22 @@ function registerIpc() {
       // Shaped like trashClip's result so restoreClip can undo it unchanged.
       return { ok: true, ...result, moved: [{ from: videoPath, to: backup }] };
     } catch (err) {
-      return { ok: false, error: err.message };
+      return { ok: false, error: err.message, cancelled: Boolean(err.cancelled) };
+    } finally {
+      endJob(jobId);
     }
   });
+
+  /**
+   * Calls off a job the editor started.
+   *
+   * Needed because leaving the editor used to abandon its ffmpeg rather than
+   * stop it. The orphan carried on reporting progress at an overlay that had
+   * been torn down, and still renamed its output over the pack's video at the
+   * end, so a trim nobody was waiting for any more could land on top of a later
+   * one.
+   */
+  ipcMain.handle('content:cancelJob', (_e, jobId) => ({ ok: cancelJob(jobId) }));
 
   /**
    * Opens a link in the real browser, after asking. The app is offline apart

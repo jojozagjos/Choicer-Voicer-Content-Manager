@@ -96,11 +96,19 @@ export class PackEditor {
     this.redoStack = [];
     this.busy = 0;
 
+    // Jobs running in the main process on this editor's behalf. Tracked so
+    // leaving can call them off, and so a job that has been abandoned cannot
+    // still drive the overlay.
+    this._jobs = new Set();
+    this._jobId = null;
+    this._jobSeq = 0;
+
     this._keyHandler = (e) => this._onKey(e);
   }
 
   close() {
     this.root.hidden = true;
+    this.cancelJobs();
     if (this.timeline) this.timeline.destroy();
     if (this._captionRaf) cancelAnimationFrame(this._captionRaf);
     this._captionRaf = null;
@@ -157,21 +165,52 @@ export class PackEditor {
    * wondering whether it has hung. Recutting a clip is over too quickly to
    * report anything, so the figure stays hidden unless it arrives.
    */
-  setBusyProgress(percent) {
+  setBusyProgress(percent, jobId) {
     if (!this.busy || percent == null) return;
+    // Only the job the overlay is actually showing may move the figure.
+    if (jobId && jobId !== this._jobId) return;
     const pct = this.root.querySelector('.editor-busy-pct');
     if (!pct) return;
     pct.hidden = false;
     pct.textContent = `${Math.min(100, Math.max(0, percent)).toFixed(0)}%`;
   }
 
+  /**
+   * Runs one job behind the busy overlay.
+   *
+   * The job is given an id, which travels to the main process and comes back on
+   * every progress report. That is what lets a report be matched to the job that
+   * sent it: leaving the tab part way through a trim and starting another one
+   * used to leave both of them taking turns driving the same percentage, since
+   * neither the overlay nor the reports knew which job they belonged to.
+   */
   async run(label, task) {
+    const jobId = `editor-${Date.now()}-${++this._jobSeq}`;
+    this._jobs.add(jobId);
+    this._jobId = jobId;
     this.setBusy(true, label);
     try {
-      return await task();
+      return await task(jobId);
     } finally {
+      this._jobs.delete(jobId);
+      if (this._jobId === jobId) this._jobId = null;
       this.setBusy(false);
     }
+  }
+
+  /**
+   * Calls off everything still running for this editor.
+   *
+   * ffmpeg does not stop just because the editor was closed, and an abandoned
+   * job still renames its output over the pack's video when it finishes. Leaving
+   * has to actually cancel the work, not only stop watching it.
+   */
+  cancelJobs() {
+    for (const jobId of this._jobs) {
+      Promise.resolve(this.api.content.cancelJob(jobId)).catch(() => {});
+    }
+    this._jobs.clear();
+    this._jobId = null;
   }
 
   /**
@@ -212,21 +251,49 @@ export class PackEditor {
   }
 
   async undo() {
-    const entry = this.undoStack.pop();
-    if (!entry) { this.toast('Nothing to undo.', 'info', 1500); return; }
-    await entry.undo();
-    this.redoStack.push(entry);
-    this._refreshUndoButtons();
-    this.toast(`Undid: ${entry.label}`, 'ok', 1800);
+    await this._step('undo', this.undoStack, this.redoStack, 'Undid');
   }
 
   async redo() {
-    const entry = this.redoStack.pop();
-    if (!entry) { this.toast('Nothing to redo.', 'info', 1500); return; }
-    await entry.redo();
-    this.undoStack.push(entry);
+    await this._step('redo', this.redoStack, this.undoStack, 'Redid');
+  }
+
+  /**
+   * Moves one entry between the two stacks, carrying out its half of the change.
+   *
+   * Behind the overlay, because undoing a trim re-runs work that takes real time
+   * and an app that looks frozen reads as an app that has broken. And in a
+   * try/catch, because the entry has already left its stack by then: a failure
+   * without this put it on neither stack, so a redo that went wrong quietly
+   * removed the only way to ask for it again.
+   */
+  async _step(which, from, to, past) {
+    if (this.busy) { this.toast('Wait for that to finish first.', 'info', 2000); return; }
+
+    const entry = from.pop();
+    if (!entry) {
+      this.toast(which === 'undo' ? 'Nothing to undo.' : 'Nothing to redo.', 'info', 1500);
+      return;
+    }
     this._refreshUndoButtons();
-    this.toast(`Redid: ${entry.label}`, 'ok', 1800);
+
+    try {
+      await this.run(`${which === 'undo' ? 'Undoing' : 'Redoing'} ${entry.label}…`,
+        (jobId) => entry[which](jobId));
+    } catch (err) {
+      from.push(entry); // still available to try again
+      this._refreshUndoButtons();
+      // Leaving the editor cancels whatever it was doing, so a cancel here is
+      // the person's own decision rather than something that went wrong.
+      if (!err.cancelled) {
+        this.toast(`Could not ${which} ${entry.label}: ${err.message}`, 'error', 8000);
+      }
+      return;
+    }
+
+    to.push(entry);
+    this._refreshUndoButtons();
+    this.toast(`${past}: ${entry.label}`, 'ok', 1800);
   }
 
   _refreshUndoButtons() {
@@ -307,13 +374,22 @@ export class PackEditor {
     head.append(undo, redo, keys, openFolder);
     this.root.append(head);
 
+    // These are fresh elements, so they start disabled no matter what has
+    // already been done. Some changes reopen the editor over the same pack to
+    // pick up what they wrote, and without this the history was still there but
+    // both buttons looked dead, which after a trim read as not being able to
+    // redo it at all.
+    this._refreshUndoButtons();
+
     const busy = el('div', 'editor-busy', `
       <div class="editor-busy-card">
         <div class="spinner"></div>
         <span></span>
         <b class="editor-busy-pct" hidden></b>
       </div>`);
-    busy.hidden = true;
+    // Also a fresh element, and a change can reopen the editor while its own job
+    // is still running, so this follows the counter rather than starting hidden.
+    busy.hidden = this.busy === 0;
     this.root.append(busy);
 
     const sheet = el('div', 'shortcut-sheet', `
@@ -778,8 +854,9 @@ export class PackEditor {
     // straight after a first one failed with a permission error.
     this.releaseBackingAudio();
 
-    const result = await this.run('Building the backing track…', () =>
+    const result = await this.run('Building the backing track…', (jobId) =>
       this.api.content.buildBacking({
+        jobId,
         packDir: pack.dir,
         videoPath: pack.videoPath,
         ranges: clips.map((c) => ({ start: c.time, duration: c.duration })),
@@ -889,7 +966,8 @@ export class PackEditor {
       image: c.image || '',
     }));
 
-    const result = await this.run('Trimming the video…', () => this.api.content.trimVideo({
+    const result = await this.run('Trimming the video…', (jobId) => this.api.content.trimVideo({
+      jobId,
       packDir: pack.dir,
       videoPath: pack.videoPath,
       start: range.start,
@@ -910,8 +988,10 @@ export class PackEditor {
     }));
     await this.writeClipTimes(shifted);
 
+    // Counted against where the cut actually landed, which can be a fraction of
+    // a second earlier than asked if it was nudged onto a keyframe.
     const lost = clipsBefore.filter((c) =>
-      c.time < range.start - 0.01 || c.time > range.end + 0.01).length;
+      c.time < result.from - 0.01 || c.time > result.to + 0.01).length;
     this.toast(
       `Trimmed to ${result.nowSeconds.toFixed(1)}s.`
       + (lost ? ` ${lost} clip${lost > 1 ? 's' : ''} fell outside and moved to the edge.` : ''),
@@ -926,15 +1006,26 @@ export class PackEditor {
     this.push({
       label: 'trim video',
       undo: async () => {
-        await this.api.content.restoreClip({ moved: result.moved });
+        // Checked, because putting the original back is the whole undo. Going on
+        // to move the timestamps after it failed would leave the clips lined up
+        // against a video that is still trimmed.
+        const back = await this.api.content.restoreClip({ moved: result.moved });
+        if (!back.ok) throw new Error(back.error || 'the original video could not be put back');
         await this.writeClipTimes(clipsBefore);
         await reopen();
       },
-      redo: async () => {
+      redo: async (jobId) => {
+        // The same range as the first time, against the restored original, so it
+        // lands in the same place rather than compounding onto an earlier cut.
         const again = await this.api.content.trimVideo({
-          packDir: pack.dir, videoPath: pack.videoPath, start: range.start, end: range.end,
+          jobId, packDir: pack.dir, videoPath: pack.videoPath,
+          start: range.start, end: range.end,
         });
-        if (!again.ok) throw new Error(again.error);
+        if (!again.ok) {
+          const err = new Error(again.error);
+          err.cancelled = Boolean(again.cancelled);
+          throw err;
+        }
         result.moved = again.moved;
         await this.writeClipTimes(shifted);
         await reopen();

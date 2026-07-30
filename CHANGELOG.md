@@ -2,7 +2,8 @@
 
 ## 1.0.1
 
-Fixes for trimming, undo and pack audio.
+Fixes for trimming, undo and pack audio, fuller editors for menu and studio
+packs, and a list of what each version changed.
 
 ### Trimming
 
@@ -29,6 +30,21 @@ Fixes for trimming, undo and pack audio.
 - The video no longer plays underneath the trim panel or a job in progress.
 - The play button always matches what the video is doing.
 
+### The dub editor
+
+- Building a backing track and then immediately building another works. The lane
+  also appears as soon as a track is built, rather than after leaving the pack
+  and opening it again.
+- Muffling a backing track sits further under the original audio, and rolls off
+  lower, so the original dialogue can no longer be followed through it.
+- The pause before dragging out a new clip is shorter, and no longer feels like
+  waiting.
+- A line's picture options open to the left of its thumbnail, where they are no
+  longer cut off by the edge of the list, and stay open while the pointer moves
+  onto them.
+- The prompt about not having recorded any dubs stays out of the Content tab,
+  where it was appearing while building unrelated packs.
+
 ### Menu and studio packs
 
 - The menu editor offers every setting in `config_menu.json`: background mode and
@@ -52,6 +68,17 @@ Fixes for trimming, undo and pack audio.
 - Recording a take no longer fades in at the start.
 - An interrupted conversion no longer leaves a part finished file in a pack
   folder.
+
+### Help
+
+- A What's New tab lists what changed in each version, with the installed one
+  marked. Clicking the version in the corner of the window opens it.
+- Help opens at Getting Started whatever tab was last read, and its tabs sit on
+  one row rather than wrapping.
+- The editor help matches the editor again. It describes the backing track lane's
+  Listening to switch, trimming, undo and redo, and what happens while a job is
+  running.
+- The keyboard list in the editor names the buttons that pan the timeline.
 
 ### Recovering a video damaged by 1.0.0
 

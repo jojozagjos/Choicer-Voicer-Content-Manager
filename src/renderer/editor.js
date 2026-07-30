@@ -133,6 +133,11 @@ export class PackEditor {
   setBusy(on, message) {
     this.busy += on ? 1 : -1;
     this.busy = Math.max(0, this.busy);
+
+    // The file being played may be the one about to be rewritten, so playback
+    // stops for the duration rather than running on under the overlay.
+    if (on && this.video && !this.video.paused) this.video.pause();
+
     const bar = this.root.querySelector('.editor-busy');
     if (!bar) return;
     bar.hidden = this.busy === 0;
@@ -167,6 +172,34 @@ export class PackEditor {
     } finally {
       this.setBusy(false);
     }
+  }
+
+  /**
+   * Whether the video may play right now.
+   *
+   * It may not while a job is running, because the file it is playing is the
+   * one being rewritten, and it may not while the trim panel is open, because
+   * the panel exists to pick a still frame. In both cases the overlay on top
+   * says something is happening, and the video carrying on underneath it looks
+   * like the overlay is lying.
+   */
+  get playable() {
+    return this.busy === 0 && !this.trim;
+  }
+
+  /** Starts or stops playback, if it is allowed at all. */
+  togglePlay() {
+    const video = this.video;
+    if (!video) return;
+
+    if (!video.paused) { video.pause(); return; }
+    if (!this.playable) {
+      this.toast(this.trim
+        ? 'Finish or cancel the trim first.'
+        : 'Wait for that to finish first.', 'info', 2200);
+      return;
+    }
+    video.play().catch(() => {});
   }
 
   // Undo
@@ -220,8 +253,7 @@ export class PackEditor {
 
     if (event.code === 'Space' && video) {
       event.preventDefault();
-      if (video.paused) video.play().catch(() => {});
-      else video.pause();
+      this.togglePlay();
     } else if (key === 'arrowleft' && video) {
       video.currentTime = Math.max(0, video.currentTime - (event.shiftKey ? 1 / 30 : 2));
     } else if (key === 'arrowright' && video) {
@@ -463,8 +495,7 @@ export class PackEditor {
       if (!act) return;
 
       if (act === 'play') {
-        if (video.paused) { await video.play(); event.target.textContent = '❚❚'; }
-        else { video.pause(); event.target.textContent = '▶'; }
+        this.togglePlay();
       } else if (act === 'back') video.currentTime = Math.max(0, video.currentTime - 2);
       else if (act === 'fwd') video.currentTime += 2;
       else if (act === 'zoom-fit') {
@@ -540,6 +571,18 @@ export class PackEditor {
     for (const event of ['seeked', 'timeupdate', 'play', 'pause']) {
       video.addEventListener(event, () => this.paintCaption(video.currentTime));
     }
+
+    // The button follows the video rather than being set wherever playback was
+    // asked for, so it stays right when something else stops it: the end of the
+    // video, opening the trim panel, or a job starting.
+    const playButton = controls.querySelector('.editor-transport [data-act="play"]');
+    const showState = () => {
+      if (playButton) playButton.textContent = video.paused ? '▶' : '❚❚';
+    };
+    for (const event of ['play', 'pause', 'ended']) {
+      video.addEventListener(event, showState);
+    }
+    showState();
 
     this.setCaptionsVisible(!this.settings || this.settings.showEditorCaptions !== false);
     this.renderClipList(clipList);

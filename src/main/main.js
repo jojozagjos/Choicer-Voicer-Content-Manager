@@ -1798,9 +1798,31 @@ function runSmokeTest(win) {
         const rect = q('.trim-panel');
         out.trimOpened = Boolean(layer && !layer.hidden && rect);
         out.trimLength = q('.trim-length') ? q('.trim-length').textContent : null;
+
+        // The video must not run while the trim panel is up. The panel is for
+        // picking a still frame, and the file is about to be rewritten under it.
+        const transportPlay = q('.editor-transport [data-act="play"]');
+        const editorVideo = q('.editor-video video');
+        if (transportPlay && editorVideo) {
+          transportPlay.click();
+          await wait(300);
+          out.playedWhileTrimming = !editorVideo.paused;
+          out.playLabelWhileTrimming = transportPlay.textContent.trim();
+        }
+
         if (q('[data-role="cancel"]')) q('[data-role="cancel"]').click();
         await wait(150);
         out.trimClosed = layer.hidden;
+
+        // ...and it plays again once the panel is gone, so the guard is not
+        // just leaving playback permanently broken.
+        if (transportPlay && editorVideo) {
+          transportPlay.click();
+          await wait(400);
+          out.playedAfterTrim = !editorVideo.paused;
+          out.playLabelAfterTrim = transportPlay.textContent.trim();
+          editorVideo.pause();
+        }
 
         return out;
       })()`);
@@ -1813,6 +1835,13 @@ function runSmokeTest(win) {
         if (!toolsCheck.hasBackingButton) errors.push('editor has no backing track button');
         if (!toolsCheck.trimOpened) errors.push('trim overlay did not open');
         if (!toolsCheck.trimClosed) errors.push('trim overlay did not close');
+        if (toolsCheck.playedWhileTrimming) errors.push('video played under the trim overlay');
+        if (toolsCheck.playLabelWhileTrimming && toolsCheck.playLabelWhileTrimming !== '▶') {
+          errors.push('play button showed as playing while trimming');
+        }
+        if (toolsCheck.playedAfterTrim === false) {
+          errors.push('video would not play again after the trim closed');
+        }
         if (toolsCheck.clipRows && toolsCheck.thumbs !== toolsCheck.clipRows) {
           errors.push('not every clip row has a thumbnail');
         }

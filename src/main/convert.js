@@ -24,6 +24,9 @@ const {
 
 const OK_VIDEO = ['.ogv'];
 const OK_AUDIO = ['.wav', '.mp3', '.ogg'];
+// Everything the game or this app will treat as a clip's audio. Wider than
+// OK_AUDIO, which is only what a pack may be written as.
+const ALL_AUDIO = ['.wav', '.mp3', '.ogg', '.opus'];
 const OK_IMAGE = ['.png', '.jpg', '.jpeg'];
 
 // Theora quality runs 0-10. Seven keeps pack videos sharp without the file
@@ -201,15 +204,27 @@ async function extractAudioRange(source, destDir, baseName, start, duration, opt
   const { audioFormat = 'wav', overwrite = false, signal } = options;
 
   fs.mkdirSync(destDir, { recursive: true });
-  let target = path.join(destDir, `${baseName}.${audioFormat}`);
+
+  // Recutting a clip keeps whatever format it was already stored as, rather than
+  // always writing .wav. A pack shipped with .ogg clips stays a pack of .ogg
+  // clips, and the file being replaced is the one that was already there instead
+  // of a second file appearing beside it.
+  const format = overwrite
+    ? (existingAudioFormat(destDir, baseName) || audioFormat)
+    : audioFormat;
+
+  let target = path.join(destDir, `${baseName}.${format}`);
   if (!overwrite) target = uniquePath(target);
 
-  const partial = partialPath(target, 'part', audioFormat);
+  const partial = partialPath(target, 'part', format);
 
-  // -ss before -i seeks quickly; -t after it bounds the copy.
+  // -ss before -i seeks quickly; -t after it bounds the copy. The codec follows
+  // the format actually being written, not the one that was asked for, or a
+  // clip kept as .ogg would be handed PCM.
   const args = ['-ss', String(Math.max(0, start)), '-i', source, '-t', String(Math.max(0.05, duration)), '-vn'];
-  if (audioFormat === 'wav') args.push('-c:a', 'pcm_s16le', '-ar', '48000', '-f', 'wav');
-  else if (audioFormat === 'mp3') args.push('-c:a', 'libmp3lame', '-q:a', '2', '-f', 'mp3');
+  if (format === 'wav') args.push('-c:a', 'pcm_s16le', '-ar', '48000', '-f', 'wav');
+  else if (format === 'mp3') args.push('-c:a', 'libmp3lame', '-q:a', '2', '-f', 'mp3');
+  else if (format === 'opus') args.push('-c:a', 'libopus', '-b:a', '128k', '-f', 'opus');
   else args.push('-c:a', 'libvorbis', '-q:a', '5', '-f', 'ogg');
   args.push('-y', partial);
 
@@ -221,7 +236,57 @@ async function extractAudioRange(source, destDir, baseName, start, duration, opt
     throw err;
   }
 
-  return { path: target, start, duration };
+  // Replacing a clip's audio means replacing it, whatever it was stored as.
+  // Cutting always writes .wav, so a clip that arrived as .ogg or .mp3 used to
+  // end up holding both: the old file and the new one, under the same name. The
+  // app then showed one of them and the game found the other, so a line that had
+  // been retimed played twice.
+  const replaced = overwrite ? dropOtherAudio(destDir, baseName, target) : [];
+
+  return { path: target, start, duration, replaced };
+}
+
+/**
+ * Removes a clip's audio in any format other than the one just written.
+ *
+ * Only ever touches files named exactly for this clip, and never the file it was
+ * told to keep.
+ */
+function dropOtherAudio(dir, baseName, keepPath) {
+  const keep = path.resolve(keepPath);
+  const wanted = baseName.toLowerCase();
+  const gone = [];
+
+  // The folder is read rather than the names guessed, so an extension in a
+  // different case is caught too.
+  for (const name of fs.readdirSync(dir)) {
+    if (!ALL_AUDIO.includes(extOf(name))) continue;
+    if (path.basename(name, path.extname(name)).toLowerCase() !== wanted) continue;
+    const full = path.join(dir, name);
+    if (path.resolve(full) === keep) continue;
+    try {
+      fs.unlinkSync(full);
+      gone.push(name);
+    } catch { /* still open, or already gone */ }
+  }
+  return gone;
+}
+
+/** The audio a clip might already be stored as, given the same clip's name. */
+function existingAudioFormat(dir, baseName) {
+  const wanted = baseName.toLowerCase();
+  let found = null;
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      if (!ALL_AUDIO.includes(extOf(name))) continue;
+      if (path.basename(name, path.extname(name)).toLowerCase() !== wanted) continue;
+      const ext = extOf(name).slice(1);
+      // A .wav beside another format is the one this app wrote, so it does not
+      // get to decide the format; the other one is what the pack came with.
+      if (!found || found === 'wav') found = ext;
+    }
+  } catch { /* no folder yet */ }
+  return found;
 }
 
 /**

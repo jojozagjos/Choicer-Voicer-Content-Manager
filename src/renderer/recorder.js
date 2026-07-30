@@ -6,6 +6,19 @@
  * through the same converter everything else uses.
  */
 
+/**
+ * How long to let the microphone settle before recording anything.
+ *
+ * A capture device does not deliver full level the instant it opens. The first
+ * fraction of a second comes up from nothing while the operating system's audio
+ * stack starts the stream, and recording from the moment getUserMedia resolved
+ * captured that climb as a fade in on the front of every take.
+ *
+ * The cost is a short pause between pressing record and the timer moving, which
+ * is a far smaller thing than the beginning of the first word arriving quiet.
+ */
+const SETTLE_MS = 250;
+
 export class Recorder {
   constructor() {
     this.media = null;
@@ -14,6 +27,9 @@ export class Recorder {
     this.startedAt = 0;
     this.onTick = null;
     this.timer = null;
+    // Bumped by cancel(), so a take called off while the microphone is still
+    // settling does not start recording a moment later.
+    this.generation = 0;
   }
 
   get recording() {
@@ -24,6 +40,8 @@ export class Recorder {
   async start() {
     if (this.recording) return;
 
+    const mine = ++this.generation;
+
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
@@ -32,6 +50,16 @@ export class Recorder {
       if (err.name === 'NotAllowedError') throw new Error('Microphone access was refused');
       if (err.name === 'NotFoundError') throw new Error('No microphone found');
       throw err;
+    }
+
+    // See SETTLE_MS. The stream is open at this point but not yet at level.
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
+
+    // Called off, or started again, while we were waiting.
+    if (mine !== this.generation) {
+      for (const track of this.stream.getTracks()) track.stop();
+      this.stream = null;
+      return;
     }
 
     this.chunks = [];
@@ -71,6 +99,7 @@ export class Recorder {
   }
 
   cancel() {
+    this.generation++;
     if (this.media && this.media.state !== 'inactive') this.media.stop();
     clearInterval(this.timer);
     if (this.stream) for (const track of this.stream.getTracks()) track.stop();
@@ -90,6 +119,7 @@ export function attachRecorder(button, readout, onSaved, options = {}) {
   // icon button, and putting the words in it pushed it out of its own row.
   const idleLabel = options.label || (button.classList.contains('icon-btn') ? '●' : '● Record');
   const busyLabel = options.stopLabel || (button.classList.contains('icon-btn') ? '■' : '■ Stop');
+  const readyLabel = button.classList.contains('icon-btn') ? '…' : 'Getting ready…';
 
   recorder.onTick = (seconds) => {
     if (readout) readout.textContent = `${seconds.toFixed(1)}s`;
@@ -116,7 +146,12 @@ export function attachRecorder(button, readout, onSaved, options = {}) {
       if (!go) return;
     }
 
+    // Opening the microphone and letting it settle takes a moment, and a button
+    // that does nothing at all in that moment reads as a click that missed. It
+    // says so instead, and cannot be pressed again until recording has started.
     try {
+      button.disabled = true;
+      button.textContent = readyLabel;
       await recorder.start();
       button.textContent = busyLabel;
       button.classList.add('recording');
@@ -124,6 +159,8 @@ export function attachRecorder(button, readout, onSaved, options = {}) {
       button.textContent = idleLabel;
       button.classList.remove('recording');
       if (options.onError) options.onError(err);
+    } finally {
+      button.disabled = false;
     }
   });
 

@@ -236,6 +236,18 @@ function inspectVoice(dir, files, { parseIni, findAudioSibling }) {
     && !f.startsWith('_')
     && !clips.some((c) => !c.folder && c.base.toLowerCase() === baseOf(f).toLowerCase()));
 
+  // A clip holding two audio files is the worst kind of wrong, because nothing
+  // looks wrong. This app plays one of them and the game finds the other, so a
+  // line comes out twice in the game while the editor shows it once. Retiming a
+  // clip used to cause it, by cutting to .wav beside a clip stored as .ogg.
+  const doubledAudio = [];
+  for (const clip of clips) {
+    if (clip.folder) continue; // subfolder clips are checked by their own folder
+    const matches = files.filter((f) =>
+      AUDIO_EXTS.includes(extOf(f)) && baseOf(f).toLowerCase() === clip.base.toLowerCase());
+    if (matches.length > 1) doubledAudio.push({ base: clip.base, files: matches });
+  }
+
   checkForeignMedia(files, issues);
 
   if (isDub) {
@@ -255,6 +267,13 @@ function inspectVoice(dir, files, { parseIni, findAudioSibling }) {
   if (orphanAudio.length) {
     issues.push(issue(INFO,
       `${orphanAudio.length} audio file${orphanAudio.length > 1 ? 's have' : ' has'} no metadata yet`));
+  }
+
+  for (const doubled of doubledAudio) {
+    issues.push(issue(ERROR,
+      `"${doubled.base}" has ${doubled.files.length} audio files (${doubled.files.join(', ')}). `
+      + 'The game may play the line more than once. Delete all but the one you want.',
+      'doubled-audio'));
   }
   if (!findFile(files, '_icon', IMAGE_EXTS) && !meta.icon && !fillerImage) {
     issues.push(issue(INFO, 'No pack icon. Add _icon, or _pack_filler_image which doubles as one'));

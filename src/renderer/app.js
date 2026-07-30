@@ -243,16 +243,42 @@ function sanitizeFilename(name) {
     .replace(/^_|_$/g, '');
 }
 
+const TOAST_MARKS = { ok: '✓', warn: '!', error: '✕', info: 'i' };
+
+/**
+ * Puts the stack of messages just under the header, whichever of the header and
+ * the alert bar is currently the last thing there.
+ *
+ * They used to sit in the bottom right corner, on top of the buttons at the foot
+ * of the pack details and the clip list, so a message about what just happened
+ * covered the controls for doing the next thing.
+ */
+function placeToasts() {
+  const bar = el.alertBar && !el.alertBar.hidden ? el.alertBar : document.querySelector('.topbar');
+  const bottom = bar ? bar.getBoundingClientRect().bottom : 0;
+  el.toasts.style.top = `${Math.round(bottom) + 12}px`;
+}
+
 function toast(message, kind = 'info', timeout = 4200) {
   const node = document.createElement('div');
   node.className = `toast toast-${kind}`;
-  node.textContent = message;
+  node.innerHTML = `<b class="toast-mark">${TOAST_MARKS[kind] || TOAST_MARKS.info}</b>
+    <span class="toast-text"></span>`;
+  node.querySelector('.toast-text').textContent = message;
+
+  // Anything can be got rid of early, which matters more now that they sit over
+  // the middle of the window rather than out of the way in a corner.
+  node.title = 'Click to dismiss';
+  const close = () => {
+    node.classList.remove('in');
+    setTimeout(() => node.remove(), 220);
+  };
+  node.addEventListener('click', close);
+
+  placeToasts();
   el.toasts.append(node);
   requestAnimationFrame(() => node.classList.add('in'));
-  setTimeout(() => {
-    node.classList.remove('in');
-    setTimeout(() => node.remove(), 250);
-  }, timeout);
+  setTimeout(close, timeout);
   return node;
 }
 
@@ -2841,7 +2867,16 @@ function wireEvents() {
       // first. This is the one thing that catches edits made outside the app.
       await window.api.content.forget();
       await rescan(state.settings.gameDir);
-      if (state.tab === 'content') await refreshContent();
+
+      // Rescan is reachable from the top bar with an editor open, where it used
+      // to reload the library behind it and leave the editor showing the pack as
+      // it was when it opened. Files changed outside the app are a normal reason
+      // to press it, so the open pack is reloaded too.
+      if (!el.editorView.hidden && editor.pack) {
+        await editor.onChanged(editor.pack.id, { keepEditor: true });
+      } else if (state.tab === 'content') {
+        await refreshContent();
+      }
     } finally {
       // Held briefly so the spin reads as a spin rather than a flicker.
       const left = 550 - (Date.now() - started);

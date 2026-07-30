@@ -1441,33 +1441,71 @@ input[type="range"]::-webkit-slider-thumb {
   transition: width 0.25s;
 }
 
+/* Under the header rather than in the bottom right corner, where they used to
+   cover the buttons at the foot of the pack details and the clip list. The top
+   is set from JS, since the alert bar above them comes and goes. */
 .toasts {
   position: fixed;
-  right: 16px;
-  bottom: 16px;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 8px;
-  z-index: 60;
-  max-width: 380px;
+  z-index: 70;
+  width: max-content;
+  max-width: min(560px, calc(100vw - 32px));
+  /* The stack never swallows a click meant for what is underneath it; only the
+     messages themselves take one, to dismiss. */
+  pointer-events: none;
 }
 
 .toast {
-  padding: 10px 14px;
-  border-radius: 10px;
-  background: var(--panel);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 15px;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--bg-raised) 92%, transparent);
   border: 1px solid var(--line);
-  border-left: 3px solid var(--muted);
-  box-shadow: var(--shadow);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(10px);
   font-size: 13px;
+  line-height: 1.45;
+  cursor: pointer;
+  pointer-events: auto;
   opacity: 0;
-  transform: translateY(8px);
-  transition: opacity 0.22s, transform 0.22s;
+  transform: translateY(-10px) scale(0.97);
+  transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1);
 }
 .toast.in { opacity: 1; transform: none; }
-.toast-ok { border-left-color: var(--ok); }
-.toast-warn { border-left-color: var(--warn); }
-.toast-error { border-left-color: var(--bad); }
+.toast:hover { border-color: var(--hover-line); }
+
+/* A round mark carrying the colour, which reads faster than a coloured edge and
+   survives the message wrapping onto two lines. */
+.toast-mark {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--bg);
+  background: var(--muted);
+}
+.toast-text { min-width: 0; }
+
+.toast-ok .toast-mark { background: var(--ok); }
+.toast-warn .toast-mark { background: var(--warn); }
+.toast-error .toast-mark { background: var(--bad); }
+.toast-ok { border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
+.toast-warn { border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
+.toast-error { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
 
 /* Theme toggle */
 

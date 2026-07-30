@@ -77,6 +77,15 @@ packs, and a list of what each version changed.
 - An interrupted conversion no longer leaves a part finished file in a pack
   folder.
 
+### Around the app
+
+- Messages appear under the header rather than in the bottom right corner, where
+  they covered the buttons at the foot of the pack details and the clip list.
+  They no longer take a click meant for what is behind them, and can be clicked
+  away early.
+- Rescan reloads the pack being edited, rather than only the library behind the
+  editor.
+
 ### Help
 
 - A What's New tab lists what changed in each version, with the installed one

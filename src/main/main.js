@@ -1301,6 +1301,20 @@ function runSmokeTest(win) {
         await wait(200);
         out.helpOpensAtStart = !document.querySelector('[data-help-panel="start"]').hidden;
 
+        // The editor help describes controls, and controls get replaced. These
+        // pin the text to what is actually on screen: the backing track lane was
+        // rebuilt as a two-way switch while the help still described a mute
+        // button and a volume slider that had both been removed.
+        const editorHelp = document.querySelector('[data-help-panel="editor"]').textContent;
+        out.editorHelp = {
+          describesListenSwitch: /listening to/i.test(editorHelp),
+          // Anything claiming the two play together, or naming the old controls.
+          claimsBothAtOnce: /plays along with the video/i.test(editorHelp),
+          namesRemovedMuteButton: /drops the backing track out/i.test(editorHelp),
+          mentionsUndoAndRedo: /redo/i.test(editorHelp),
+          mentionsPan: /right or middle/i.test(editorHelp),
+        };
+
         dialog.close();
         await wait(150);
         return out;
@@ -1335,6 +1349,19 @@ function runSmokeTest(win) {
       if (changelogCheck.switchedTo && changelogCheck.stillOneVisible === false) {
         errors.push('picking a version in the changelog bar left more than one showing');
       }
+
+      const eh = changelogCheck.editorHelp || {};
+      if (!eh.describesListenSwitch) {
+        errors.push('the editor help does not describe the backing track listen switch');
+      }
+      if (eh.claimsBothAtOnce) {
+        errors.push('the editor help still says the backing track plays along with the video');
+      }
+      if (eh.namesRemovedMuteButton) {
+        errors.push('the editor help still describes the removed backing track mute button');
+      }
+      if (!eh.mentionsUndoAndRedo) errors.push('the editor help does not mention redo');
+      if (!eh.mentionsPan) errors.push('the editor help does not say which drag pans');
     }
 
     // Captions have to appear for every clip, and playback must stop when the

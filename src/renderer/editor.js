@@ -68,7 +68,9 @@ export const EDITOR_KEYS = [
   ['Space', 'Play or pause'],
   ['← →', 'Step 2 seconds'],
   ['Shift + ← →', 'Step a frame'],
-  ['Drag anywhere', 'Pan the timeline'],
+  // Left dragging deliberately does nothing on its own, so this has to name the
+  // buttons that do pan rather than say "drag anywhere".
+  ['Right or middle drag', 'Pan the timeline'],
   ['Drag a clip grip', 'Move that clip'],
   ['Drag a clip edge', 'Change where it starts or ends'],
   ['Hold then drag', 'Cut a new clip'],

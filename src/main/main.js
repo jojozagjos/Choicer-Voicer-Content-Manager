@@ -463,6 +463,12 @@ function startupBackground() {
   return dark ? '#0c1520' : '#d9edfb';
 }
 
+// The fewest config controls each type's editor should render. A floor rather
+// than an exact count, because a colour draws two controls and an exact number
+// would break on any cosmetic change. It exists to catch a form quietly showing
+// a handful of a config file's settings, which the menu did.
+const SETTINGS_COUNT = { menu: 20 };
+
 // CVE_SMOKE=1 boots the whole app windowless, reports whether the renderer
 // came up clean, and exits. Used to verify changes without stealing focus.
 const SMOKE = process.env.CVE_SMOKE === '1';
@@ -732,7 +738,11 @@ async function runTypeEditorChecks(win, gameDir, errors) {
           chatterRows: root.querySelectorAll('.chatter-row').length,
           sidePanel: Boolean(root.querySelector('.editor-side h3')),
           sideTitle: (root.querySelector('.editor-side h3') || {}).textContent || '',
-          configFields: root.querySelectorAll('.editor-side [data-cfg]').length,
+          // Both shapes: the hand-written forms mark their controls with
+          // data-cfg, the generated ones are plain inputs inside .config-form.
+          configFields: root.querySelectorAll('.editor-side [data-cfg]').length
+            + root.querySelectorAll('.editor-side .config-form input, '
+              + '.editor-side .config-form select').length,
           fellBackToDropzone: Boolean(root.querySelector('.editor-empty')),
         };
       })()`);
@@ -753,6 +763,14 @@ async function runTypeEditorChecks(win, gameDir, errors) {
       errors.push(`${type} editor rendered no slots`);
     }
     if (!r.sidePanel) errors.push(`${type} editor has no side panel`);
+
+    // A type whose spec lists settings must actually render them. The menu form
+    // used to offer two of the twenty-three settings its config file holds, and
+    // nothing noticed because nothing counted them.
+    const expected = SETTINGS_COUNT[type];
+    if (expected && r.configFields < expected) {
+      errors.push(`${type} config form shows ${r.configFields} controls, expected at least ${expected}`);
+    }
   }
 
   // Delete one of them the way a person would, through the tile, the Delete

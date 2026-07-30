@@ -2316,11 +2316,15 @@ export class PackEditor {
       return;
     }
 
+    // Music is stored as OGG, everything else as WAV. A button click wants WAV,
+    // which decodes instantly and costs nothing at a few kilobytes, but a music
+    // loop is minutes long and the same choice turns a four megabyte song into a
+    // hundred megabyte file the game has to load whole.
     const doImport = () => this.importFiles([source], {
       baseName: slot.key,
       kind: slot.kind === 'model' ? undefined : slot.kind,
       overwrite: true,
-      audioFormat: 'wav',
+      audioFormat: slot.audioFormat || 'wav',
     }, { quiet });
 
     // A batch drop reports once at the end rather than per file.
@@ -2414,7 +2418,12 @@ export class PackEditor {
     const type = this.pack.type;
     if (type === 'host') return this.renderHostConfig(side);
     if (type === 'judges') return this.renderJudgeConfig(side);
-    if (type === 'menu') return this.renderMenuConfig(side);
+    if (type === 'menu') return this.renderMenuConfig(side, spec);
+
+    // Anything with a settings list gets a form built from it. Only types with
+    // no settings at all fall through to the note about where the file lives.
+    side.innerHTML = '<h3>Config</h3>';
+    if (this.renderSettings(side, spec)) return null;
     return this.renderPlainConfig(side, spec);
   }
 
@@ -2634,44 +2643,164 @@ export class PackEditor {
     });
   }
 
-  renderMenuConfig(side) {
-    const config = this.pack.config || {};
-    const audio = config.audio || {};
+  renderMenuConfig(side, spec) {
     const hasVideo = Boolean(this.slotFile('video'));
 
-    side.innerHTML = `
-      <h3>Menu options</h3>
-      <label class="field"><span>Background fitting</span>
-        <select class="select" data-cfg="stretch">
-          <option value="false">Tile at its own size</option>
-          <option value="true">Stretch to the window</option>
-        </select>
-      </label>
-      <label class="option-row">
-        <input type="checkbox" data-cfg="use_video" ${hasVideo ? '' : 'disabled'} />
-        <span>
-          <b>Use the video's own audio</b>
-          <em>${hasVideo
-    ? 'Off plays the menu music instead and mutes the video.'
-    : 'Only applies once this pack has a background video.'}</em>
-        </span>
-      </label>`;
-
-    const stretch = side.querySelector('[data-cfg="stretch"]');
-    stretch.value = String(Boolean(config.stretch_background));
-    stretch.addEventListener('change', async () => {
-      if (await this.patchConfig('config_menu.json', {
-        stretch_background: stretch.value === 'true',
-      })) this.toast('Saved.', 'ok', 1500);
+    side.innerHTML = '<h3>Menu options</h3>';
+    this.renderSettings(side, spec, {
+      // Nothing to apply it to until the pack has a video.
+      disable: (field) => field.path === 'audio.use_video' && !hasVideo,
     });
+  }
 
-    const useVideo = side.querySelector('[data-cfg="use_video"]');
-    useVideo.checked = audio.use_video !== false;
-    useVideo.addEventListener('change', async () => {
-      if (await this.patchConfig('config_menu.json', {
-        audio: { ...audio, use_video: useVideo.checked },
-      })) this.toast('Saved.', 'ok', 1500);
+  // Config forms built from a pack type's settings list
+
+  /** Reads a dotted path out of a config, or undefined. */
+  static at(config, path) {
+    let node = config;
+    for (const part of path.split('.')) {
+      if (node == null || typeof node !== 'object') return undefined;
+      node = node[part];
+    }
+    return node;
+  }
+
+  /** Builds the nested object needed to set one dotted path. */
+  static patchAt(path, value) {
+    const parts = path.split('.');
+    const root = {};
+    let node = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      node[parts[i]] = {};
+      node = node[parts[i]];
+    }
+    node[parts[parts.length - 1]] = value;
+    return root;
+  }
+
+  /**
+   * Renders every setting a pack type has, from its spec.
+   *
+   * Driven by a list rather than written out per type, because these forms are
+   * the same shape every time and the ones written by hand ended up covering a
+   * fraction of what the file actually holds.
+   *
+   * Writes are merged into the file, so a setting this app does not know about
+   * survives being saved next to one it does.
+   */
+  renderSettings(side, spec, options = {}) {
+    const config = this.pack.config || {};
+    const groups = spec.settings || [];
+    if (!groups.length) return false;
+
+    const save = async (path, value) => {
+      const ok = await this.patchConfig(spec.config, PackEditor.patchAt(path, value));
+      if (ok) this.toast('Saved.', 'ok', 1200);
+      return ok;
+    };
+
+    const wrap = el('div', 'config-form');
+    for (const group of groups) {
+      wrap.append(el('h4', '', escapeHtml(group.title)));
+      for (const field of group.fields) {
+        wrap.append(this.settingRow(field, config, save, options));
+      }
+    }
+
+    side.append(wrap);
+    return true;
+  }
+
+  /** One control, chosen by the field's kind. */
+  settingRow(field, config, save, options) {
+    const current = PackEditor.at(config, field.path);
+    const value = current === undefined ? field.fallback : current;
+    const note = field.note ? `<em>${escapeHtml(field.note)}</em>` : '';
+
+    if (field.kind === 'bool') {
+      const row = el('label', 'option-row', `
+        <input type="checkbox" />
+        <span><b>${escapeHtml(field.label)}</b>${note}</span>`);
+      const box = row.querySelector('input');
+      box.checked = Boolean(value);
+      if (options.disable && options.disable(field)) box.disabled = true;
+      box.addEventListener('change', () => save(field.path, box.checked));
+      return row;
+    }
+
+    if (field.kind === 'choice') {
+      const row = el('label', 'field', `<span>${escapeHtml(field.label)}</span>
+        <select class="select">${field.options.map(([v, label]) =>
+    `<option value="${escapeHtml(JSON.stringify(v))}">${escapeHtml(label)}</option>`).join('')}</select>
+        ${note ? `<em class="field-note">${escapeHtml(field.note)}</em>` : ''}`);
+      const select = row.querySelector('select');
+      select.value = JSON.stringify(value === undefined ? field.fallback : value);
+      select.addEventListener('change', () => save(field.path, JSON.parse(select.value)));
+      return row;
+    }
+
+    if (field.kind === 'rgba' || field.kind === 'rgb') {
+      return this.colourRow(field, value, save);
+    }
+
+    // number and text
+    const row = el('label', 'field', `<span>${escapeHtml(field.label)}</span>
+      <input class="input" type="${field.kind === 'number' ? 'number' : 'text'}"
+             ${field.step ? `step="${escapeHtml(String(field.step))}"` : ''} />
+      ${note ? `<em class="field-note">${escapeHtml(field.note)}</em>` : ''}`);
+    const input = row.querySelector('input');
+    input.value = value === undefined || value === null ? '' : String(value);
+    input.addEventListener('change', () => {
+      if (field.kind !== 'number') { save(field.path, input.value); return; }
+      const number = Number(input.value);
+      if (!Number.isFinite(number)) {
+        this.toast(`${field.label} has to be a number.`, 'warn', 3000);
+        input.value = value === undefined ? '' : String(value);
+        return;
+      }
+      save(field.path, number);
     });
+    return row;
+  }
+
+  /**
+   * A colour, stored the way the game writes them: hex digits with no leading
+   * hash. Eight digits carry an alpha, six do not, and which one a setting uses
+   * is fixed by the game rather than by what happens to be in the file.
+   */
+  colourRow(field, value, save) {
+    const withAlpha = field.kind === 'rgba';
+    const text = typeof value === 'string' ? value.replace(/^#/, '') : '';
+    const rgb = (text.slice(0, 6).padEnd(6, '0')).toLowerCase();
+    const alpha = withAlpha && text.length >= 8 ? parseInt(text.slice(6, 8), 16) : 255;
+
+    const row = el('div', 'field colour-field', `
+      <span>${escapeHtml(field.label)}</span>
+      <div class="colour-row">
+        <input type="color" value="#${escapeHtml(rgb)}" />
+        ${withAlpha ? '<input type="range" min="0" max="255" class="colour-alpha" />' : ''}
+        <b class="colour-read"></b>
+      </div>
+      ${field.note ? `<em class="field-note">${escapeHtml(field.note)}</em>` : ''}`);
+
+    const picker = row.querySelector('input[type="color"]');
+    const alphaInput = row.querySelector('.colour-alpha');
+    const read = row.querySelector('.colour-read');
+    if (alphaInput) alphaInput.value = String(alpha);
+
+    const compose = () => {
+      const base = picker.value.replace('#', '').toLowerCase();
+      if (!withAlpha) return base;
+      return base + Number(alphaInput.value).toString(16).padStart(2, '0');
+    };
+    const show = () => { read.textContent = compose(); };
+    show();
+
+    for (const input of [picker, alphaInput].filter(Boolean)) {
+      input.addEventListener('input', show);
+      input.addEventListener('change', () => save(field.path, compose()));
+    }
+    return row;
   }
 
   /** For types whose config has nothing worth a dedicated form yet. */

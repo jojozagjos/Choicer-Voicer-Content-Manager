@@ -29,6 +29,16 @@ Fixes for trimming, undo and pack audio.
 - The video no longer plays underneath the trim panel or a job in progress.
 - The play button always matches what the video is doing.
 
+### Menu and studio packs
+
+- The menu editor offers every setting in `config_menu.json`: background mode and
+  scrolling, circles, waves, both gradients, the overlay, the letterbox, the clip
+  disc, button colours and the music loop point. It previously offered two of
+  them. Colours are picked from a swatch, with an alpha slider where the setting
+  takes one.
+- Menu and session music is saved as OGG rather than WAV, which was turning a few
+  minutes of music into a file of well over a hundred megabytes.
+
 ### Packs
 
 - A clip with both a `.txt` and an `.ini` beside it is no longer listed twice, or

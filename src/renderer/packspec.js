@@ -124,6 +124,7 @@ const SPECS = {
             key: 'music_studio',
             label: 'Session music',
             kind: 'audio',
+            audioFormat: 'ogg',
             note: 'Loops for the whole session.',
           },
         ],
@@ -182,7 +183,7 @@ const SPECS = {
       {
         title: 'Sound',
         slots: [
-          { key: 'music_menu', label: 'Menu music', kind: 'audio', note: 'Loops.' },
+          { key: 'music_menu', label: 'Menu music', kind: 'audio', audioFormat: 'ogg', note: 'Loops.' },
           { key: 'button_sfx_select', label: 'Button press', kind: 'audio' },
           { key: 'button_sfx_back', label: 'Back button', kind: 'audio' },
           { key: 'button_sfx_hover', label: 'Button hover', kind: 'audio' },
@@ -196,6 +197,112 @@ const SPECS = {
       },
     ],
     config: 'config_menu.json',
+    // Every setting config_menu.json holds. Written out rather than inferred
+    // from the file, so a pack missing a setting still offers it and a pack
+    // carrying something unexpected does not turn into a mystery control.
+    settings: [
+      {
+        title: 'Sound',
+        fields: [
+          {
+            path: 'audio.use_video',
+            label: "Use the background video's own audio",
+            kind: 'bool',
+            fallback: true,
+            note: 'Off plays the menu music instead and mutes the video. Only has an effect once '
+              + 'this pack has a background video.',
+          },
+          {
+            path: 'audio.music_menu_loop_start',
+            label: 'Music loop start',
+            kind: 'number',
+            fallback: 0,
+            step: 'any',
+            note: 'Where the music jumps back to when it loops. A sample count if the music is a '
+              + 'WAV, a time in seconds if it is an OGG or MP3.',
+          },
+        ],
+      },
+      {
+        title: 'Background',
+        fields: [
+          {
+            path: 'stretch_background',
+            label: 'Background fitting',
+            kind: 'choice',
+            fallback: false,
+            options: [[false, 'Tile at its own size'], [true, 'Stretch to the window']],
+          },
+          {
+            path: 'background.image.use_type',
+            label: 'Image mode',
+            kind: 'number',
+            fallback: 1,
+            note: 'Which of the game\'s background modes to draw the image with. The game does not '
+              + 'document what each number does, so this is worth trying a few values on.',
+          },
+          {
+            path: 'background.image.scroll.x',
+            label: 'Scroll across',
+            kind: 'number',
+            fallback: 0,
+            step: 'any',
+          },
+          {
+            path: 'background.image.scroll.y',
+            label: 'Scroll down',
+            kind: 'number',
+            fallback: 0,
+            step: 'any',
+          },
+          { path: 'background.overlay.on', label: 'Draw the overlay image', kind: 'bool', fallback: false },
+        ],
+      },
+      {
+        title: 'Background effects',
+        fields: [
+          { path: 'background.circles.on', label: 'Circles', kind: 'bool', fallback: false },
+          { path: 'background.circles.color', label: 'Circle colour', kind: 'rgba' },
+          { path: 'background.waves.on', label: 'Waves', kind: 'bool', fallback: false },
+          { path: 'background.waves.color', label: 'Wave colour', kind: 'rgba' },
+          { path: 'background.top_gradient.on', label: 'Gradient at the top', kind: 'bool', fallback: false },
+          { path: 'background.top_gradient.color', label: 'Top gradient colour', kind: 'rgba' },
+          { path: 'background.bottom_gradient.on', label: 'Gradient at the bottom', kind: 'bool', fallback: false },
+          { path: 'background.bottom_gradient.color', label: 'Bottom gradient colour', kind: 'rgba' },
+        ],
+      },
+      {
+        title: 'Clip disc',
+        fields: [
+          {
+            path: 'background.clip_disc.state',
+            label: 'Disc state',
+            kind: 'number',
+            fallback: 0,
+            note: 'The game does not document what each number does.',
+          },
+          { path: 'background.clip_disc.color', label: 'Disc colour', kind: 'rgba' },
+        ],
+      },
+      {
+        title: 'Letterbox',
+        fields: [
+          { path: 'background.letterbox.on', label: 'Letterbox', kind: 'bool', fallback: false },
+          // Six digits here where everything else uses eight. The game's own
+          // packs are written that way, so this follows them.
+          { path: 'background.letterbox.color', label: 'Letterbox colour', kind: 'rgb' },
+          { path: 'background.letterbox.accent', label: 'Letterbox accent', kind: 'rgb' },
+        ],
+      },
+      {
+        title: 'Buttons',
+        fields: [
+          { path: 'ui.button.color1', label: 'Button colour 1', kind: 'rgba' },
+          { path: 'ui.button.color2', label: 'Button colour 2', kind: 'rgba' },
+          { path: 'ui.button.invert', label: 'Swap the two colours', kind: 'bool', fallback: false },
+        ],
+      },
+    ],
   },
 
   chatter: {

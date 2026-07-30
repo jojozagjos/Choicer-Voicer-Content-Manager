@@ -1846,6 +1846,39 @@ input[type="range"]::-webkit-slider-thumb {
   .help-defs > div { grid-template-columns: 1fr; gap: 3px; }
 }
 
+/* Config forms built from a pack type's settings list */
+.config-form { display: flex; flex-direction: column; gap: 10px; }
+.config-form h4 {
+  margin: 14px 0 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.config-form h4:first-child { margin-top: 2px; }
+.field-note { display: block; margin-top: 3px; font-size: 11.5px; color: var(--muted); font-style: normal; }
+.colour-field { display: flex; flex-direction: column; gap: 5px; }
+.colour-row { display: flex; align-items: center; gap: 9px; }
+/* The swatch is the control, so it gets room rather than the browser default. */
+.colour-row input[type="color"] {
+  width: 46px;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg-sunken);
+  cursor: pointer;
+}
+.colour-row input[type="range"] { flex: 1; min-width: 60px; }
+/* The value as the game stores it, so what is typed in the file is never a
+   mystery when comparing against another pack. */
+.colour-read {
+  min-width: 68px;
+  font-size: 11.5px;
+  font-family: ui-monospace, Consolas, monospace;
+  color: var(--muted);
+}
+
 /* The What's New tab, rendered from CHANGELOG.md */
 .changelog { font-size: 12.5px; }
 .changelog p { margin: 7px 0; color: var(--muted); }

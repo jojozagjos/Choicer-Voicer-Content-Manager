@@ -1180,6 +1180,11 @@ input[type="range"]::-webkit-slider-thumb {
 /* A tabbed dialog keeps its head and foot pinned and scrolls only the middle,
    so the save path and the Export button never scroll out of reach. */
 .dialog-body-tabbed { padding: 0; gap: 0; max-height: 86vh; }
+/* Wider than the other dialogs: this one carries seven tabs across the top and
+   the reference tables underneath, neither of which fit comfortably at 620. */
+#about-dialog { width: min(800px, 94vw); }
+/* Tighter tabs, for the same reason. */
+.dialog-body-tabbed .seg-tab { padding: 8px 11px; }
 .dialog-body-tabbed .dialog-head { padding: 18px 20px 12px; }
 .dialog-body-tabbed .seg-tabs { padding: 0 20px; }
 .dialog-body-tabbed .dialog-scroll { padding: 16px 20px; }
@@ -1287,7 +1292,20 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* Help */
 
-.help-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); padding-bottom: 8px; flex-wrap: wrap; }
+/* One row, always. These used to wrap, which at seven tabs left one or two of
+   them stranded on a second line looking like a different kind of thing. If the
+   window is too narrow to fit them they scroll sideways rather than wrapping. */
+.help-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 8px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.help-tabs::-webkit-scrollbar { height: 0; }
+.help-tabs .seg-tab { white-space: nowrap; flex: none; }
 .help-tab {
   background: transparent;
   border: 1px solid transparent;
@@ -1826,6 +1844,81 @@ input[type="range"]::-webkit-slider-thumb {
 
 @media (max-width: 700px) {
   .help-defs > div { grid-template-columns: 1fr; gap: 3px; }
+}
+
+/* The What's New tab, rendered from CHANGELOG.md */
+.changelog { font-size: 12.5px; }
+.changelog p { margin: 7px 0; color: var(--muted); }
+
+/* One version at a time, picked from this bar, so it is always obvious which
+   release the notes underneath belong to. */
+.changelog-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 12px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+.changelog-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-sunken);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.changelog-pill:hover { border-color: var(--hover-line); color: var(--text); }
+.changelog-pill.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+/* Marks the installed version, so it can be told apart from the one being read. */
+.changelog-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.75;
+}
+
+.changelog-heading { display: flex; align-items: baseline; gap: 10px; margin: 14px 0 2px; }
+.changelog-heading h3 { margin: 0; font-size: 16px; font-weight: 700; color: var(--text); }
+.changelog-tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+.changelog-list { margin: 6px 0 0; padding-left: 19px; }
+.changelog-list li { margin-bottom: 5px; color: var(--muted); line-height: 1.5; }
+.changelog-list li b { color: var(--text); }
+.changelog code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--bg-sunken);
+  font-size: 11.5px;
+}
+/* Paths and commands. Long ones scroll rather than widening the dialog. */
+.changelog-pre {
+  margin: 8px 0;
+  padding: 9px 11px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg-sunken);
+  font-size: 11.5px;
+  white-space: pre;
 }
 
 /* Clip rows */

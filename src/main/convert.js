@@ -36,14 +36,23 @@ const extOf = (f) => path.extname(f).toLowerCase();
 /**
  * A scratch path for a job to write into before it replaces the real file.
  *
- * The counter matters. These used to be named by process id alone, which is the
- * same for every job in the app, so two jobs working on one pack wrote to the
- * same scratch file and raced to rename it over the video. That is reachable by
- * ordinary use: start a trim, leave the tab, come back and start another.
+ * Two details, both learned the hard way:
+ *
+ * The counter. These used to be named by process id alone, which is the same for
+ * every job in the app, so two jobs working on one pack wrote to the same scratch
+ * file and raced to rename it over the video. Reachable by ordinary use: start a
+ * trim, leave the tab, come back and start another.
+ *
+ * The `.part` on the end. These used to keep the real extension, so an
+ * interrupted conversion left something named like `dub_video.ogv.1234.part.ogv`
+ * sitting in the pack folder, which is exactly the half-file in a pack folder
+ * that writing to a scratch name is supposed to prevent. Ending in `.part`
+ * instead means nothing can read it as media whatever happens. Every caller
+ * passes ffmpeg an explicit `-f`, so the extension is not carrying any meaning.
  */
 let partialSeq = 0;
 function partialPath(target, tag, ext) {
-  return `${target}.${process.pid}.${++partialSeq}.${tag}.${ext}`;
+  return `${target}.${process.pid}.${++partialSeq}.${tag}-${ext}.part`;
 }
 
 function uniquePath(target) {

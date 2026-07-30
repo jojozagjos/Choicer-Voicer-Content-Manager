@@ -584,9 +584,15 @@ function makeSmokePack(gameDir) {
     .map((f) => path.basename(f, path.extname(f)))
     .sort();
 
-  const kept = clipBases[0] || null;
+  // Deduplicated, because a clip can carry both a .txt and an .ini. Without this
+  // the kept clip appeared again further down the list, so the loop below deleted
+  // it along with the ones meant to go, and the scratch pack came out with no
+  // clips at all.
+  const bases = [...new Set(clipBases)];
+
+  const kept = bases[0] || null;
   let removed = 0;
-  for (const base of clipBases.slice(1)) {
+  for (const base of bases.slice(1)) {
     for (const file of fs.readdirSync(target)) {
       if (path.basename(file, path.extname(file)) !== base) continue;
       try { fs.unlinkSync(path.join(target, file)); removed++; } catch { /* already gone */ }
@@ -1236,6 +1242,99 @@ function runSmokeTest(win) {
       }
     } catch (err) {
       contentCheck = { error: err.message };
+    }
+
+    // The What's New tab reads CHANGELOG.md at runtime, so it can break in ways
+    // the file itself looks fine from: not shipped, not parsed, tab not wired.
+    let changelogCheck = null;
+    try {
+      changelogCheck = await win.webContents.executeJavaScript(`(async () => {
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        const tab = document.querySelector('.help-tabs [data-help="whatsnew"]');
+        if (!tab) return { skipped: 'no What is New tab' };
+
+        const dialog = document.getElementById('about-dialog');
+        const box = document.getElementById('changelog-body');
+        const out = {};
+
+        // Clicking the version is how anyone asks what is in the version they
+        // have, so it must land on the changelog rather than the front of help.
+        document.getElementById('version-badge').click();
+        for (let i = 0; i < 40 && box.dataset.loaded !== 'yes'; i++) await wait(100);
+        out.badgeOpensWhatsNew = !document.querySelector('[data-help-panel="whatsnew"]').hidden;
+        out.badgeOpenedDialog = dialog.open;
+
+        out.loaded = box.dataset.loaded === 'yes';
+        out.versionsShown = box.querySelectorAll('.changelog-pill').length;
+        out.entries = box.querySelectorAll('.changelog-entry').length;
+        out.bullets = box.querySelectorAll('.changelog-entry:not([hidden]) .changelog-list li').length;
+        out.newestShown = (box.querySelector('.changelog-entry:not([hidden]) h3') || {}).textContent || null;
+        // Exactly one release visible at a time, or the bar is decoration.
+        out.visibleEntries = [...box.querySelectorAll('.changelog-entry')].filter((e) => !e.hidden).length;
+        out.runningMarked = box.querySelectorAll('.changelog-dot').length;
+        out.mentionsThisVersion = box.textContent.includes(${JSON.stringify(app.getVersion())});
+        // Nothing in the file should be able to introduce markup of its own.
+        out.scriptTags = box.querySelectorAll('script').length;
+
+        // Switching versions with the bar.
+        const pills = [...box.querySelectorAll('.changelog-pill')];
+        if (pills.length > 1) {
+          pills[1].click();
+          await wait(150);
+          out.switchedTo = (box.querySelector('.changelog-entry:not([hidden]) h3') || {}).textContent || null;
+          out.stillOneVisible =
+            [...box.querySelectorAll('.changelog-entry')].filter((e) => !e.hidden).length === 1;
+        }
+
+        // The tabs across the top have to sit on one row. Comparing each tab's
+        // top against the first catches a wrap, which no width check would.
+        const tabs = [...document.querySelectorAll('.help-tabs .seg-tab')];
+        const firstTop = tabs[0].getBoundingClientRect().top;
+        out.tabCount = tabs.length;
+        out.tabRows = new Set(tabs.map((t) => Math.round(t.getBoundingClientRect().top))).size;
+        out.tabsOnOneRow = tabs.every((t) => Math.abs(t.getBoundingClientRect().top - firstTop) < 2);
+
+        // Help itself must open at the beginning, whatever was last read.
+        dialog.close();
+        await wait(120);
+        document.getElementById('btn-about').click();
+        await wait(200);
+        out.helpOpensAtStart = !document.querySelector('[data-help-panel="start"]').hidden;
+
+        dialog.close();
+        await wait(150);
+        return out;
+      })()`);
+    } catch (err) {
+      changelogCheck = { error: err.message };
+      errors.push(`What's New tab failed: ${err.message}`);
+    }
+    if (changelogCheck && !changelogCheck.skipped && !changelogCheck.error) {
+      if (!changelogCheck.loaded) errors.push("the What's New tab did not load the changelog");
+      if (!changelogCheck.versionsShown) errors.push('the changelog shows no version bar');
+      if (!changelogCheck.bullets) errors.push("the What's New tab lists no changes");
+      if (changelogCheck.visibleEntries !== 1) {
+        errors.push(`${changelogCheck.visibleEntries} releases visible at once, expected 1`);
+      }
+      if (!changelogCheck.mentionsThisVersion) {
+        errors.push(`the changelog has no entry for ${app.getVersion()}`);
+      }
+      if (!changelogCheck.runningMarked) {
+        errors.push('the changelog does not mark which version is running');
+      }
+      if (changelogCheck.scriptTags) errors.push('the changelog rendered a script tag');
+      if (!changelogCheck.badgeOpensWhatsNew) {
+        errors.push("clicking the version does not open What's New");
+      }
+      if (!changelogCheck.helpOpensAtStart) {
+        errors.push('Help does not open on Getting Started');
+      }
+      if (!changelogCheck.tabsOnOneRow) {
+        errors.push(`the help tabs wrap onto ${changelogCheck.tabRows} rows`);
+      }
+      if (changelogCheck.switchedTo && changelogCheck.stillOneVisible === false) {
+        errors.push('picking a version in the changelog bar left more than one showing');
+      }
     }
 
     // Captions have to appear for every clip, and playback must stop when the
@@ -2088,7 +2187,7 @@ function runSmokeTest(win) {
     if (scratch && !scratchRemoved) errors.push('the scratch pack was left behind');
 
     console.log('SMOKE ' + JSON.stringify(
-      { report, scratch, scratchRemoved, videoCheck, trimSpeedCheck, captionCheck, editorCheck, homeCheck,
+      { report, scratch, scratchRemoved, videoCheck, trimSpeedCheck, changelogCheck, captionCheck, editorCheck, homeCheck,
         contentCheck, createCheck, sessionCheck, staleCheck, packCheck, toolsCheck, typesCheck,
         queueCheck, warnings, errors },
       null, 2));
@@ -2114,6 +2213,23 @@ function registerIpc() {
       donate: DONATE_URL,
     },
   }));
+
+  /**
+   * The changelog, for the What's New tab.
+   *
+   * Read from the shipped CHANGELOG.md rather than kept as a second copy in the
+   * interface, so there is one list to keep up to date and it cannot drift from
+   * what the repository says. Packaged builds carry the file inside app.asar,
+   * which reads like any other path.
+   */
+  ipcMain.handle('app:changelog', () => {
+    const file = path.join(__dirname, '..', '..', 'CHANGELOG.md');
+    try {
+      return { ok: true, text: fs.readFileSync(file, 'utf8') };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
 
   ipcMain.handle('settings:get', () => settings);
 

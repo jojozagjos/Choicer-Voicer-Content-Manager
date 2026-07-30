@@ -23,6 +23,7 @@ const el = {
   btnAboutDonate: $('#btn-about-donate'),
   donateBlurb: $('#donate-blurb'),
   helpTabs: document.querySelectorAll('.help-tabs [data-help]'),
+  changelogBody: $('#changelog-body'),
 
   alertBar: $('#alert-bar'),
   alertText: $('#alert-text'),
@@ -568,7 +569,7 @@ async function useGameDir(dir) {
     // is where that is answered.
     if (state.settings.seenHelp !== true) {
       state.settings = await window.api.settings.set({ seenHelp: true });
-      setTimeout(() => { if (!el.aboutDialog.open) el.aboutDialog.showModal(); }, 700);
+      setTimeout(() => { if (!el.aboutDialog.open) openHelpTab('start'); }, 700);
     }
     return true;
   }
@@ -1518,7 +1519,7 @@ async function rescan(dir) {
       showAlert(
         'Packs found, but you have not recorded any dubs yet. Record one in the game first.',
         'How it works',
-        () => el.aboutDialog.showModal()
+        () => openHelpTab('start')
       );
     } else if (state.info.ffmpeg.ok) {
       state.dubAlertActive = false;
@@ -1583,6 +1584,170 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text == null ? '' : String(text);
   return div.innerHTML;
+}
+
+// The What's New tab
+
+/** Opens the help dialog with one particular tab selected. */
+function openHelpTab(which) {
+  const tab = document.querySelector(`.help-tabs [data-help="${which}"]`);
+  if (tab) tab.click();
+  if (!el.aboutDialog.open) el.aboutDialog.showModal();
+}
+
+/**
+ * Shows the changelog, fetched once and kept.
+ *
+ * The list lives in CHANGELOG.md and is read from there rather than written out
+ * again here, so the repository and the app cannot end up disagreeing about what
+ * a release changed.
+ */
+async function loadChangelog() {
+  const box = el.changelogBody;
+  if (!box || box.dataset.loaded === 'yes') return;
+
+  const result = await window.api.changelog();
+  if (!result.ok) {
+    box.innerHTML = '<p class="muted small">The list of changes could not be read. '
+      + 'It is on the releases page on GitHub.</p>';
+    return;
+  }
+
+  const releases = parseChangelog(result.text);
+  if (!releases.length) {
+    box.innerHTML = '<p class="muted small">No changes are listed yet.</p>';
+    return;
+  }
+
+  const running = (state.info && state.info.version) || '';
+
+  // A row of versions across the top, one shown at a time. Without it a long
+  // enough changelog is one continuous scroll and it stops being obvious which
+  // version any given line belongs to.
+  const bar = releases.map((r, i) => {
+    const isRunning = r.version === running;
+    return `<button type="button" class="changelog-pill${i === 0 ? ' on' : ''}"
+      data-version="${escapeHtml(r.version)}"
+      title="${isRunning ? 'The version you are running' : `What changed in ${escapeHtml(r.version)}`}"
+      >${escapeHtml(r.version)}${isRunning ? '<i class="changelog-dot"></i>' : ''}</button>`;
+  }).join('');
+
+  const panels = releases.map((r, i) => `
+    <div class="changelog-entry" data-version="${escapeHtml(r.version)}" ${i === 0 ? '' : 'hidden'}>
+      <div class="changelog-heading">
+        <h3>${escapeHtml(r.version)}</h3>
+        ${r.version === running
+    ? '<span class="changelog-tag">You are running this</span>'
+    : ''}
+      </div>
+      ${r.html}
+    </div>`).join('');
+
+  box.innerHTML = `<div class="changelog-bar" role="tablist">${bar}</div>${panels}`;
+
+  for (const pill of box.querySelectorAll('.changelog-pill')) {
+    pill.addEventListener('click', () => {
+      for (const other of box.querySelectorAll('.changelog-pill')) {
+        other.classList.toggle('on', other === pill);
+      }
+      for (const entry of box.querySelectorAll('.changelog-entry')) {
+        entry.hidden = entry.dataset.version !== pill.dataset.version;
+      }
+    });
+  }
+
+  box.dataset.loaded = 'yes';
+}
+
+/**
+ * Splits the changelog into one entry per version.
+ *
+ * `## <version>` starts a release; everything until the next one belongs to it.
+ * Anything before the first release heading is the file's own title and is
+ * dropped.
+ */
+function parseChangelog(text) {
+  const releases = [];
+  let current = null;
+
+  for (const line of text.split(/\r?\n/)) {
+    const heading = line.match(/^##\s+(?!#)(.+?)\s*$/);
+    if (heading) {
+      current = { version: heading[1], lines: [] };
+      releases.push(current);
+      continue;
+    }
+    if (current) current.lines.push(line);
+  }
+
+  return releases.map((r) => ({ version: r.version, html: renderChangelog(r.lines.join('\n')) }));
+}
+
+/**
+ * Turns the changelog's markdown into the small subset of it this needs.
+ *
+ * Everything is escaped before any tag is added, so the only markup in the
+ * result is the markup made here. A general markdown library would be a lot of
+ * weight for six kinds of line.
+ */
+function renderChangelog(text) {
+  const inline = (raw) => escapeHtml(raw)
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/(^|\s)\*([^*]+)\*/g, '$1<em>$2</em>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  const out = [];
+  let list = null;      // open <ul>, or null
+  let indented = false; // inside an indented code block
+
+  const closeList = () => {
+    if (list) { out.push('</ul>'); list = null; }
+  };
+
+  for (const line of text.split(/\r?\n/)) {
+    // An indented block is a path or a command, kept as written.
+    if (/^ {4}\S/.test(line)) {
+      closeList();
+      if (!indented) { out.push('<pre class="changelog-pre">'); indented = true; }
+      out.push(escapeHtml(line.slice(4)));
+      continue;
+    }
+    if (indented && !line.trim()) continue;
+    if (indented) { out.push('</pre>'); indented = false; }
+
+    if (!line.trim()) { closeList(); continue; }
+
+    // Version headings are handled by parseChangelog, which uses them to split
+    // the file up, so anything left at that level is the file's own title.
+    if (/^#{1,2}\s/.test(line)) continue;
+
+    if (/^###\s/.test(line)) {
+      closeList();
+      out.push(`<h4>${inline(line.replace(/^###\s+/, ''))}</h4>`);
+      continue;
+    }
+    // Nested bullets are flattened; the nesting only groups detail under a point
+    // and reads the same as a plain list here.
+    if (/^\s*-\s/.test(line)) {
+      if (!list) { out.push('<ul class="changelog-list">'); list = true; }
+      out.push(`<li>${inline(line.replace(/^\s*-\s+/, ''))}</li>`);
+      continue;
+    }
+
+    // A continuation of the previous bullet, which markdown wraps by indenting.
+    if (list && /^\s+\S/.test(line)) {
+      const item = out.pop();
+      out.push(`${item.slice(0, -5)} ${inline(line.trim())}</li>`);
+      continue;
+    }
+
+    closeList();
+    out.push(`<p>${inline(line.trim())}</p>`);
+  }
+
+  closeList();
+  if (indented) out.push('</pre>');
+  return out.join('\n');
 }
 
 // Pack / session selection
@@ -2553,7 +2718,7 @@ function wireEvents() {
   });
   el.setupHelp.addEventListener('click', () => {
     el.setupDialog.close();
-    el.aboutDialog.showModal();
+    openHelpTab('start');
   });
   el.setupLater.addEventListener('click', () => {
     state.setupSkipped = true;
@@ -2577,13 +2742,13 @@ function wireEvents() {
     if (dropped.length) await useGameDir(dropped[0]);
   });
 
-  el.btnAbout.addEventListener('click', () => el.aboutDialog.showModal());
-  // Straight to the release when there is one, otherwise it is just an About
-  // button that happens to show the version.
-  el.versionBadge.addEventListener('click', () => {
-    if (state.update) openUpdatePage();
-    else el.aboutDialog.showModal();
-  });
+  // Help always opens at the beginning, whatever tab was last read.
+  el.btnAbout.addEventListener('click', () => openHelpTab('start'));
+  // Clicking the version asks what is in this version, so it opens the list of
+  // changes rather than the front of the help. An available update is still
+  // offered, in the note beside the version inside the dialog and in the bar at
+  // the top of the window, so nothing is lost by not jumping straight to GitHub.
+  el.versionBadge.addEventListener('click', () => openHelpTab('whatsnew'));
   el.btnAboutClose.addEventListener('click', () => el.aboutDialog.close());
 
   // Everything that leaves the app asks first, so a click never dumps you into
@@ -2608,6 +2773,7 @@ function wireEvents() {
       for (const panel of document.querySelectorAll('[data-help-panel]')) {
         panel.hidden = panel.dataset.helpPanel !== tab.dataset.help;
       }
+      if (tab.dataset.help === 'whatsnew') loadChangelog();
     });
   }
 

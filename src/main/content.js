@@ -171,11 +171,31 @@ function inspectVoice(dir, files, { parseIni, findAudioSibling }) {
       ? findFile(folderFiles, '_pack_filler_image', IMAGE_EXTS)
       : fillerImage;
 
+    // Which file speaks for each clip. A clip can easily carry more than one:
+    // packs are often shipped with .txt and the editor writes .ini when it saves,
+    // so a clip that has been edited ends up with both. Counting one clip per
+    // file listed every one of those lines twice, and an export would have placed
+    // each of them twice too. CLIP_META_EXTS is in the order the game prefers, so
+    // the earliest extension wins.
+    const chosen = new Map();
     for (const file of folderFiles) {
       if (!CLIP_META_EXTS.includes(extOf(file))) continue;
       if (file.startsWith('_')) continue;
       const data = parseIni(path.join(folderDir, file));
       if (!('dub_timestamps' in data)) continue;
+
+      const key = baseOf(file).toLowerCase();
+      const rank = CLIP_META_EXTS.indexOf(extOf(file));
+      const held = chosen.get(key);
+      if (!held || rank < held.rank) chosen.set(key, { file, rank, data });
+    }
+
+    // Walked in the folder's own order rather than the order they were chosen
+    // in, so clips stay listed the way they are named.
+    for (const file of folderFiles) {
+      const picked = chosen.get(baseOf(file).toLowerCase());
+      if (!picked || picked.file !== file) continue;
+      const data = picked.data;
 
       const base = baseOf(file);
       const times = Array.isArray(data.dub_timestamps) ? data.dub_timestamps : [];

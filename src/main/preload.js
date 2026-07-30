@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld('api', {
   },
 
   checkUpdate: () => ipcRenderer.invoke('app:checkUpdate'),
+  changelog: () => ipcRenderer.invoke('app:changelog'),
 
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),

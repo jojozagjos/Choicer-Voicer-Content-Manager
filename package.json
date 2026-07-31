@@ -1,6 +1,6 @@
 {
   "name": "choicer-voicer-content-manager",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Unofficial fan tool for The Choicer Voicer: export your dubs as video and manage custom content packs",
   "productName": "Choicer Voicer Content Manager",
   "main": "src/main/main.js",

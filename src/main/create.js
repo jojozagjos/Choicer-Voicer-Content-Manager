@@ -416,7 +416,45 @@ function installPack(gameDir, sourceDir) {
  * undoable. Anything the game would load goes: the audio, the metadata and the
  * picture that shares its name.
  */
-function trashClip(packDir, base, trashRoot) {
+/**
+ * The takes recorded against one clip, across every session of a pack.
+ *
+ * The game writes them as `_dubrecord_<clip>.wav` under a folder per session,
+ * with a `-2`, `-3` and so on when a line was recorded more than once. They live
+ * outside the pack, so deleting a clip never touched them and left recordings
+ * behind for a line that no longer exists.
+ */
+function clipRecordings(gameDir, packName, base) {
+  const root = path.join(gameDir, 'recordings', 'dub_recordings', packName);
+  const found = [];
+  let sessions = [];
+  try {
+    sessions = fs.readdirSync(root);
+  } catch {
+    return found; // this pack has never been dubbed
+  }
+
+  const wanted = `_dubrecord_${base}`.toLowerCase();
+  for (const session of sessions) {
+    const dir = path.join(root, session);
+    let files = [];
+    try {
+      if (!fs.statSync(dir).isDirectory()) continue;
+      files = fs.readdirSync(dir);
+    } catch { continue; }
+
+    for (const file of files) {
+      const stem = path.basename(file, path.extname(file)).toLowerCase();
+      // The take suffix is part of the name, so an exact match is not enough.
+      if (stem === wanted || stem.startsWith(`${wanted}-`)) {
+        found.push({ path: path.join(dir, file), session, name: file });
+      }
+    }
+  }
+  return found;
+}
+
+function trashClip(packDir, base, trashRoot, alsoMove = []) {
   const stamp = `${Date.now()}_${base}`;
   const bin = path.join(trashRoot, stamp);
   fs.mkdirSync(bin, { recursive: true });
@@ -429,6 +467,19 @@ function trashClip(packDir, base, trashRoot) {
     const to = path.join(bin, file);
     fs.renameSync(from, to);
     moved.push({ from, to });
+  }
+
+  // Recordings go into their own folder inside the same bin, because two
+  // sessions can hold a take under exactly the same name.
+  for (const take of alsoMove) {
+    try {
+      if (!fs.existsSync(take.path)) continue;
+      const holder = path.join(bin, 'recordings', take.session);
+      fs.mkdirSync(holder, { recursive: true });
+      const to = path.join(holder, take.name);
+      fs.renameSync(take.path, to);
+      moved.push({ from: take.path, to });
+    } catch { /* left where it is */ }
   }
 
   if (!moved.length) {
@@ -479,6 +530,7 @@ function deletePack(gameDir, packDir) {
 }
 
 module.exports = {
+  clipRecordings,
   createPack,
   installPack,
   identifyPack,

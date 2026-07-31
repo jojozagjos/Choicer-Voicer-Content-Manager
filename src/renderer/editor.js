@@ -1414,6 +1414,15 @@ export class PackEditor {
   }
 
   renderClipList(container) {
+    // Anything typed but not yet written goes to disk before the boxes holding
+    // it are thrown away. Rebuilding the list is how an edit in progress used to
+    // be lost: the text disappeared and the previous wording came back.
+    if (this._pendingEdit) {
+      const flush = this._pendingEdit;
+      this._pendingEdit = null;
+      flush();
+    }
+
     const clips = this.pack.clips || [];
     container.innerHTML = '';
 
@@ -1508,24 +1517,64 @@ export class PackEditor {
 
       row.querySelector('[data-act="delete"]').addEventListener('click', () => this.deleteClip(clip));
 
-      // Saving on change keeps typing responsive and avoids a write per keypress.
-      const save = async () => {
-        const before = { caption: clip.caption || '', character: clip.character || '' };
+      const write = async (values) => {
+        const result = await this.api.content.writeClipMeta({
+          destDir: this.pack.dir,
+          base: clip.base,
+          meta: { ...values, image: clip.image || `${clip.base}.png`, timestamp: clip.time },
+        });
+        // Checked, because a write that failed used to update the line on screen
+        // anyway. The text then sat there looking saved until something reread
+        // the pack and put the old wording back.
+        if (!result || !result.ok) {
+          this.toast(`Could not save that line: ${(result && result.error) || 'unknown error'}`,
+            'error', 8000);
+          return false;
+        }
+        clip.caption = values.caption;
+        clip.character = values.character;
+        if (this.timeline) this.timeline.setClips(this.pack.clips || []);
+        return true;
+      };
+
+      /**
+       * Writes what is in the boxes, if it differs from what the clip holds.
+       *
+       * Saving only on `change` meant saving only when the field lost focus, and
+       * anything that rebuilt the list first, such as picking a clip on the
+       * timeline, destroyed the box with the typing still in it. The text
+       * vanished and the old wording came back. Typing now saves shortly after
+       * it stops, and the list flushes whatever is pending before it rebuilds.
+       */
+      const commit = async () => {
         const after = { caption: captionInput.value, character: characterInput.value };
-        if (before.caption === after.caption && before.character === after.character) return;
-
-        const write = async (values) => {
-          await this.api.content.writeClipMeta({
-            destDir: this.pack.dir,
-            base: clip.base,
-            meta: { ...values, image: clip.image || `${clip.base}.png`, timestamp: clip.time },
-          });
-          clip.caption = values.caption;
-          clip.character = values.character;
-          if (this.timeline) this.timeline.setClips(this.pack.clips || []);
-        };
-
+        if ((clip.caption || '') === after.caption
+          && (clip.character || '') === after.character) return;
         await write(after);
+      };
+
+      let idle = null;
+      const later = () => {
+        clearTimeout(idle);
+        this._pendingEdit = commit;
+        idle = setTimeout(() => { this._pendingEdit = null; commit(); }, 600);
+      };
+
+      // A finished edit is one undo step, whatever it took to type. The starting
+      // point is taken when the box is first entered rather than per keystroke.
+      let from = null;
+      const remember = () => {
+        if (!from) from = { caption: clip.caption || '', character: clip.character || '' };
+      };
+      const settle = async () => {
+        clearTimeout(idle);
+        this._pendingEdit = null;
+        const before = from;
+        from = null;
+        const after = { caption: captionInput.value, character: characterInput.value };
+        if (!before) return;
+        if (before.caption === after.caption && before.character === after.character) return;
+        if (!await write(after)) return;
         this.push({
           label: 'caption edit',
           undo: async () => { await write(before); this.renderClipList(container); },
@@ -1533,8 +1582,12 @@ export class PackEditor {
         });
       };
 
-      captionInput.addEventListener('change', save);
-      characterInput.addEventListener('change', save);
+      for (const input of [captionInput, characterInput]) {
+        input.addEventListener('focus', remember);
+        input.addEventListener('input', () => { remember(); later(); });
+        input.addEventListener('change', settle);
+        input.addEventListener('blur', settle);
+      }
 
       container.append(row);
     }
@@ -1835,15 +1888,40 @@ export class PackEditor {
   /** Deletes a clip by moving its files aside, so undo can put them back. */
   async deleteClip(clip) {
     const pack = this.pack;
+
+    // Takes recorded against this line live outside the pack, so deleting the
+    // clip left them behind, belonging to a line that no longer exists. Only
+    // asked about when there are some.
+    let takes = [];
+    const found = await this.api.content.clipRecordings({ packDir: pack.dir, base: clip.base });
+    if (found && found.ok && found.takes.length) {
+      const sessions = new Set(found.takes.map((t) => t.session)).size;
+      const answer = await this.ask({
+        title: `Delete "${clip.base}"?`,
+        detail: `There ${found.takes.length === 1 ? 'is 1 dub recording' : `are ${found.takes.length} dub recordings`} `
+          + `of this line, across ${sessions} session${sessions === 1 ? '' : 's'}.\n\n`
+          + 'Deleting both leaves nothing behind for a line that is gone. Keeping the recordings '
+          + 'leaves them where they are, which is what you want if you still intend to export '
+          + 'that take.\n\nEither way this can be undone.',
+        buttons: ['Delete both', 'Keep the recordings', 'Cancel'],
+        mark: '🗑',
+        danger: true,
+      });
+      if (answer === 2 || answer == null) return;
+      if (answer === 0) takes = found.takes;
+    }
+
     const result = await this.run('Deleting the clip…', () =>
-      this.api.content.trashClip({ packDir: pack.dir, base: clip.base }));
+      this.api.content.trashClip({ packDir: pack.dir, base: clip.base, takes }));
 
     if (!result.ok) {
       this.toast(`Could not delete it: ${result.error}`, 'error', 7000);
       return;
     }
 
-    this.toast(`Deleted ${clip.base}.`, 'ok');
+    this.toast(takes.length
+      ? `Deleted ${clip.base} and ${takes.length} recording${takes.length === 1 ? '' : 's'}.`
+      : `Deleted ${clip.base}.`, 'ok');
     this.push({
       label: `delete ${clip.base}`,
       undo: async () => {
@@ -1852,7 +1930,7 @@ export class PackEditor {
         this.refreshClips();
       },
       redo: async () => {
-        await this.api.content.trashClip({ packDir: pack.dir, base: clip.base });
+        await this.api.content.trashClip({ packDir: pack.dir, base: clip.base, takes });
         if (this.onChanged) await this.onChanged(pack.id, { keepEditor: true });
         this.refreshClips();
       },

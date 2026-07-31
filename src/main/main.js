@@ -16,6 +16,7 @@ const { ensureProxy } = require('./proxy');
 const { scanContent } = require('./content');
 const {
   createPack, installPack, deletePack, trashClip, restoreClip, writeClipMeta, saveImage, writeIni,
+  clipRecordings,
   writeIniSections,
 } = require('./create');
 const convert = require('./convert');
@@ -2597,11 +2598,26 @@ function registerIpc() {
   });
 
   // Deleting a clip is undoable: its files are moved aside rather than removed.
-  handleWrite('content:trashClip', (p) => p.packDir, (_e, { packDir, base }) => {
+  /** The takes recorded against a clip, so deleting it can offer to take them too. */
+  ipcMain.handle('content:clipRecordings', (_e, { packDir, base }) => {
+    if (!isAllowed(packDir)) return { ok: false, error: 'That folder is outside the game folder' };
+    try {
+      const gameDir = gamedata.resolveGameDir(settings.gameDir || gamedata.defaultGameDir());
+      if (!gameDir) return { ok: true, takes: [] };
+      return { ok: true, takes: clipRecordings(gameDir, path.basename(packDir), base) };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  handleWrite('content:trashClip', (p) => p.packDir, (_e, { packDir, base, takes }) => {
     if (!isAllowed(packDir)) return { ok: false, error: 'That folder is outside the game folder' };
     try {
       const trashRoot = path.join(app.getPath('userData'), 'deleted-clips');
-      return { ok: true, ...trashClip(packDir, base, trashRoot) };
+      // Recordings live outside the pack, so they are checked against the game
+      // folder in their own right rather than riding in on the pack's check.
+      const safe = (takes || []).filter((t) => t && t.path && isAllowed(t.path));
+      return { ok: true, ...trashClip(packDir, base, trashRoot, safe) };
     } catch (err) {
       return { ok: false, error: err.message };
     }

@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.0.2
+
+Fixes for editing lines, found while building packs with 1.0.1.
+
+### Editing a line
+
+- Typing a caption or a character saves shortly after typing stops, and anything
+  still unsaved is written before the list is rebuilt. Editing a line and then
+  clicking the timeline used to throw the typing away and put the old wording
+  back.
+- A line that fails to save says so, rather than showing the new wording until
+  something reads the pack again and replaces it.
+- The character box offers every name in the pack, whatever has been typed, with
+  the closest matches sorted to the top. It draws one arrow rather than two, and
+  opens upwards when there is no room below instead of running off the screen.
+
+### The timeline
+
+- Clicking the empty space under a line moves the playhead instead of selecting
+  that line.
+- Starting a drag below a clip no longer takes hold of the clip above it.
+
+### Packs
+
+- Deleting a line asks what to do with the dub recordings of it, and can delete
+  them alongside. Keeping them is the other option, and undo puts back whichever
+  was taken.
+- Muffling a backing track is quieter again: about 19 dB under the original where
+  it was 12, with the roll-off moved from 900 Hz down to 600.
+
+### Safety
+
+- Opening a pack folder refuses anything that is not a folder inside the game
+  folder. It previously opened whatever path it was given, which on Windows means
+  handing a file to whichever program claims it.
+
 ## 1.0.1
 
 Fixes for trimming, undo and pack audio, fuller editors for menu and studio

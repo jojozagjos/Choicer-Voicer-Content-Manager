@@ -337,12 +337,12 @@ async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
   const {
     mode = 'muffle',      // 'muffle' keeps a dulled bed, 'silence' removes it
     level = null,         // overrides the mode's own attenuation
-    // Where the muffle rolls the top off. This has been tuned from both ends:
-    // 500 Hz took nearly everything with it and left a barely audible rumble,
-    // 1.4 kHz left the original dialogue clear enough to compete with the dub.
-    // 900 Hz sits above the body of music and room tone but below where speech
-    // becomes intelligible, so the scene stays present without being followed.
-    cutoff = 900,
+    // Where the muffle rolls the top off. Tuned from both ends: 1.4 kHz left the
+    // original dialogue clear enough to compete with the dub, and 500 Hz took
+    // nearly everything with it. 600 Hz keeps the body of music and room tone
+    // while cutting the consonants that carry speech, so the scene stays present
+    // without being followable. See the gain below for the measurements.
+    cutoff = 600,
     fade = 0.08,          // seconds of ramp, so the duck does not click
     audioFormat = 'wav',
     baseName = '_backing_track',
@@ -372,11 +372,17 @@ async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
   // Silencing under a line leaves a hole where the room tone was, which sounds
   // like the audio dropped out. Muffling instead rolls the top off and pulls it
   // down, so the scene keeps its atmosphere and the dub still sits in front.
-  // 0.22 was about 13 dB down, which on top of the filtering left almost
-  // nothing; 0.45, about 7 dB, was loud enough to hear the original lines
-  // through. 0.30 is roughly 10 dB down: the scene is still there underneath
-  // without drawing attention to itself.
-  const gain = level != null ? level : (mode === 'silence' ? 0 : 0.30);
+  //
+  // Measured inside a spoken window of a real pack, against the same window
+  // untouched at -30.6 dB mean:
+  //
+  //   0.45, 1400 Hz   about 7 dB down, the original lines still followable
+  //   0.30,  900 Hz   -42.7 dB, 12 dB down, still audible under a quiet dub
+  //   0.15,  600 Hz   -50.0 dB, 19 dB down, present but not competing
+  //
+  // 0.15 at 600 Hz is the setting here. Lower starts to be indistinguishable
+  // from silence, which is its own mode for anyone who wants it.
+  const gain = level != null ? level : (mode === 'silence' ? 0 : 0.15);
   const chain = mode === 'silence'
     ? [`volume=${gain}:enable='${when}'`]
     : [`lowpass=f=${cutoff}:enable='${when}'`, `volume=${gain}:enable='${when}'`];

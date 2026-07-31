@@ -106,6 +106,10 @@ async function convertInto(source, destDir, baseName, options = {}) {
     overwrite = false,
     onProgress,
     signal,
+    // Set by callers that know the picture is of a character but whose file is
+    // not named for one, which is every clip picture: those are named after the
+    // clip, so there is no pattern to recognise them by.
+    characterImage = false,
   } = options;
 
   if (!kind) throw new Error(`Not a media file this app understands: ${path.basename(source)}`);
@@ -123,9 +127,15 @@ async function convertInto(source, destDir, baseName, options = {}) {
   const duration = kind === 'video' || kind === 'audio' ? probeDuration(source) : null;
   const needsTrim = maxSeconds != null && duration != null && duration > maxSeconds + 0.01;
 
+  // A picture of a person that is larger than the game draws one at has to go
+  // through ffmpeg to be brought down, even though its format is already fine.
+  const wantsPortrait = characterImage || isCharacterImage(baseName);
+  const oversized = kind === 'image' && wantsPortrait
+    && isBiggerThan(source, CHARACTER_IMAGE_BOX);
+
   // Already in a format the game reads, nothing to trim: a plain copy keeps
   // the original quality rather than generation-losing it through a re-encode.
-  if (isAcceptable(source, kind) && !needsTrim && extOf(source) === targetExt) {
+  if (isAcceptable(source, kind) && !needsTrim && !oversized && extOf(source) === targetExt) {
     fs.copyFileSync(source, target);
     return { path: target, converted: false, trimmed: false, duration };
   }
@@ -145,6 +155,18 @@ async function convertInto(source, destDir, baseName, options = {}) {
     else if (audioFormat === 'mp3') args.push('-c:a', 'libmp3lame', '-q:a', '2', '-f', 'mp3');
     else args.push('-c:a', 'libvorbis', '-q:a', '5', '-f', 'ogg');
   } else {
+    // A picture of a person is brought down to about the size the game draws
+    // one at. Only these: a menu background or an overlay is meant to be large,
+    // and shrinking those would ruin them.
+    if (wantsPortrait) {
+      const box = CHARACTER_IMAGE_BOX;
+      // force_original_aspect_ratio=decrease fits inside the box without
+      // stretching, and the min() pair stops a small picture being blown up to
+      // meet it.
+      args.push('-vf',
+        `scale=w='min(${box.width},iw)':h='min(${box.height},ih)'`
+        + ':force_original_aspect_ratio=decrease:flags=lanczos');
+    }
     // One frame, and drop any alpha-less weirdness the source might carry.
     args.push('-frames:v', '1', '-f', 'image2', '-c:v', 'png');
   }
@@ -186,6 +208,29 @@ async function convertInto(source, destDir, baseName, options = {}) {
 // The files a pack uses for music rather than for a sound effect. Minutes long,
 // where everything else here is a click or a line.
 const MUSIC_BASES = ['music_menu', 'music_studio'];
+
+// Pictures of a person, which the game stands on screen at roughly the size of
+// its own cardboard cutout. A photo straight from a phone or a render out of an
+// art program is several times that, which the game then draws at full size.
+// Clip pictures are in here too: they are portraits of whoever is speaking and
+// belong at the same size as the rest.
+const CHARACTER_IMAGE_BASES = [/^player$/i, /^host$/i, /^judge[1-5]$/i];
+
+// The cutout the game itself uses is 500x1000. Fitting inside a box this size
+// keeps a character in proportion with the rest without being exact about it,
+// and anything already smaller is left alone rather than blown up.
+const CHARACTER_IMAGE_BOX = { width: 500, height: 1000 };
+
+function isCharacterImage(baseName) {
+  return CHARACTER_IMAGE_BASES.some((pattern) => pattern.test(String(baseName)));
+}
+
+/** Whether a picture is larger than the box, in either direction. */
+function isBiggerThan(file, box) {
+  const probed = probeVideo(file);
+  if (!probed || !probed.width || !probed.height) return false;
+  return probed.width > box.width || probed.height > box.height;
+}
 
 /**
  * What format a piece of audio should be stored as, decided by where it is

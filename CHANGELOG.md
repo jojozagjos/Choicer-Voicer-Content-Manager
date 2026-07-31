@@ -2,7 +2,7 @@
 
 ## 1.0.2
 
-Fixes for editing lines, found while building packs with 1.0.1.
+Fixes throughout, found while building packs with 1.0.1.
 
 ### Editing a line
 
@@ -32,14 +32,44 @@ Fixes for editing lines, found while building packs with 1.0.1.
 - Clicking the empty space under a line moves the playhead instead of selecting
   that line.
 - Starting a drag below a clip no longer takes hold of the clip above it.
+- Playing the video after leaving the editor idle for a while no longer starts
+  silent for a second.
+
+### Keeping up with the game folder
+
+- Packs changed outside the app appear on their own: a pack unzipped into the
+  folder, a recording made in the game, a picture replaced in another program.
+  Rescan is still there for anything a watch cannot see.
+- The pack being edited is reloaded only when the change was to that pack.
 
 ### Packs
 
 - Deleting a line asks what to do with the dub recordings of it, and can delete
   them alongside. Keeping them is the other option, and undo puts back whichever
   was taken.
+- Deleting a pack offers the same choice for its recorded sessions, which live
+  outside the pack folder and were left behind.
+- Recordings whose pack is no longer installed are listed on the Content tab.
+  Nothing mentioned them before, so they were invisible.
 - Muffling a backing track is quieter again: about 19 dB under the original where
   it was 12, with the roll-off moved from 900 Hz down to 600.
+- Evening out the volume of takes now levels each take rather than the finished
+  mix, so a take recorded far quieter than the rest is brought into line with
+  them. It previously left the difference between lines untouched.
+- Pictures of a character are brought down to the size the game draws one at,
+  whether they arrive as a pack's standing art, a clip picture, or a frame
+  grabbed from the video. Backgrounds, overlays and pack icons are left alone.
+
+### Around the app
+
+- A pack whose conversion fails no longer stays locked for the rest of the
+  session. While one is converting its panel says so and shows how far along it
+  is, rather than offering an Edit button that refuses.
+- Confirmation dialogs are easier to read: narrower, with room around the
+  question and larger buttons.
+- The undo bin no longer grows without limit. Older entries are cleared once it
+  passes a few hundred megabytes, and nothing from the last hour is removed, so
+  an open editor keeps everything it can still undo.
 
 ### Safety
 

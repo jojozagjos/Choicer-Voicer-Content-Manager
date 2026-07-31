@@ -416,6 +416,156 @@ function installPack(gameDir, sourceDir) {
  * undoable. Anything the game would load goes: the audio, the metadata and the
  * picture that shares its name.
  */
+// What the undo bin is allowed to grow to, and how long anything is kept no
+// matter what. Undo only ever reaches back into the current session, so older
+// entries are dead weight; they were being kept forever, and a few trims of a
+// long video is all it takes to reach hundreds of megabytes.
+// A trimmed video of a few minutes is around a hundred megabytes on its own, so
+// the cap is set to hold a couple of them rather than a history nobody can reach.
+const TRASH_CAP_BYTES = 250 * 1024 * 1024;
+const TRASH_KEEP_MS = 3 * 24 * 60 * 60 * 1000;
+// Nothing recent is ever removed, whatever the total, because an editor session
+// open right now may still undo it.
+const TRASH_SAFE_MS = 60 * 60 * 1000;
+
+function sizeOf(target) {
+  let total = 0;
+  const stat = fs.statSync(target);
+  if (!stat.isDirectory()) return stat.size;
+  for (const name of fs.readdirSync(target)) {
+    try { total += sizeOf(path.join(target, name)); } catch { /* vanished */ }
+  }
+  return total;
+}
+
+/**
+ * Keeps the undo bin from growing without limit.
+ *
+ * Entries go by age first, then oldest-first until the total is under the cap.
+ * Anything from the last hour is left alone regardless, so an undo that is still
+ * reachable cannot have its files taken out from under it.
+ */
+function pruneTrash(trashRoot) {
+  let names;
+  try {
+    names = fs.readdirSync(trashRoot);
+  } catch {
+    return { removed: 0, freed: 0 };
+  }
+
+  const now = Date.now();
+  const entries = [];
+  for (const name of names) {
+    const full = path.join(trashRoot, name);
+    try {
+      const stat = fs.statSync(full);
+      entries.push({ full, age: now - stat.mtimeMs, bytes: sizeOf(full) });
+    } catch { /* vanished */ }
+  }
+
+  let total = entries.reduce((sum, e) => sum + e.bytes, 0);
+  let removed = 0;
+  let freed = 0;
+
+  const drop = (entry) => {
+    try {
+      fs.rmSync(entry.full, { recursive: true, force: true });
+      removed++;
+      freed += entry.bytes;
+      total -= entry.bytes;
+    } catch { /* in use, leave it */ }
+  };
+
+  for (const entry of entries) {
+    if (entry.age > TRASH_SAFE_MS && entry.age > TRASH_KEEP_MS) drop(entry);
+  }
+
+  const rest = entries
+    .filter((e) => fs.existsSync(e.full) && e.age > TRASH_SAFE_MS)
+    .sort((a, b) => b.age - a.age);
+  for (const entry of rest) {
+    if (total <= TRASH_CAP_BYTES) break;
+    drop(entry);
+  }
+
+  return { removed, freed };
+}
+
+/** Where a pack's recorded sessions live. */
+function sessionRoot(gameDir, packName) {
+  return path.join(gameDir, 'recordings', 'dub_recordings', packName);
+}
+
+/** The recorded sessions of a pack, with how many takes each holds. */
+function packSessions(gameDir, packName) {
+  const root = sessionRoot(gameDir, packName);
+  const out = [];
+  let names;
+  try {
+    names = fs.readdirSync(root);
+  } catch {
+    return out;
+  }
+
+  for (const name of names) {
+    const dir = path.join(root, name);
+    try {
+      if (!fs.statSync(dir).isDirectory()) continue;
+      const takes = fs.readdirSync(dir).filter((f) => /\.(wav|mp3|ogg)$/i.test(f));
+      out.push({ name, dir, takes: takes.length });
+    } catch { /* skip */ }
+  }
+  return out;
+}
+
+/**
+ * Sessions recorded for packs that are no longer installed.
+ *
+ * These are invisible otherwise: the recordings sit outside the pack folders, so
+ * removing a pack left its takes behind with nothing pointing at them.
+ */
+function orphanSessions(gameDir) {
+  const root = path.join(gameDir, 'recordings', 'dub_recordings');
+  const packsDir = path.join(gameDir, 'packs_voice');
+
+  let recorded = [];
+  try {
+    recorded = fs.readdirSync(root);
+  } catch {
+    return [];
+  }
+
+  const out = [];
+  for (const name of recorded) {
+    const dir = path.join(root, name);
+    try {
+      if (!fs.statSync(dir).isDirectory()) continue;
+      if (fs.existsSync(path.join(packsDir, name))) continue; // its pack is still here
+      const sessions = packSessions(gameDir, name);
+      out.push({
+        name,
+        dir,
+        sessions: sessions.length,
+        takes: sessions.reduce((sum, s) => sum + s.takes, 0),
+      });
+    } catch { /* skip */ }
+  }
+  return out;
+}
+
+/** Removes every recorded session of a pack. */
+function deleteSessions(gameDir, packName) {
+  const root = sessionRoot(gameDir, packName);
+  try {
+    if (!fs.existsSync(root)) return { removed: 0 };
+    const count = packSessions(gameDir, packName).length;
+    fs.rmSync(root, { recursive: true, force: true });
+    return { removed: count };
+  } catch (err) {
+    return { removed: 0, error: err.message };
+  }
+}
+
 /**
  * The takes recorded against one clip, across every session of a pack.
  *
@@ -531,6 +681,10 @@ function deletePack(gameDir, packDir) {
 
 module.exports = {
   clipRecordings,
+  packSessions,
+  orphanSessions,
+  deleteSessions,
+  pruneTrash,
   createPack,
   installPack,
   identifyPack,

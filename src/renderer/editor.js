@@ -32,6 +32,12 @@ const fmt = (seconds) => {
 // matching what the library grid does.
 const CHARACTER_PACKS = new Set(['player', 'host', 'judges']);
 
+// The box every picture of a character is fitted into, matching the cardboard
+// cutout the game stands in when a pack has none. Kept the same across clip
+// pictures, pack icons and the standing art so packs look consistent beside
+// each other.
+const PICTURE_BOX = { width: 500, height: 1000 };
+
 const TYPE_GLYPH = {
   voice: '🎙️', player: '🧍', host: '🎤', judges: '⭐',
   studio: '🏛️', menu: '🖼️', chatter: '💬',
@@ -107,6 +113,10 @@ export class PackEditor {
     this.undoStack = [];
     this.redoStack = [];
     this.busy = 0;
+    // Holds the audio output device open while the editor is up. See
+    // startAudioKeepAlive for why the editor needs one and the export view does
+    // not.
+    this.keepAlive = null;
 
     // Jobs running in the main process on this editor's behalf. Tracked so
     // leaving can call them off, and so a job that has been abandoned cannot
@@ -121,6 +131,7 @@ export class PackEditor {
   close() {
     this.root.hidden = true;
     this.cancelJobs();
+    this.stopAudioKeepAlive();
     if (this.timeline) this.timeline.destroy();
     if (this._captionRaf) cancelAnimationFrame(this._captionRaf);
     this._captionRaf = null;
@@ -236,6 +247,47 @@ export class PackEditor {
    */
   get playable() {
     return this.busy === 0 && !this.trim;
+  }
+
+  /**
+   * Holds the audio output open for as long as the editor is up.
+   *
+   * The editor plays its video and its clips straight through media elements. If
+   * nothing has made a sound for a while, the operating system closes the output
+   * device, and the next play waits for it to be opened again: the picture moves
+   * and the first second is silent. The export preview never showed this because
+   * it runs everything through a Web Audio graph, which keeps the device open by
+   * existing.
+   *
+   * So the editor keeps one too. It carries a source of nothing at zero gain,
+   * which is enough to hold the device without making a sound or costing
+   * anything measurable.
+   */
+  startAudioKeepAlive() {
+    if (this.keepAlive) return;
+    try {
+      const ctx = new AudioContext({ latencyHint: 'interactive' });
+      const silence = ctx.createConstantSource();
+      const gain = ctx.createGain();
+      gain.gain.value = 0;
+      silence.connect(gain).connect(ctx.destination);
+      silence.start();
+      this.keepAlive = { ctx, silence };
+      // Opened from a click, so this is allowed, but a rejection here is not
+      // worth interrupting anyone over: it only means the lag comes back.
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    } catch {
+      this.keepAlive = null;
+    }
+  }
+
+  stopAudioKeepAlive() {
+    if (!this.keepAlive) return;
+    try {
+      this.keepAlive.silence.stop();
+      this.keepAlive.ctx.close();
+    } catch { /* already gone */ }
+    this.keepAlive = null;
   }
 
   /** Starts or stops playback, if it is allowed at all. */
@@ -357,6 +409,7 @@ export class PackEditor {
     this.pack = pack;
     this.root.hidden = false;
     this.root.innerHTML = '';
+    this.startAudioKeepAlive();
 
     const head = el('header', 'editor-head');
     const back = el('button', 'btn btn-ghost', '← Back');
@@ -1404,12 +1457,24 @@ export class PackEditor {
   }
 
   /** Grabs the current video frame as a PNG data URL. */
-  captureFrame(video) {
+  /**
+   * A still from the video, brought down to the size a pack picture wants.
+   *
+   * A full frame is the video's own resolution, so grabbing one from a 1080p
+   * video wrote a 1920 pixel wide PNG for a picture the game draws small. Fitted
+   * into the same box as every other character picture, and never enlarged.
+   */
+  captureFrame(video, box = PICTURE_BOX) {
     if (!video.videoWidth) return null;
+
+    const scale = Math.min(1, box.width / video.videoWidth, box.height / video.videoHeight);
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     return canvas.toDataURL('image/png');
   }
 
@@ -1623,7 +1688,10 @@ export class PackEditor {
     if (!picked.length) return;
 
     const ok = await this.importFiles([picked[0]], {
-      baseName: clip.base, kind: 'image', overwrite: true,
+      // A clip picture is a portrait of whoever is speaking, so it belongs at
+      // the same size as the rest. Said outright because the file is named after
+      // the clip and there is no pattern to recognise it by.
+      baseName: clip.base, kind: 'image', overwrite: true, characterImage: true,
     });
     if (!ok) return;
 
@@ -1773,11 +1841,42 @@ export class PackEditor {
       list.remove();
       list = null;
       document.removeEventListener('pointerdown', onAway, true);
+      document.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', close);
       field.classList.remove('open');
     };
     const onAway = (event) => {
       if (list && !list.contains(event.target) && !field.contains(event.target)) close();
+    };
+
+    /**
+     * Keeps the list against its box while the panel behind it scrolls.
+     *
+     * It is positioned against the window, so without this it hung in place
+     * while the clip list moved underneath, ending up beside the wrong line.
+     * Captured, because the scrolling happens on the panel rather than on the
+     * window. Once the box has been scrolled out of sight the list goes too.
+     */
+    const onScroll = () => {
+      if (!list) return;
+      const box = input.getBoundingClientRect();
+      if (box.bottom < 0 || box.top > window.innerHeight) { close(); return; }
+      place(box);
+    };
+
+    /** Puts the list against the box, above it when there is no room below. */
+    const place = (box) => {
+      const height = list.offsetHeight;
+      const below = window.innerHeight - box.bottom - 8;
+      list.style.left = `${Math.round(box.left)}px`;
+      list.style.width = `${Math.round(box.width)}px`;
+      if (height > below && box.top > below) {
+        list.style.top = `${Math.round(Math.max(8, box.top - height - 4))}px`;
+        list.style.maxHeight = `${Math.max(80, box.top - 12)}px`;
+      } else {
+        list.style.top = `${Math.round(box.bottom + 4)}px`;
+        list.style.maxHeight = `${Math.max(80, below)}px`;
+      }
     };
 
     const open = () => {
@@ -1798,18 +1897,7 @@ export class PackEditor {
       document.body.append(list);
       field.classList.add('open');
 
-      const box = input.getBoundingClientRect();
-      const height = list.offsetHeight;
-      const below = window.innerHeight - box.bottom - 8;
-      list.style.left = `${Math.round(box.left)}px`;
-      list.style.width = `${Math.round(box.width)}px`;
-      // Above when it will not fit below, and never past the top of the window.
-      if (height > below && box.top > below) {
-        list.style.top = `${Math.round(Math.max(8, box.top - height - 4))}px`;
-      } else {
-        list.style.top = `${Math.round(box.bottom + 4)}px`;
-        list.style.maxHeight = `${Math.max(80, below)}px`;
-      }
+      place(input.getBoundingClientRect());
 
       list.addEventListener('click', (event) => {
         const name = event.target.dataset && event.target.dataset.name;
@@ -1820,6 +1908,7 @@ export class PackEditor {
       });
 
       document.addEventListener('pointerdown', onAway, true);
+      document.addEventListener('scroll', onScroll, true);
       window.addEventListener('resize', close);
     };
 

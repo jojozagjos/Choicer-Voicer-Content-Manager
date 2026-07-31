@@ -218,6 +218,14 @@
         It works out what kind it is and installs it for you.
       </p>
 
+      <!-- Recordings whose pack is gone. They sit outside the pack folders, so
+           nothing else in the app would ever mention them. -->
+      <div id="orphan-note" class="orphan-note" hidden>
+        <span class="orphan-mark">🎙</span>
+        <span id="orphan-text"></span>
+        <button type="button" class="btn btn-small" id="btn-orphan-open">Open folder</button>
+      </div>
+
       <div id="content-grid" class="content-grid"></div>
     </div>
 
@@ -476,9 +484,10 @@
         <label class="option-row">
           <input type="checkbox" id="set-preview-captions" />
           <span>
-            <b>Show captions while previewing</b>
-            <em>Only affects what you see here. Whether captions are drawn onto an exported
-                video is set in the export window.</em>
+            <b>Show captions and speaker pictures while previewing</b>
+            <em>Draws the words and the speaker's picture over the video here. Turning it off
+                leaves the video on its own. Only affects what you see here; whether captions are
+                drawn onto an exported video is set in the export window.</em>
           </span>
         </label>
         <label class="option-row">

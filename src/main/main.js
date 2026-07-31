@@ -16,7 +16,7 @@ const { ensureProxy } = require('./proxy');
 const { scanContent } = require('./content');
 const {
   createPack, installPack, deletePack, trashClip, restoreClip, writeClipMeta, saveImage, writeIni,
-  clipRecordings,
+  clipRecordings, pruneTrash, packSessions, orphanSessions, deleteSessions,
   writeIniSections,
 } = require('./create');
 const convert = require('./convert');
@@ -69,14 +69,131 @@ function handleWrite(channel, dirFrom, handler) {
     const result = await handler(event, payload);
     try {
       const dirs = [].concat(dirFrom(payload, result) || []);
-      for (const dir of dirs) invalidatePack(dir);
+      for (const dir of dirs) {
+        invalidatePack(dir);
+        noteOwnWrite(dir);
+      }
     } catch { /* nothing to forget */ }
     return result;
   });
 }
 
+// Folders this app has just written to. The watcher below sees its own writes
+// otherwise, and would answer every saved caption with a reload of the thing
+// being typed into.
+const ownWrites = new Map();
+const OWN_WRITE_QUIET_MS = 2500;
+
+function noteOwnWrite(dir) {
+  if (!dir) return;
+  ownWrites.set(path.resolve(dir), Date.now());
+  // The map only ever holds folders touched in the last few seconds.
+  if (ownWrites.size > 64) {
+    const cutoff = Date.now() - OWN_WRITE_QUIET_MS;
+    for (const [key, at] of ownWrites) if (at < cutoff) ownWrites.delete(key);
+  }
+}
+
+/**
+ * Whether a reported change is one this app just made.
+ *
+ * Has to match in both directions. Windows does not always report the file that
+ * changed: a write deep inside a watched tree often arrives as the folder above
+ * it, so the reported path can be a parent of the folder written to as easily as
+ * a child of it. Checking only upwards let every saved caption through as an
+ * outside change.
+ */
+function isOwnWrite(target) {
+  const now = Date.now();
+  const fresh = (at) => at && now - at < OWN_WRITE_QUIET_MS;
+
+  // The reported path, or something it sits inside, was written to.
+  let dir = path.resolve(target);
+  for (let depth = 0; depth < 4; depth++) {
+    if (fresh(ownWrites.get(dir))) return true;
+    const up = path.dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+
+  // Or the reported path is a folder containing somewhere that was written to.
+  const reported = path.resolve(target) + path.sep;
+  for (const [written, at] of ownWrites) {
+    if (fresh(at) && written.startsWith(reported)) return true;
+  }
+  return false;
+}
+
 /** The folder a file sits in, for writes that name a file rather than a pack. */
 const dirOfFile = (file) => (file ? path.dirname(file) : null);
+
+/**
+ * Watches the game folder so packs changed outside the app show up on their own.
+ *
+ * Files arrive here by all sorts of routes the app never sees: the game writing
+ * a recording, a pack unzipped into the folder, a picture replaced in an art
+ * program. Rescan covers all of that, but only if somebody thinks to press it.
+ *
+ * Three things keep this from being a nuisance:
+ *
+ *  - Changes this app made are ignored. Without that, every saved caption would
+ *    come straight back as a reload of the line being typed into.
+ *  - Events are collected and acted on once things go quiet, because copying a
+ *    pack in produces hundreds of them.
+ *  - Only the folders that changed are forgotten, so the rescan stays cheap.
+ *
+ * The Rescan button stays. A watcher that misses something is worse than a
+ * button, and this is the kind of thing that can miss something.
+ */
+let watcher = null;
+let watchTimer = null;
+const watchedDirs = new Set();
+
+function stopWatching() {
+  if (watcher) {
+    try { watcher.close(); } catch { /* already gone */ }
+    watcher = null;
+  }
+  clearTimeout(watchTimer);
+  watchTimer = null;
+  watchedDirs.clear();
+}
+
+function startWatching(gameDir) {
+  stopWatching();
+  if (!gameDir || !fs.existsSync(gameDir)) return;
+
+  try {
+    // Recursive watching is supported on Windows and macOS. Where it is not,
+    // this throws and the app carries on with the button alone.
+    watcher = fs.watch(gameDir, { recursive: true }, (_event, name) => {
+      if (!name) return;
+      const full = path.join(gameDir, name);
+
+      // The app's own scratch files churn constantly mid-conversion.
+      if (/\.part$/i.test(name) || name.includes(`.${process.pid}.`)) return;
+      if (isOwnWrite(full)) return;
+
+      // Both shapes, because Windows reports a change sometimes as the file and
+      // sometimes as a folder above it. A pack edited in place keeps its file
+      // count and its folder's modified time, so the cache will not notice on
+      // its own and has to be told which folder to forget.
+      watchedDirs.add(full);
+      watchedDirs.add(path.dirname(full));
+      clearTimeout(watchTimer);
+      watchTimer = setTimeout(() => {
+        for (const dir of watchedDirs) invalidatePack(dir);
+        watchedDirs.clear();
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('content:changedOnDisk');
+        }
+      }, 900);
+    });
+  } catch (err) {
+    console.warn(`Could not watch the game folder: ${err.message}`);
+    watcher = null;
+  }
+}
 
 /**
  * Long jobs the app can call off again, by the id it gave them.
@@ -532,6 +649,18 @@ function createWindow() {
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
+
+  // The window shows this app and nothing else. Without this, a link or a
+  // redirect could navigate the shell away from the interface, and a scheme the
+  // app does not handle can be passed out to whatever program on the machine
+  // claims it. Nothing here ever needs to navigate, so all of it is refused.
+  const stayPut = (event, url) => {
+    if (url === mainWindow.webContents.getURL()) return;
+    event.preventDefault();
+    console.warn(`Blocked navigation to ${url}`);
+  };
+  mainWindow.webContents.on('will-navigate', stayPut);
+  mainWindow.webContents.on('will-frame-navigate', (event) => stayPut(event, event.url));
 }
 
 /**
@@ -2395,6 +2524,10 @@ function registerIpc() {
     if (!target) return { ok: false, error: 'No game folder found' };
 
     allowedRoots.add(path.resolve(target));
+    // Follows whichever folder is actually being read, so pointing the app
+    // somewhere else moves the watch with it.
+    startWatching(target);
+
     const model = scanContent(target, {
       parseIni: gamedata.parseIni,
       parseIniSections: gamedata.parseIniSections,
@@ -2618,6 +2751,29 @@ function registerIpc() {
   });
 
   // Deleting a clip is undoable: its files are moved aside rather than removed.
+  /** The recorded sessions of a pack, so deleting it can offer to take them too. */
+  ipcMain.handle('content:packSessions', (_e, packDir) => {
+    if (!isAllowed(packDir)) return { ok: false, error: 'That folder is outside the game folder' };
+    const gameDir = gamedata.resolveGameDir(settings.gameDir || gamedata.defaultGameDir());
+    if (!gameDir) return { ok: true, sessions: [] };
+    return { ok: true, sessions: packSessions(gameDir, path.basename(packDir)) };
+  });
+
+  /** Sessions whose pack is gone, which nothing else would ever show. */
+  ipcMain.handle('content:orphanSessions', () => {
+    const gameDir = gamedata.resolveGameDir(settings.gameDir || gamedata.defaultGameDir());
+    if (!gameDir) return { ok: true, orphans: [] };
+    return { ok: true, orphans: orphanSessions(gameDir) };
+  });
+
+  ipcMain.handle('content:deleteSessions', (_e, packName) => {
+    const gameDir = gamedata.resolveGameDir(settings.gameDir || gamedata.defaultGameDir());
+    if (!gameDir) return { ok: false, error: 'No game folder found' };
+    // Only ever a folder directly under the recordings root, never a path.
+    if (!packName || /[\\/]/.test(packName)) return { ok: false, error: 'Not a pack name' };
+    return { ok: true, ...deleteSessions(gameDir, packName) };
+  });
+
   /** The takes recorded against a clip, so deleting it can offer to take them too. */
   ipcMain.handle('content:clipRecordings', (_e, { packDir, base }) => {
     if (!isAllowed(packDir)) return { ok: false, error: 'That folder is outside the game folder' };
@@ -3002,6 +3158,17 @@ if (!app.requestSingleInstanceLock()) {
     loadDurationCache();
     registerMediaProtocol();
     registerIpc();
+
+    // The undo bin holds whole videos, so a few trims of a long one is all it
+    // takes to reach hundreds of megabytes. Nothing was ever removing them.
+    try {
+      const trash = pruneTrash(path.join(app.getPath('userData'), 'deleted-clips'));
+      if (trash.removed) {
+        console.log(`Cleared ${trash.removed} old item(s) from the undo bin, `
+          + `${(trash.freed / 1e6).toFixed(0)} MB.`);
+      }
+    } catch { /* nothing there yet */ }
+
     createWindow();
 
     app.on('activate', () => {
@@ -3011,6 +3178,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('window-all-closed', () => {
     for (const controller of exportJobs.values()) controller.abort();
+    stopWatching();
     saveDurationCache();
     if (process.platform !== 'darwin') app.quit();
   });

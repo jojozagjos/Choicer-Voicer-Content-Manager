@@ -29,6 +29,7 @@ const on = makeEmitter([
   'export:failed',
   'proxy:progress',
   'import:progress',
+  'content:changedOnDisk',
 ]);
 
 contextBridge.exposeInMainWorld('api', {
@@ -63,6 +64,9 @@ contextBridge.exposeInMainWorld('api', {
     writeClipMeta: (payload) => ipcRenderer.invoke('content:writeClipMeta', payload),
     trashClip: (payload) => ipcRenderer.invoke('content:trashClip', payload),
     clipRecordings: (payload) => ipcRenderer.invoke('content:clipRecordings', payload),
+    packSessions: (packDir) => ipcRenderer.invoke('content:packSessions', packDir),
+    orphanSessions: () => ipcRenderer.invoke('content:orphanSessions'),
+    deleteSessions: (packName) => ipcRenderer.invoke('content:deleteSessions', packName),
     restoreClip: (payload) => ipcRenderer.invoke('content:restoreClip', payload),
     saveImage: (payload) => ipcRenderer.invoke('content:saveImage', payload),
     writePackInfo: (payload) => ipcRenderer.invoke('content:writePackInfo', payload),
@@ -82,6 +86,8 @@ contextBridge.exposeInMainWorld('api', {
     import: (destDir, files, options) =>
       ipcRenderer.invoke('content:import', { destDir, files, options }),
     onImportProgress: (fn) => on('import:progress', fn),
+    // Something changed in the game folder that this app did not do.
+    onChangedOnDisk: (fn) => on('content:changedOnDisk', fn),
   },
 
   media: {

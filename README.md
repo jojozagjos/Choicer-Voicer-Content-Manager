@@ -61,13 +61,18 @@ Per line you can:
 - change its **volume**
 - **nudge its timing** in 50 ms steps, if a take lands slightly early or late
 
+Each **character** also has their own volume, in **Settings** beside their colour. It applies to
+every line that character speaks, on top of whatever each line is set to, so one quiet performer
+can be lifted without disturbing the balance between their own lines.
+
 | Export option | What it is for |
 | --- | --- |
 | **MP4 / MKV / MOV / WebM** | MP4 works everywhere. The rest are there if you need them. |
 | **Vertical 9:16 or square 1:1** | Shorts, TikTok and Reels. Fills the sides with a blurred copy of the video rather than black bars. |
 | **Burn captions in** | Draws the script onto the picture, speaker name included. |
 | **`.srt` alongside** | Subtitles as a separate file, to style in your own editor. |
-| **Normalise loudness** | Evens out takes recorded at wildly different levels. |
+| **Even out the volume** | Levels each take, so one recorded far quieter than the rest is brought into line. |
+| **Use character volumes** | Applies the per-character volumes above, and lists what they are set to. |
 | **Selected line only** | Exports one line as its own short clip. |
 
 Exports queue up and run one at a time, so you can set several going.
@@ -106,15 +111,25 @@ trained model far too large to ship in an app like this.*
 
 Players, hosts, judges, studios, menus and chatter each get an editor built from the files that
 type actually uses, so you are never guessing at a filename. Host dialogue and chatter keywords are
-edited in the app rather than in a text file.
+edited in the app rather than in a text file, and every setting a pack's config file holds has a
+control: menu backgrounds, gradients, the letterbox, button colours, studio lighting and the rest.
+Colours get a swatch, with an alpha slider where the setting takes one.
 
 ### It fixes your files for you
 
 Drop in an `.mp4` where the game wants `.ogv`, or an `.m4a` where it wants `.wav`, and it converts
 and renames it. That mismatch is the single most common reason a pack silently does nothing.
 
+Pictures of a character are brought down to the size the game draws one at, so a render straight
+out of an art program does not turn up several times too big. Backgrounds and overlays are left at
+whatever size they were.
+
 Got a pack someone sent you? Unzip it and drag the folder onto the library. It works out what kind
 it is and installs it.
+
+Changes made outside the app show up on their own, so a pack unzipped into the folder or a
+recording made in the game appears without asking for it. **Rescan** is still in the top bar for
+anything a watch cannot see.
 
 ## Where your files live
 
@@ -127,8 +142,10 @@ it is and installs it.
 If yours is somewhere else, a portable install or a copied save folder, set it in **Settings**.
 Any folder containing `packs_voice` works.
 
-Your settings and preview cache live in your own user profile, not in the app folder, so replacing
-the app with a newer version keeps them.
+Your settings, preview cache and undo bin live in your own user profile, not in the app folder, so
+replacing the app with a newer version keeps them. On Windows that is
+`%APPDATA%\Choicer Voicer Content Manager`. Both the preview cache and the undo bin are kept to a
+size limit on their own; deleting either only costs the time to rebuild a preview.
 
 ## If something goes wrong
 
@@ -136,7 +153,7 @@ the app with a newer version keeps them.
 | --- | --- |
 | **No packs listed** | The game folder is wrong, or you have not recorded a dub yet. Check **Settings**. |
 | **A pack says "no dubs yet"** | It is installed, but you have not recorded for it. Do that in the game first. |
-| **A pack will not open** | If it is still converting, it stays locked until that finishes. |
+| **A pack will not open** | It is still converting. Its panel says so and shows how far along it is. |
 | **The preview is black** | Switch packs and back to rebuild it. If it keeps happening, say so on Discord. |
 | **Export failed** | Usually a full disk or a folder you cannot write to. Try your Videos folder. |
 

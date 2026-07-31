@@ -266,6 +266,17 @@ function buildArgs(job, workDir) {
   placements.forEach((p, i) => {
     const label = `dub${i}`;
     const chain = [`aresample=${SAMPLE_RATE}`];
+
+    // Evening out the takes has to happen to each take on its own. Run over the
+    // finished mix, which is where it used to sit, loudnorm lifts the whole dub
+    // to one overall loudness and leaves the difference between the lines
+    // exactly as it was: two takes recorded 25 dB apart came out 25 dB apart.
+    // Per take it closes that to a fraction of a decibel.
+    //
+    // Before the volume, so the balance deliberately set between lines and
+    // between characters is applied to levelled takes rather than being undone
+    // by the levelling.
+    if (normalizeDub) chain.push('loudnorm=I=-16:TP=-1.5:LRA=11');
     if (p.volume !== 1) chain.push(`volume=${p.volume.toFixed(3)}`);
     if (p.delay > 0) chain.push(`adelay=${p.delay}:all=1`);
     filters.push(`[${p.index}:a]${chain.join(',')}[${label}]`);
@@ -285,8 +296,8 @@ function buildArgs(job, workDir) {
 
   if (dubBus) {
     const post = [];
-    // Single-pass loudnorm: evens out takes recorded at wildly different levels.
-    if (normalizeDub) post.push('loudnorm=I=-16:TP=-1.5:LRA=11');
+    // Levelling happens per take above, not here. The bus only carries the one
+    // slider that applies to the dub as a whole.
     if (dubVolume !== 1) post.push(`volume=${Number(dubVolume).toFixed(3)}`);
     if (post.length) {
       filters.push(`[${dubBus}]${post.join(',')}[dubout]`);

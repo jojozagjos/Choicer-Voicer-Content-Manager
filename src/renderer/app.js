@@ -92,6 +92,9 @@ const el = {
   optSrt: $('#opt-srt'),
   optNormalize: $('#opt-normalize'),
   optCharacterVolumes: $('#opt-character-volumes'),
+  orphanNote: $('#orphan-note'),
+  orphanText: $('#orphan-text'),
+  btnOrphanOpen: $('#btn-orphan-open'),
   characterVolumeNote: $('#character-volume-note'),
   optOriginal: $('#opt-original'),
   optOutput: $('#opt-output'),
@@ -208,6 +211,8 @@ const state = {
   contentPackId: null,
   // Packs whose files are still converting, keyed by folder.
   converting: new Map(),
+  // Collects folder-watch notices, so a batch of them costs one reread.
+  diskChangeTimer: null,
 };
 
 const player = new DubPlayer(el.video);
@@ -382,6 +387,33 @@ function characterColor(name) {
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
   return CHARACTER_PALETTE[hash % CHARACTER_PALETTE.length];
+}
+
+/**
+ * Mentions recordings whose pack is no longer installed.
+ *
+ * The game keeps takes outside the pack folders, so deleting a pack leaves them
+ * with nothing pointing at them anywhere in the app. Someone who deletes a pack
+ * and later wonders where their takes went has no way to find out otherwise.
+ */
+async function renderOrphanSessions() {
+  if (!el.orphanNote) return;
+  let orphans = [];
+  try {
+    const result = await window.api.content.orphanSessions();
+    if (result && result.ok) orphans = result.orphans;
+  } catch { /* nothing to say */ }
+
+  if (!orphans.length) { el.orphanNote.hidden = true; return; }
+
+  const takes = orphans.reduce((sum, o) => sum + o.takes, 0);
+  const names = orphans.map((o) => o.name).slice(0, 3).join(', ');
+  el.orphanText.textContent =
+    `${takes} recording${takes === 1 ? '' : 's'} here belong to `
+    + `${orphans.length === 1 ? 'a pack that is' : `${orphans.length} packs that are`} `
+    + `no longer installed (${names}${orphans.length > 3 ? ', and more' : ''}). `
+    + 'They still work in the Export tab if the pack is put back.';
+  el.orphanNote.hidden = false;
 }
 
 /**
@@ -754,6 +786,9 @@ async function refreshContent() {
   state.content = result;
   renderContentTypes();
   renderContentGrid();
+  // Deleting a pack is what usually creates one of these, so this is checked
+  // whenever the library is reread rather than only at startup.
+  renderOrphanSessions();
 
   // The detail panel holds a pack object, and its Edit button closes over it.
   // Leaving it alone after a rescan meant editing a pack, closing the editor
@@ -891,6 +926,15 @@ function renderContentDetail(pack) {
     pack.characters && pack.characters.length && ['Characters', pack.characters.join(', ')],
   ].filter(Boolean);
 
+  // A pack still being converted cannot be edited, so the panel says so rather
+  // than offering a button that answers with a message about waiting.
+  const converting = state.converting.get(pack.dir);
+  const busyNote = converting
+    ? `<div class="detail-busy"><span class="spinner spinner-small"></span>
+         <span>${escapeHtml(converting.label || 'Converting…')} This pack cannot be edited until
+         it finishes.</span></div>`
+    : '';
+
   el.contentDetail.innerHTML = `
     <div class="detail-head">
       ${icon}
@@ -899,6 +943,7 @@ function renderContentDetail(pack) {
         <p class="muted small">${escapeHtml(pack.summary || '')}</p>
       </div>
     </div>
+    ${busyNote}
     <div class="detail-rows">
       ${rows.map(([k, v]) => `<div class="detail-row"><span>${escapeHtml(k)}</span><span>${escapeHtml(v)}</span></div>`).join('')}
     </div>
@@ -908,9 +953,11 @@ function renderContentDetail(pack) {
     </div>
 
     <div class="detail-actions">
-      <button type="button" class="btn btn-primary" id="btn-detail-edit">✎ Edit this pack</button>
+      <button type="button" class="btn btn-primary" id="btn-detail-edit"
+              ${converting ? 'disabled' : ''}>✎ Edit this pack</button>
       <button type="button" class="btn" id="btn-detail-open">📂 Open folder</button>
-      <button type="button" class="btn btn-danger" id="btn-detail-delete">✕ Delete</button>
+      <button type="button" class="btn btn-danger" id="btn-detail-delete"
+              ${converting ? 'disabled' : ''}>✕ Delete</button>
     </div>`;
 
   el.contentDetail.querySelector('#btn-detail-edit')
@@ -1086,15 +1133,35 @@ async function importIntoPack(pack, paths) {
 }
 
 async function removePack(pack) {
+  // Recorded sessions live outside the pack, so removing the folder leaves them
+  // behind with nothing pointing at them. Offered as a choice, because a take
+  // somebody still wants to export is worth keeping even once the pack is gone.
+  let sessions = [];
+  const found = await window.api.content.packSessions(pack.dir);
+  if (found && found.ok) sessions = found.sessions;
+
+  const takes = sessions.reduce((sum, s) => sum + s.takes, 0);
+  const buttons = sessions.length
+    ? ['Delete the pack and its recordings', 'Delete the pack only', 'Keep it']
+    : ['Delete it', 'Keep it'];
+
   const answer = await askConfirm({
     title: `Delete "${pack.title}"?`,
     detail: `The whole folder and everything in it is removed from ${pack.dir}. `
-      + 'This one cannot be undone.',
-    buttons: ['Delete it', 'Keep it'],
+      + 'This one cannot be undone.'
+      + (sessions.length
+        ? `\n\nThere ${sessions.length === 1 ? 'is 1 recorded session' : `are ${sessions.length} recorded sessions`} `
+          + `of this pack, holding ${takes} take${takes === 1 ? '' : 's'}. `
+          + 'Keeping them leaves the recordings where they are, listed under recordings with no pack.'
+        : ''),
+    buttons,
     mark: '!',
     danger: true,
   });
-  if (answer !== 0) return;
+
+  const cancelled = sessions.length ? answer !== 0 && answer !== 1 : answer !== 0;
+  if (cancelled) return;
+  const alsoSessions = sessions.length > 0 && answer === 0;
 
   const result = await window.api.content.remove(pack.dir);
   if (result.cancelled) return;
@@ -1103,7 +1170,16 @@ async function removePack(pack) {
     return;
   }
 
-  toast(`Deleted "${pack.title}".`, 'ok');
+  let alsoRemoved = 0;
+  if (alsoSessions) {
+    const gone = await window.api.content.deleteSessions(pack.name || pack.title);
+    if (gone && gone.ok) alsoRemoved = gone.removed || 0;
+    else if (gone && gone.error) toast(`The pack went, but its recordings did not: ${gone.error}`, 'warn', 8000);
+  }
+
+  toast(alsoRemoved
+    ? `Deleted "${pack.title}" and ${alsoRemoved} session${alsoRemoved === 1 ? '' : 's'}.`
+    : `Deleted "${pack.title}".`, 'ok');
   state.contentPackId = null;
   el.contentDetail.hidden = true;
   await refreshContent();
@@ -1345,25 +1421,35 @@ async function convertIntoNewPack(created, type, files) {
   renderContentGrid();
 
   let failed = 0;
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    const target = importTargetName(type.id, file, files);
-    const job = state.converting.get(created.dir);
-    if (job) job.label = files.length > 1 ? `Converting ${i + 1} of ${files.length}…` : 'Converting…';
+  let broke = null;
+  try {
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const target = importTargetName(type.id, file, files);
+      const job = state.converting.get(created.dir);
+      if (job) job.label = files.length > 1 ? `Converting ${i + 1} of ${files.length}…` : 'Converting…';
 
-    const result = await window.api.content.import(created.dir, [file.path], {
-      baseName: target.base,
-      kind: file.kind,
-      audioFormat: target.audioFormat,
-      maxSeconds: target.maxSeconds,
-    });
-    if (!result.ok || result.results.some((r) => !r.ok)) failed++;
+      const result = await window.api.content.import(created.dir, [file.path], {
+        baseName: target.base,
+        kind: file.kind,
+        audioFormat: target.audioFormat,
+        maxSeconds: target.maxSeconds,
+      });
+      if (!result.ok || result.results.some((r) => !r.ok)) failed++;
+    }
+  } catch (err) {
+    broke = err;
+  } finally {
+    // Always, even if a conversion threw. Without this the pack stayed marked
+    // as converting for the rest of the session: the editor refused to open it,
+    // its tile could not be clicked, and nothing on screen said why.
+    state.converting.delete(created.dir);
   }
 
-  state.converting.delete(created.dir);
   await refreshContent();
 
-  if (failed) toast(`"${created.name}" is ready, but ${failed} file(s) failed.`, 'warn', 9000);
+  if (broke) toast(`"${created.name}" stopped converting: ${broke.message}`, 'error', 9000);
+  else if (failed) toast(`"${created.name}" is ready, but ${failed} file(s) failed.`, 'warn', 9000);
   else toast(`"${created.name}" is ready. Open it and press Edit.`, 'ok', 8000);
 }
 
@@ -2318,7 +2404,10 @@ function tick() {
     el.caption.hidden = true;
   }
 
-  if (active && active.imageUrl) {
+  // The speaker's picture follows the same switch as the caption. It is the
+  // other half of the same overlay, and leaving it up with the words turned off
+  // meant there was no way to see the video by itself.
+  if (wantCaptions && active && active.imageUrl) {
     if (el.portrait.getAttribute('src') !== active.imageUrl) el.portrait.src = active.imageUrl;
     el.portrait.hidden = false;
   } else {
@@ -2996,6 +3085,31 @@ function wireEvents() {
     renderCharacterVolumeNote();
   });
 
+  /**
+   * Picks up changes made to the game folder outside the app.
+   *
+   * The main process has already forgotten the folders that changed, so this
+   * only has to reread. The editor is only reloaded when the change was to the
+   * pack being edited, since reloading it rebuilds the line list and there is no
+   * reason to disturb someone over a different pack.
+   */
+  window.api.content.onChangedOnDisk(() => {
+    clearTimeout(state.diskChangeTimer);
+    state.diskChangeTimer = setTimeout(async () => {
+      if (!el.editorView.hidden && editor.pack) {
+        await editor.onChanged(editor.pack.id, { keepEditor: true });
+      } else {
+        await refreshContent();
+        await rescan(state.settings.gameDir);
+      }
+    }, 250);
+  });
+
+  el.btnOrphanOpen.addEventListener('click', () => {
+    const dir = state.settings.gameDir;
+    if (dir) window.api.shell.openPath(`${dir}/recordings/dub_recordings`);
+  });
+
   el.btnSettings.addEventListener('click', openSettings);
 
   for (const button of el.tabButtons) {
@@ -3173,7 +3287,14 @@ function wireEvents() {
     if (!job) return;
     if (percent != null) job.percent = percent;
     if (done != null && total > 1) job.label = `Converting ${done} of ${total}…`;
-    if (state.tab === 'content') renderContentGrid();
+    if (state.tab === 'content') {
+      renderContentGrid();
+      // The detail panel carries the same notice, so it has to move too, or it
+      // sits there with a stale figure while the tile behind it counts up.
+      const shown = state.content && state.content.types
+        .flatMap((t) => t.packs).find((p) => p.id === state.contentPackId);
+      if (shown && shown.dir === (destDir || dir)) renderContentDetail(shown);
+    }
   });
 
   // First open of a pack transcodes its video; show how far along that is.

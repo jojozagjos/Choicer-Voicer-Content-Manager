@@ -1427,12 +1427,12 @@ export class PackEditor {
     // that differs by one letter is a different character as far as the game,
     // the captions and the colours are concerned. Taken from the clips
     // themselves rather than a stored list, so it follows renames.
+    // A native datalist used to do this, and was wrong in three ways at once: the
+    // browser drew its own arrow next to ours, it placed the list itself so it
+    // ran off the bottom of the window with no way to reach it, and it hid every
+    // name that did not match what had been typed, which is exactly when the full
+    // list is wanted.
     const known = [...new Set(clips.map((c) => c.character).filter(Boolean))].sort();
-    const listId = 'clip-characters';
-    const datalist = el('datalist');
-    datalist.id = listId;
-    datalist.innerHTML = known.map((name) => `<option value="${escapeHtml(name)}"></option>`).join('');
-    container.append(datalist);
 
     for (const clip of clips) {
       const row = el('div', 'clip-row');
@@ -1471,8 +1471,12 @@ export class PackEditor {
           <div class="clip-fields">
             <textarea class="input" data-field="caption" rows="2"
                       placeholder="What they say"></textarea>
-            <input class="input" data-field="character" list="${listId}"
-                   placeholder="Who says it" autocomplete="off" />
+            <div class="character-field">
+              <input class="input" data-field="character"
+                     placeholder="Who says it" autocomplete="off" />
+              <button type="button" class="character-arrow" data-act="characters"
+                      title="Everyone in this pack" tabindex="-1">▾</button>
+            </div>
           </div>
         </div>`;
 
@@ -1488,6 +1492,10 @@ export class PackEditor {
       const [captionInput, characterInput] = row.querySelectorAll('[data-field]');
       captionInput.value = clip.caption || '';
       characterInput.value = clip.character || '';
+      this.attachCharacterList(
+        row.querySelector('.character-field'), characterInput, known,
+        () => characterInput.dispatchEvent(new Event('change', { bubbles: true }))
+      );
 
       row.querySelector('.line-time').addEventListener('click', () => {
         if (this.video) this.video.currentTime = clip.time;
@@ -1688,6 +1696,86 @@ export class PackEditor {
    * It flips to the right if there is no room on the left, so the buttons stay
    * reachable on a narrow window instead of running off the edge.
    */
+  /**
+   * The list of names beside a line's character box.
+   *
+   * Always offers everyone in the pack, whatever has been typed. What is typed
+   * moves the matches to the top rather than hiding the rest, because reaching
+   * for the list usually means not remembering the exact spelling, which is the
+   * moment a filter is least helpful.
+   *
+   * Placed with fixed coordinates and flipped above the box when there is no
+   * room below, so it can always be reached near the bottom of the window.
+   */
+  attachCharacterList(field, input, names, onPick) {
+    const button = field.querySelector('[data-act="characters"]');
+    if (!button || !names.length) {
+      if (button) button.hidden = true;
+      return;
+    }
+
+    let list = null;
+    const close = () => {
+      if (!list) return;
+      list.remove();
+      list = null;
+      document.removeEventListener('pointerdown', onAway, true);
+      window.removeEventListener('resize', close);
+      field.classList.remove('open');
+    };
+    const onAway = (event) => {
+      if (list && !list.contains(event.target) && !field.contains(event.target)) close();
+    };
+
+    const open = () => {
+      if (list) { close(); return; }
+
+      const typed = input.value.trim().toLowerCase();
+      const ordered = typed
+        ? [...names].sort((a, b) => {
+          const am = a.toLowerCase().startsWith(typed) ? 0 : a.toLowerCase().includes(typed) ? 1 : 2;
+          const bm = b.toLowerCase().startsWith(typed) ? 0 : b.toLowerCase().includes(typed) ? 1 : 2;
+          return am - bm || a.localeCompare(b);
+        })
+        : names;
+
+      list = el('div', 'character-list');
+      list.innerHTML = ordered.map((name) =>
+        `<button type="button" data-name="${escapeHtml(name)}">${escapeHtml(name)}</button>`).join('');
+      document.body.append(list);
+      field.classList.add('open');
+
+      const box = input.getBoundingClientRect();
+      const height = list.offsetHeight;
+      const below = window.innerHeight - box.bottom - 8;
+      list.style.left = `${Math.round(box.left)}px`;
+      list.style.width = `${Math.round(box.width)}px`;
+      // Above when it will not fit below, and never past the top of the window.
+      if (height > below && box.top > below) {
+        list.style.top = `${Math.round(Math.max(8, box.top - height - 4))}px`;
+      } else {
+        list.style.top = `${Math.round(box.bottom + 4)}px`;
+        list.style.maxHeight = `${Math.max(80, below)}px`;
+      }
+
+      list.addEventListener('click', (event) => {
+        const name = event.target.dataset && event.target.dataset.name;
+        if (!name) return;
+        input.value = name;
+        close();
+        onPick();
+      });
+
+      document.addEventListener('pointerdown', onAway, true);
+      window.addEventListener('resize', close);
+    };
+
+    button.addEventListener('click', open);
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') close();
+    });
+  }
+
   placePictureMenu(thumb) {
     if (!thumb) return;
     const menu = thumb.querySelector('.clip-pic-actions');

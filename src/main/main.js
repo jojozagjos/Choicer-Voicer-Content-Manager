@@ -1948,12 +1948,21 @@ function runSmokeTest(win) {
           hasBackingButton: Boolean(q('[data-act="backing"]')),
           clipRows: root.querySelectorAll('.clip-row').length,
           thumbs: root.querySelectorAll('.clip-thumb').length,
-          // Character names are offered rather than retyped, so the field has
-          // to actually be wired to a list holding the pack's own speakers.
-          characterListId: (root.querySelector('[data-field="character"]') || {}).getAttribute
-            ? root.querySelector('[data-field="character"]').getAttribute('list')
-            : null,
-          characterOptions: [...root.querySelectorAll('datalist option')].map((o) => o.value),
+          // Character names are offered rather than retyped. The list is opened
+          // from the arrow beside the field and built when it opens, so this
+          // opens it and reads what came out.
+          characterOptions: (() => {
+            const arrow = root.querySelector('.character-field [data-act="characters"]');
+            if (!arrow || arrow.hidden) return [];
+            arrow.click();
+            const names = [...document.querySelectorAll('.character-list button')]
+              .map((b) => b.dataset.name);
+            arrow.click(); // closed again, so it cannot sit over a later check
+            return names;
+          })(),
+          // Exactly one arrow: the native datalist used to draw a second.
+          characterArrows: root.querySelectorAll('.clip-row .character-field button').length
+            / Math.max(1, root.querySelectorAll('.clip-row').length),
         };
 
         // Volume actually reaches the element.
@@ -2208,13 +2217,14 @@ function runSmokeTest(win) {
         if (toolsCheck.iconShownAfterReopen === false) errors.push('pack icon vanished on reopening');
         if (toolsCheck.iconLoaded === false) errors.push('pack icon is present but does not load');
 
-        // A field pointing at a list that does not exist silently offers
-        // nothing, which looks exactly like it working until you use it.
+        // A list that opens to nothing looks exactly like it working until it
+        // is used.
         if (toolsCheck.clipRows) {
-          if (!toolsCheck.characterListId) {
-            errors.push('the character field offers no list of existing names');
-          } else if (!toolsCheck.characterOptions.length) {
+          if (!toolsCheck.characterOptions.length) {
             errors.push('the character list is empty despite the pack having clips');
+          }
+          if (toolsCheck.characterArrows > 1) {
+            errors.push('the character field draws more than one dropdown arrow');
           }
         }
       }
@@ -2907,9 +2917,24 @@ function registerIpc() {
     if (target && fs.existsSync(target)) shell.showItemInFolder(target);
   });
 
+  /**
+   * Opens a pack folder in the file manager.
+   *
+   * Only ever a folder, and only one inside the game folder. This used to open
+   * whatever path it was handed, which on Windows means handing a file to
+   * whichever program claims its extension, and handing an executable to the
+   * executable. Every caller passes a directory, so nothing is lost by refusing
+   * anything else, and a mistake here can no longer start a program.
+   */
   ipcMain.handle('shell:openPath', async (_e, target) => {
-    if (target && fs.existsSync(target)) return shell.openPath(target);
-    return 'not found';
+    if (!target || !fs.existsSync(target)) return 'not found';
+    if (!isAllowed(target)) return 'that folder is outside the game folder';
+    try {
+      if (!fs.statSync(target).isDirectory()) return 'not a folder';
+    } catch {
+      return 'not found';
+    }
+    return shell.openPath(target);
   });
 
   ipcMain.handle('shell:openExternal', (_e, url) => {

@@ -212,9 +212,11 @@ export class Timeline {
     }
 
     if (!candidates.length) return null;
-    // Prefer the clip the cursor is actually over vertically; fall back to the
-    // topmost match so a click just outside a lane still selects something.
-    return candidates.find((c) => c.inLane) || candidates[0];
+    // Only the clip the cursor is genuinely inside. This used to fall back to
+    // the topmost clip sharing the same stretch of time, so clicking the empty
+    // space under a line selected that line instead of moving the playhead, and
+    // starting a drag below a clip took hold of the clip above it.
+    return candidates.find((c) => c.inLane) || null;
   }
 
   // Drawing

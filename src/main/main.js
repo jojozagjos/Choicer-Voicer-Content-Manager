@@ -151,6 +151,9 @@ const DEFAULT_SETTINGS = {
   seenHelp: false,
   captionStyle: {},
   characterColors: {},
+  // How loud each character is, as a multiplier on every line they speak.
+  characterVolumes: {},
+  useCharacterVolumes: true,
   // Donation prompt state. It only appears after the app has actually been
   // useful a few times, and never more than once a fortnight.
   exportsCompleted: 0,
@@ -200,6 +203,9 @@ function saveSettings(next) {
     exportOptions: { ...settings.exportOptions, ...(next.exportOptions || {}) },
     captionStyle: { ...settings.captionStyle, ...(next.captionStyle || {}) },
     characterColors,
+    // Merged for the same reason as the colours: these are keyed by character
+    // name across every pack, so a write from one pack must not drop the rest.
+    characterVolumes: { ...settings.characterVolumes, ...(next.characterVolumes || {}) },
   };
   delete settings.replaceCharacterColors;
   ffmpeg.setOverrides({ ffmpeg: settings.ffmpegPath, ffprobe: settings.ffprobePath });
@@ -1170,6 +1176,11 @@ function runSmokeTest(win) {
         captionTab: document.querySelectorAll('[data-export-tab]').length,
         settingsGroups: document.querySelectorAll('.settings-group').length,
         previewCaptionToggle: Boolean(document.getElementById('set-preview-captions')),
+        // The export dialog has to offer the per character volumes and say what
+        // they are, since they are set on a different screen entirely.
+        characterVolumeToggle: Boolean(document.getElementById('opt-character-volumes')),
+        characterVolumeNote:
+          (document.getElementById('character-volume-note') || {}).textContent || '',
         footIsSunken: getComputedStyle(document.querySelector('#export-dialog .dialog-foot')).backgroundColor,
         discordButtonGone: !document.getElementById('btn-discord'),
         donateVisible: !document.getElementById('btn-about-donate').hidden,
@@ -1203,6 +1214,15 @@ function runSmokeTest(win) {
         ['the credits in Help', report.unofficialInHelp],
       ]) {
         if (!seen) errors.push(`no unofficial notice on ${where}`);
+      }
+
+      if (!report.characterVolumeToggle) {
+        errors.push('the export dialog does not offer the per character volumes');
+      }
+      // A switch for "use the volumes I set" is no use without saying what they
+      // are, since they are set on another screen.
+      if (!report.characterVolumeNote.trim()) {
+        errors.push('the per character volume setting says nothing about the values');
       }
     } catch (err) {
       errors.push(`probe failed: ${err.message}`);

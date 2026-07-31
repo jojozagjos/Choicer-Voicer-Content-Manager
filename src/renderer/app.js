@@ -91,6 +91,8 @@ const el = {
   optBurn: $('#opt-burn'),
   optSrt: $('#opt-srt'),
   optNormalize: $('#opt-normalize'),
+  optCharacterVolumes: $('#opt-character-volumes'),
+  characterVolumeNote: $('#character-volume-note'),
   optOriginal: $('#opt-original'),
   optOutput: $('#opt-output'),
   btnPickOutput: $('#btn-pick-output'),
@@ -382,6 +384,33 @@ function characterColor(name) {
   return CHARACTER_PALETTE[hash % CHARACTER_PALETTE.length];
 }
 
+/**
+ * How loud one character is, as a multiplier on every line they speak.
+ *
+ * Sits on top of each line's own volume rather than replacing it, so a single
+ * quiet performer can be lifted without losing the balance already set between
+ * their individual lines.
+ */
+function characterVolume(name) {
+  const set = state.settings.characterVolumes || {};
+  const value = name ? set[name] : undefined;
+  return Number.isFinite(value) ? value : 1;
+}
+
+/** Whether any character has been moved off the default. */
+function characterVolumesUsed() {
+  const set = state.settings.characterVolumes || {};
+  return Object.entries(set).filter(([, v]) => Number.isFinite(v) && v !== 1);
+}
+
+/** Pushes the current per character volumes into the preview player. */
+function applyCharacterVolumes() {
+  player.setCharacterVolumes(
+    state.settings.characterVolumes || {},
+    state.settings.useCharacterVolumes !== false
+  );
+}
+
 /** Distinct speakers in the loaded pack, in the order they first appear. */
 function packCharacters() {
   const seen = [];
@@ -455,17 +484,40 @@ function renderCharacterColors() {
   for (const name of names) {
     const row = document.createElement('div');
     row.className = 'character-row';
+    // Volume sits beside the colour because both are per character and both
+    // carry through to the export. One quiet performer is otherwise fixed by
+    // nudging every one of their lines by hand.
     row.innerHTML = `
       <input type="color" class="color" value="${characterColor(name)}" ${enabled ? '' : 'disabled'} />
       <span class="character-name">${escapeHtml(name)}</span>
+      <span class="character-vol" title="How loud this character is, across every line they have">
+        <input type="range" min="0" max="200" step="5" value="${Math.round(characterVolume(name) * 100)}" />
+        <b>${Math.round(characterVolume(name) * 100)}%</b>
+      </span>
       ${overrides[name] ? '<button type="button" class="link-btn">reset</button>' : ''}`;
 
-    row.querySelector('input').addEventListener('change', async (event) => {
+    row.querySelector('input[type="color"]').addEventListener('change', async (event) => {
       state.settings = await window.api.settings.set({
         characterColors: { ...(state.settings.characterColors || {}), [name]: event.target.value },
       });
       renderCharacterColors();
       renderCaptionPreview();
+      renderLines();
+    });
+
+    const vol = row.querySelector('.character-vol input');
+    const volRead = row.querySelector('.character-vol b');
+    vol.addEventListener('input', () => { volRead.textContent = `${vol.value}%`; });
+    vol.addEventListener('change', async () => {
+      state.settings = await window.api.settings.set({
+        characterVolumes: {
+          ...(state.settings.characterVolumes || {}),
+          [name]: Number(vol.value) / 100,
+        },
+      });
+      // The preview follows immediately, so the change can be heard rather than
+      // taken on trust until an export comes out.
+      applyCharacterVolumes();
       renderLines();
     });
 
@@ -1963,9 +2015,13 @@ async function loadSession(session) {
 
   player.setBackingVolume(Number(el.volBacking.value) / 100);
   player.setDubVolume(Number(el.volDub.value) / 100);
+  // The pack's lines only exist now, so this is the first point the per
+  // character volumes have anything to apply to.
+  applyCharacterVolumes();
 
   renderLines();
   renderMarkers();
+  renderCharacterVolumeNote();
 
   // Only the load that actually finished may re-enable exporting.
   setLoadingState(false);
@@ -2393,11 +2449,17 @@ function buildTracks() {
       : line.sourceAudioPath;
     if (!path) continue;
 
+    // The same two-part gain the preview uses, so what was heard is what comes
+    // out. Turning the setting off exports the line volumes on their own.
+    const perCharacter = state.settings.useCharacterVolumes !== false
+      ? characterVolume(item.character)
+      : 1;
+
     tracks.push({
       path,
       time: item.time,
       offset: item.offset,
-      volume: item.volume,
+      volume: item.volume * perCharacter,
       duration: state.durations[path] || item.duration || 0,
       enabled: true,
     });
@@ -2445,6 +2507,28 @@ function applyExportDefaults() {
   el.optSrt.checked = Boolean(opts.writeSrt);
   el.optNormalize.checked = Boolean(opts.normalizeDub);
   el.optOriginal.checked = Boolean(opts.includeOriginalAudio);
+  el.optCharacterVolumes.checked = state.settings.useCharacterVolumes !== false;
+  renderCharacterVolumeNote();
+}
+
+/**
+ * Says what the per character volumes actually are, in the export dialog.
+ *
+ * A switch for "use the volumes I set" is no use without showing what they are,
+ * since they were set on another screen and there is no other way to check them
+ * before committing to an export.
+ */
+function renderCharacterVolumeNote() {
+  const note = el.characterVolumeNote;
+  if (!note) return;
+  const changed = characterVolumesUsed();
+  if (!changed.length) {
+    note.textContent = 'No character has been changed from 100%. Set these in Settings.';
+    return;
+  }
+  note.textContent = changed
+    .map(([name, value]) => `${name} ${Math.round(value * 100)}%`)
+    .join(' · ');
 }
 
 function currentExportOptions() {
@@ -2902,6 +2986,16 @@ function wireEvents() {
     }
     toast('Rescanned.', 'ok', 1800);
   });
+  // Saved as a setting rather than an export option, because the preview obeys
+  // it too and the two must not be able to disagree.
+  el.optCharacterVolumes.addEventListener('change', async () => {
+    state.settings = await window.api.settings.set({
+      useCharacterVolumes: el.optCharacterVolumes.checked,
+    });
+    applyCharacterVolumes();
+    renderCharacterVolumeNote();
+  });
+
   el.btnSettings.addEventListener('click', openSettings);
 
   for (const button of el.tabButtons) {

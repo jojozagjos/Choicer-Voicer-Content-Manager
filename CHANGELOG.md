@@ -16,6 +16,17 @@ Fixes for editing lines, found while building packs with 1.0.1.
   the closest matches sorted to the top. It draws one arrow rather than two, and
   opens upwards when there is no room below instead of running off the screen.
 
+### Volume
+
+- Each character has their own volume, set beside their colour in Settings. It
+  multiplies every line that character speaks, on top of the volume already set
+  for each individual line, so one quiet performer can be lifted without
+  disturbing the balance between their own lines.
+- The preview follows it as soon as it changes, so it can be heard rather than
+  taken on trust.
+- Exporting has a setting for whether to use these, listing what each character
+  is currently set to.
+
 ### The timeline
 
 - Clicking the empty space under a line moves the playhead instead of selecting

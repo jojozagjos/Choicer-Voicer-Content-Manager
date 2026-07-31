@@ -1424,6 +1424,18 @@ input[type="range"]::-webkit-slider-thumb {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+/* Loudness for the whole character, beside their colour. */
+.character-vol { display: flex; align-items: center; gap: 7px; flex: none; }
+.character-vol input[type="range"] { width: 92px; }
+.character-vol b {
+  min-width: 38px;
+  text-align: right;
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--muted);
 }
 .link-btn {
   background: none;

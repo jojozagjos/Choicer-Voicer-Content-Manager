@@ -231,13 +231,37 @@ export class DubPlayer {
     this._schedule();
   }
 
+  /**
+   * How loud one line actually plays: its own volume, times its character's.
+   *
+   * Two separate things deliberately. The line volume is the balance set between
+   * one line and the next, and the character volume lifts a whole performer at
+   * once without disturbing it.
+   */
+  gainFor(item) {
+    if (!item || typeof item !== 'object') return 1;
+    const own = Number.isFinite(item.volume) ? item.volume : 1;
+    if (!this.useCharacterVolumes) return own;
+    const perCharacter = (this.characterVolumes || {})[item.character];
+    return own * (Number.isFinite(perCharacter) ? perCharacter : 1);
+  }
+
+  /** Sets the per character multipliers, and whether they apply at all. */
+  setCharacterVolumes(map, enabled = true) {
+    this.characterVolumes = map || {};
+    this.useCharacterVolumes = enabled !== false;
+    for (const node of this.active) {
+      if (node.item && typeof node.item === 'object') node.gain.gain.value = this.gainFor(node.item);
+    }
+  }
+
   setLineVolume(id, volume) {
     const item = this.items.find((i) => i.id === id);
     if (!item) return;
     item.volume = volume;
     // Live-adjust anything already playing so the change is audible at once.
     for (const node of this.active) {
-      if (node.item === item) node.gain.gain.value = volume;
+      if (node.item === item) node.gain.gain.value = this.gainFor(item);
     }
   }
 
@@ -373,7 +397,7 @@ export class DubPlayer {
     for (const item of this.items) {
       const buffer = this._bufferFor(item);
       if (!buffer) continue;
-      this._startAt(buffer, item.time + item.offset, videoTime, item.volume, item);
+      this._startAt(buffer, item.time + item.offset, videoTime, this.gainFor(item), item);
     }
   }
 

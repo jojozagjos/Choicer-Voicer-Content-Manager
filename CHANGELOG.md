@@ -26,6 +26,10 @@ Fixes throughout, found while building packs with 1.0.1.
   taken on trust.
 - Exporting has a setting for whether to use these, listing what each character
   is currently set to.
+- The export window shows the music and dub balance the sliders under the player
+  are set to, so what is about to be exported is clear without leaving it. A
+  freestyle recording follows the dub slider too, which is the only control it
+  has.
 
 ### The timeline
 
@@ -41,6 +45,11 @@ Fixes throughout, found while building packs with 1.0.1.
   folder, a recording made in the game, a picture replaced in another program.
   Rescan is still there for anything a watch cannot see.
 - The pack being edited is reloaded only when the change was to that pack.
+- Rereads are spaced out, so a stream of changes no longer becomes a stream of
+  rescans.
+- Pictures no longer reload across the whole library when one pack changes. Only
+  the pack that changed is fetched again, so the grid no longer fills back in
+  from the top down.
 
 ### Packs
 

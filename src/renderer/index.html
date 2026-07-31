@@ -346,10 +346,18 @@
           </span>
         </label>
 
-        <p class="muted small pad-top">
-          The music and dub balance comes from the sliders under the player, so what you hear in
-          the preview is what you get.
-        </p>
+        <!-- Read only. The balance is set on the sliders under the player, where
+             it can be heard while it is being set; this only says what they are
+             currently at, so it is clear what is about to be exported. -->
+        <div class="export-mix">
+          <h4>Balance</h4>
+          <p class="mix-readout">
+            <span>Music <b id="exp-vol-backing-read">100%</b></span>
+            <span>Dub <b id="exp-vol-dub-read">100%</b></span>
+          </p>
+          <p class="muted small">Set these on the sliders under the player, where you can hear the
+             change as you make it. A freestyle recording uses the dub slider too.</p>
+        </div>
       </section>
 
       <section data-export-panel="captions" hidden>

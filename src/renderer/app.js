@@ -75,6 +75,8 @@ const el = {
   volBackingVal: $('#vol-backing-val'),
   volDub: $('#vol-dub'),
   volDubVal: $('#vol-dub-val'),
+  expVolBackingRead: $('#exp-vol-backing-read'),
+  expVolDubRead: $('#exp-vol-dub-read'),
 
   lineCount: $('#line-count'),
   lineList: $('#line-list'),
@@ -387,6 +389,46 @@ function characterColor(name) {
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
   return CHARACTER_PALETTE[hash % CHARACTER_PALETTE.length];
+}
+
+// The least time between two rereads caused by the folder watch. A pack being
+// copied in, or the game writing a session, arrives as a long stream of changes,
+// and rereading on each one turns a trickle of writes into a trickle of rescans.
+const DISK_REFRESH_GAP = 4000;
+
+/**
+ * Rereads the library after something changed on disk, at a sensible pace.
+ *
+ * Waits for the changes to stop, then holds off if one has only just been done.
+ * Whatever arrives while a reread is running is folded into the next one rather
+ * than queueing up behind it.
+ */
+function scheduleDiskRefresh() {
+  clearTimeout(state.diskChangeTimer);
+
+  const since = Date.now() - (state.lastDiskRefresh || 0);
+  const wait = state.diskRefreshRunning
+    ? DISK_REFRESH_GAP
+    : Math.max(1200, DISK_REFRESH_GAP - since);
+
+  state.diskChangeTimer = setTimeout(async () => {
+    if (state.diskRefreshRunning) { scheduleDiskRefresh(); return; }
+
+    state.diskRefreshRunning = true;
+    try {
+      // Only the open pack is reloaded when there is one, since rebuilding the
+      // whole library behind the editor achieves nothing visible.
+      if (!el.editorView.hidden && editor.pack) {
+        await editor.onChanged(editor.pack.id, { keepEditor: true });
+      } else {
+        await refreshContent();
+        await rescan(state.settings.gameDir);
+      }
+    } catch { /* the next change will try again */ } finally {
+      state.diskRefreshRunning = false;
+      state.lastDiskRefresh = Date.now();
+    }
+  }, wait);
 }
 
 /**
@@ -2598,6 +2640,7 @@ function applyExportDefaults() {
   el.optOriginal.checked = Boolean(opts.includeOriginalAudio);
   el.optCharacterVolumes.checked = state.settings.useCharacterVolumes !== false;
   renderCharacterVolumeNote();
+  renderMixReadout();
 }
 
 /**
@@ -2888,6 +2931,15 @@ function openSettings() {
  * Ties a range input to a number input so either can drive the value.
  * The slider updates live while dragging; the box commits on blur or Enter.
  */
+/**
+ * Ties a slider and its number box together, and to any other controls showing
+ * the same value.
+ *
+ * The music and dub balance appears twice, under the player and in the export
+ * window, because a freestyle session has no per-line controls and the export
+ * window was the one place it could not be set. Both have to move together or
+ * the preview and the export disagree about what was asked for.
+ */
 function bindMixControl(slider, number, max, apply) {
   const set = (value, echoTo) => {
     const clamped = clamp(Math.round(value), 0, max);
@@ -2900,6 +2952,20 @@ function bindMixControl(slider, number, max, apply) {
   number.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') number.blur();
   });
+}
+
+/**
+ * Shows the music and dub balance in the export window.
+ *
+ * Set on the sliders under the player, where the change can be heard as it is
+ * made, and only reported here so it is clear what is about to be exported. A
+ * freestyle recording has no per-line controls, so the dub figure is the only
+ * thing describing how loud it will be.
+ */
+function renderMixReadout() {
+  if (!el.expVolBackingRead) return;
+  el.expVolBackingRead.textContent = `${Math.round(Number(el.volBacking.value))}%`;
+  el.expVolDubRead.textContent = `${Math.round(Number(el.volDub.value))}%`;
 }
 
 function wireEvents() {
@@ -3093,17 +3159,7 @@ function wireEvents() {
    * pack being edited, since reloading it rebuilds the line list and there is no
    * reason to disturb someone over a different pack.
    */
-  window.api.content.onChangedOnDisk(() => {
-    clearTimeout(state.diskChangeTimer);
-    state.diskChangeTimer = setTimeout(async () => {
-      if (!el.editorView.hidden && editor.pack) {
-        await editor.onChanged(editor.pack.id, { keepEditor: true });
-      } else {
-        await refreshContent();
-        await rescan(state.settings.gameDir);
-      }
-    }, 250);
-  });
+  window.api.content.onChangedOnDisk(scheduleDiskRefresh);
 
   el.btnOrphanOpen.addEventListener('click', () => {
     const dir = state.settings.gameDir;
@@ -3205,8 +3261,14 @@ function wireEvents() {
   });
 
   // Each mix control is a slider plus a number box that mirror each other.
-  bindMixControl(el.volBacking, el.volBackingVal, 150, (v) => player.setBackingVolume(v / 100));
-  bindMixControl(el.volDub, el.volDubVal, 200, (v) => player.setDubVolume(v / 100));
+  bindMixControl(el.volBacking, el.volBackingVal, 150, (v) => {
+    player.setBackingVolume(v / 100);
+    renderMixReadout();
+  });
+  bindMixControl(el.volDub, el.volDubVal, 200, (v) => {
+    player.setDubVolume(v / 100);
+    renderMixReadout();
+  });
 
   el.btnAllTake.addEventListener('click', () => setAllSources('take'));
   el.btnAllOriginal.addEventListener('click', () => setAllSources('original'));

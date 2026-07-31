@@ -49,8 +49,9 @@ function invalidatePack(dir) {
   if (!dir) return;
   packCache.delete(path.resolve(dir));
   packCache.delete(dir);
-  // Anything already on screen from this pack may now be out of date.
-  mediaGeneration = Date.now();
+  // Anything already on screen from this pack may now be out of date. Only this
+  // pack: see folderGenerations for why it is not everything.
+  bumpMedia(dir);
 }
 
 /**
@@ -383,12 +384,29 @@ const MIME = {
  */
 let mediaGeneration = Date.now();
 
+// Counted per folder rather than for everything at once. A single counter meant
+// a change to any one pack gave every picture in the app a new address, so the
+// whole library reloaded its images and could be watched filling in from the top
+// down. Only the folder that changed gets a new number now, so everything else
+// stays in the browser's cache and does not flicker.
+const folderGenerations = new Map();
+
+function bumpMedia(dir) {
+  if (!dir) return;
+  folderGenerations.set(path.resolve(dir), Date.now());
+}
+
+function generationFor(filePath) {
+  const dir = path.resolve(path.dirname(filePath));
+  return folderGenerations.get(dir) || mediaGeneration;
+}
+
 /** A URL the renderer can load a pack file through. */
 function mediaUrl(filePath) {
   const encoded = Buffer.from(filePath, 'utf8').toString('base64url');
   // The protocol handler strips the query before decoding the path, so this
   // only ever affects caching.
-  return `${MEDIA_SCHEME}://file/${encoded}?v=${mediaGeneration}`;
+  return `${MEDIA_SCHEME}://file/${encoded}?v=${generationFor(filePath)}`;
 }
 
 function pathFromMediaUrl(url) {
@@ -1308,6 +1326,12 @@ function runSmokeTest(win) {
         // The export dialog has to offer the per character volumes and say what
         // they are, since they are set on a different screen entirely.
         characterVolumeToggle: Boolean(document.getElementById('opt-character-volumes')),
+        // The balance is set under the player, so the export window has to at
+        // least say what it is currently at.
+        mixReadout: [
+          (document.getElementById('exp-vol-backing-read') || {}).textContent || '',
+          (document.getElementById('exp-vol-dub-read') || {}).textContent || '',
+        ].join(' / '),
         characterVolumeNote:
           (document.getElementById('character-volume-note') || {}).textContent || '',
         footIsSunken: getComputedStyle(document.querySelector('#export-dialog .dialog-foot')).backgroundColor,
@@ -1352,6 +1376,9 @@ function runSmokeTest(win) {
       // are, since they are set on another screen.
       if (!report.characterVolumeNote.trim()) {
         errors.push('the per character volume setting says nothing about the values');
+      }
+      if (!/%/.test(report.mixReadout)) {
+        errors.push('the export window does not show the music and dub balance');
       }
     } catch (err) {
       errors.push(`probe failed: ${err.message}`);
@@ -2515,6 +2542,9 @@ function registerIpc() {
    */
   ipcMain.handle('content:forget', () => {
     packCache.clear();
+    // Rescan is the deliberate "read everything again", so this is the one place
+    // every picture is expected to be fetched afresh.
+    folderGenerations.clear();
     mediaGeneration = Date.now();
     return { ok: true };
   });

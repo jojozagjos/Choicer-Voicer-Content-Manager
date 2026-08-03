@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.0.3
+
+Working with a pack that has been recorded several times over.
+
+### Recording sessions
+
+- A session can be deleted, with the button beside the take session list. It
+  removes that session's recordings and nothing else, leaving the pack and every
+  other session untouched.
+- A session that has not been listened to yet is marked NEW in the list. After a
+  run of takes, the one just recorded is the one that stands out rather than the
+  one that has to be worked out from the names.
+- The mark comes off as soon as the session is opened.
+
+### Content
+
+- The content list has a search box, narrowing the packs shown as a name is
+  typed.
+
 ## 1.0.2
 
 Fixes throughout, found while building packs with 1.0.1.

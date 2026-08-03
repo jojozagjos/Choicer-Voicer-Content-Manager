@@ -553,6 +553,34 @@ function orphanSessions(gameDir) {
   return out;
 }
 
+/**
+ * Removes one recorded session.
+ *
+ * The name is checked rather than trusted: it comes from the interface, and a
+ * path in it would reach outside the recordings folder entirely.
+ */
+function deleteSession(gameDir, packName, sessionName) {
+  if (!packName || !sessionName) return { ok: false, error: 'Nothing named' };
+  if (/[\\/]/.test(packName) || /[\\/]/.test(sessionName) || sessionName.startsWith('.')) {
+    return { ok: false, error: 'That is not a session name' };
+  }
+
+  const dir = path.join(sessionRoot(gameDir, packName), sessionName);
+  const root = path.resolve(sessionRoot(gameDir, packName));
+  const rel = path.relative(root, path.resolve(dir));
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
+    return { ok: false, error: 'That folder is not a session of this pack' };
+  }
+
+  try {
+    if (!fs.existsSync(dir)) return { ok: false, error: 'It is already gone' };
+    fs.rmSync(dir, { recursive: true, force: true });
+    return { ok: true, removed: sessionName };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
 /** Removes every recorded session of a pack. */
 function deleteSessions(gameDir, packName) {
   const root = sessionRoot(gameDir, packName);
@@ -684,6 +712,7 @@ module.exports = {
   packSessions,
   orphanSessions,
   deleteSessions,
+  deleteSession,
   pruneTrash,
   createPack,
   installPack,

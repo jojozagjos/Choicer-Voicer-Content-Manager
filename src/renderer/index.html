@@ -135,6 +135,8 @@
             <span>Take session</span>
             <select id="session-select" class="select"></select>
           </label>
+          <button id="btn-session-delete" class="btn btn-small btn-danger"
+                  title="Delete this recording session">✕</button>
           <button id="btn-export" class="btn btn-primary">Export video…</button>
         </div>
       </div>
@@ -208,6 +210,8 @@
           <p class="muted small" id="content-subtitle"></p>
         </div>
         <div class="content-head-actions">
+          <input id="content-search" class="input content-search" type="search"
+                 placeholder="Search packs…" autocomplete="off" />
           <button id="btn-content-new" class="btn btn-primary btn-small">+ Create new</button>
           <button id="btn-content-folder" class="btn btn-small">Open folder</button>
         </div>

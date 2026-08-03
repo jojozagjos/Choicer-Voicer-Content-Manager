@@ -52,6 +52,8 @@ const el = {
   packTitle: $('#pack-title'),
   packSubtitle: $('#pack-subtitle'),
   sessionSelect: $('#session-select'),
+  btnSessionDelete: $('#btn-session-delete'),
+  contentSearch: $('#content-search'),
   btnExport: $('#btn-export'),
 
   video: $('#video'),
@@ -215,6 +217,8 @@ const state = {
   converting: new Map(),
   // Collects folder-watch notices, so a batch of them costs one reread.
   diskChangeTimer: null,
+  // What is typed in the Content search box.
+  contentSearch: '',
 };
 
 const player = new DubPlayer(el.video);
@@ -314,7 +318,72 @@ function friendlySessionName(session) {
     ? date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
     : session.name;
   const kind = session.isFreestyle ? 'freestyle' : `${session.takeCount} takes`;
-  return `${label} (${kind})`;
+  // Recording in the game and then not knowing which of six sessions was the new
+  // one is the whole reason for this mark.
+  const fresh = sessionIsNew(session) ? '• NEW  ' : '';
+  return `${fresh}${label} (${kind})`;
+}
+
+/**
+ * Whether a session has never been played here.
+ *
+ * The game does not record this, so the app keeps its own list of the sessions
+ * it has played. Anything not in that list is new, which after a run of
+ * recording is the only way to tell which one was just made.
+ */
+function sessionIsNew(session) {
+  if (!session || !session.id) return false;
+  const heard = state.settings.playedSessions || {};
+  return !heard[session.id];
+}
+
+/** Remembers that a session has been played, so it stops being marked new. */
+async function markSessionPlayed(session) {
+  if (!session || !session.id || !sessionIsNew(session)) return;
+  state.settings = await window.api.settings.set({
+    playedSessions: { ...(state.settings.playedSessions || {}), [session.id]: Date.now() },
+  });
+  renderSessionOptions();
+}
+
+/**
+ * Deletes the recording session currently chosen.
+ *
+ * Sessions are the only thing in the app that cannot be remade: the takes were
+ * performed. So this asks plainly, says how many takes are going, and does not
+ * offer an undo it cannot honour.
+ */
+async function removeCurrentSession() {
+  const pack = state.pack;
+  const session = state.session;
+  if (!pack || !session || !session.name) return;
+
+  const takes = session.isFreestyle ? 1 : session.takeCount;
+  const answer = await askConfirm({
+    title: 'Delete this recording session?',
+    detail: `${friendlySessionName(session)}\n\n`
+      + `${takes} recording${takes === 1 ? '' : 's'} in this session are deleted from disk. `
+      + 'The pack itself is untouched, and its other sessions are left alone.\n\n'
+      + 'Recordings cannot be undone here, and a performance cannot be remade.',
+    buttons: ['Delete the session', 'Keep it'],
+    mark: '!',
+    danger: true,
+  });
+  if (answer !== 0) return;
+
+  const result = await window.api.content.deleteSession({
+    packName: pack.name || pack.title,
+    sessionName: session.name,
+  });
+  if (!result.ok) {
+    toast(`Could not delete it: ${result.error}`, 'error', 8000);
+    return;
+  }
+
+  toast('Session deleted.', 'ok');
+  await rescan(state.settings.gameDir);
+  const fresh = state.model.packs.find((p) => p.id === pack.id);
+  if (fresh) await selectPack(fresh);
 }
 
 // Theme
@@ -872,6 +941,26 @@ function currentContentType() {
   return state.content && state.content.types.find((t) => t.id === state.contentType);
 }
 
+/**
+ * Narrows a list of packs by what was typed.
+ *
+ * Every word has to match something, so "jerma meat" finds the pack whether it
+ * is remembered by title or by folder. Matching each word separately rather than
+ * the phrase means the order they are typed in does not matter.
+ */
+function filterPacks(packs, query) {
+  const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return packs;
+
+  return packs.filter((pack) => {
+    const haystack = [
+      pack.title, pack.name, pack.summary,
+      ...(pack.authors || []),
+    ].filter(Boolean).join(' ').toLowerCase();
+    return words.every((word) => haystack.includes(word));
+  });
+}
+
 function renderContentGrid() {
   const type = currentContentType();
   el.contentGrid.innerHTML = '';
@@ -892,7 +981,20 @@ function renderContentGrid() {
     return;
   }
 
-  for (const pack of type.packs) {
+  // Matches the title, the folder name and the author, because a pack is as
+  // likely to be remembered by who made it as by what it is called.
+  const packs = filterPacks(type.packs, state.contentSearch);
+  if (!packs.length) {
+    el.contentGrid.innerHTML = `<p class="muted pad">Nothing here matches
+      "${escapeHtml(state.contentSearch)}".</p>`;
+    return;
+  }
+  if (packs.length !== type.packs.length) {
+    el.contentSubtitle.textContent =
+      `${packs.length} of ${type.packs.length} match "${state.contentSearch}"`;
+  }
+
+  for (const pack of packs) {
     const tile = document.createElement('button');
     tile.className = 'pack-tile';
     tile.classList.toggle('on', pack.id === state.contentPackId);
@@ -1985,22 +2087,38 @@ async function selectPack(pack) {
   el.packSubtitle.textContent = pack.subtitle
     || (pack.authors.length ? `by ${pack.authors.join(', ')}` : '');
 
+  renderSessionOptions();
+  await loadSession(pack.sessions[0] || null);
+}
+
+/**
+ * Fills the session picker, keeping whichever one is already chosen.
+ *
+ * Rebuilt rather than patched because the labels carry the new mark, which
+ * changes the moment a session is played.
+ */
+function renderSessionOptions() {
+  const pack = state.pack;
+  const chosen = el.sessionSelect.value;
   el.sessionSelect.innerHTML = '';
-  if (!pack.sessions.length) {
+
+  if (!pack || !pack.sessions.length) {
     const opt = document.createElement('option');
     opt.textContent = 'No recordings, original audio only';
     opt.value = '';
     el.sessionSelect.append(opt);
-  } else {
-    for (const session of pack.sessions) {
-      const opt = document.createElement('option');
-      opt.value = session.id;
-      opt.textContent = friendlySessionName(session);
-      el.sessionSelect.append(opt);
-    }
+    el.btnSessionDelete.disabled = true;
+    return;
   }
 
-  await loadSession(pack.sessions[0] || null);
+  for (const session of pack.sessions) {
+    const opt = document.createElement('option');
+    opt.value = session.id;
+    opt.textContent = friendlySessionName(session);
+    el.sessionSelect.append(opt);
+  }
+  if (chosen) el.sessionSelect.value = chosen;
+  el.btnSessionDelete.disabled = false;
 }
 
 /** Resolves once the video element has real picture, or rejects on failure. */
@@ -3240,7 +3358,28 @@ function wireEvents() {
   // Nothing may drive the player while a pack is still being prepared: the
   // element still holds the last pack's video, so playing it plays the wrong
   // thing behind the overlay.
-  el.btnPlay.addEventListener('click', () => { if (!state.loading) player.toggle(); });
+  el.btnPlay.addEventListener('click', () => {
+    if (state.loading) return;
+    player.toggle();
+    // Pressing play is what "listened to" means, so the new mark comes off here
+    // rather than on merely selecting the session in the list.
+    markSessionPlayed(state.session);
+  });
+
+  el.btnSessionDelete.addEventListener('click', removeCurrentSession);
+
+  el.contentSearch.addEventListener('input', () => {
+    state.contentSearch = el.contentSearch.value.trim();
+    renderContentGrid();
+  });
+  // Escape clears rather than only blurring, which is what the box being empty
+  // again is usually meant to achieve.
+  el.contentSearch.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    el.contentSearch.value = '';
+    state.contentSearch = '';
+    renderContentGrid();
+  });
   el.btnBack.addEventListener('click', () => {
     if (!state.loading) player.seek(el.video.currentTime - 5);
   });

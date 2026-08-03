@@ -16,7 +16,7 @@ const { ensureProxy } = require('./proxy');
 const { scanContent } = require('./content');
 const {
   createPack, installPack, deletePack, trashClip, restoreClip, writeClipMeta, saveImage, writeIni,
-  clipRecordings, pruneTrash, packSessions, orphanSessions, deleteSessions,
+  clipRecordings, pruneTrash, packSessions, orphanSessions, deleteSessions, deleteSession,
   writeIniSections,
 } = require('./create');
 const convert = require('./convert');
@@ -272,6 +272,10 @@ const DEFAULT_SETTINGS = {
   // How loud each character is, as a multiplier on every line they speak.
   characterVolumes: {},
   useCharacterVolumes: true,
+  // Sessions that have been played here at least once. The game does not record
+  // this, and without it there is no way to tell which of several sessions was
+  // the one just recorded.
+  playedSessions: {},
   // Donation prompt state. It only appears after the app has actually been
   // useful a few times, and never more than once a fortnight.
   exportsCompleted: 0,
@@ -324,6 +328,7 @@ function saveSettings(next) {
     // Merged for the same reason as the colours: these are keyed by character
     // name across every pack, so a write from one pack must not drop the rest.
     characterVolumes: { ...settings.characterVolumes, ...(next.characterVolumes || {}) },
+    playedSessions: { ...settings.playedSessions, ...(next.playedSessions || {}) },
   };
   delete settings.replaceCharacterColors;
   ffmpeg.setOverrides({ ffmpeg: settings.ffmpegPath, ffprobe: settings.ffprobePath });
@@ -2794,6 +2799,12 @@ function registerIpc() {
     const gameDir = gamedata.resolveGameDir(settings.gameDir || gamedata.defaultGameDir());
     if (!gameDir) return { ok: true, orphans: [] };
     return { ok: true, orphans: orphanSessions(gameDir) };
+  });
+
+  ipcMain.handle('content:deleteSession', (_e, { packName, sessionName }) => {
+    const gameDir = gamedata.resolveGameDir(settings.gameDir || gamedata.defaultGameDir());
+    if (!gameDir) return { ok: false, error: 'No game folder found' };
+    return deleteSession(gameDir, packName, sessionName);
   });
 
   ipcMain.handle('content:deleteSessions', (_e, packName) => {

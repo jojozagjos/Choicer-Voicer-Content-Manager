@@ -67,6 +67,7 @@ contextBridge.exposeInMainWorld('api', {
     packSessions: (packDir) => ipcRenderer.invoke('content:packSessions', packDir),
     orphanSessions: () => ipcRenderer.invoke('content:orphanSessions'),
     deleteSessions: (packName) => ipcRenderer.invoke('content:deleteSessions', packName),
+    deleteSession: (payload) => ipcRenderer.invoke('content:deleteSession', payload),
     restoreClip: (payload) => ipcRenderer.invoke('content:restoreClip', payload),
     saveImage: (payload) => ipcRenderer.invoke('content:saveImage', payload),
     writePackInfo: (payload) => ipcRenderer.invoke('content:writePackInfo', payload),

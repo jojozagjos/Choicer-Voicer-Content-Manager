@@ -1960,6 +1960,11 @@ input[type="range"]::-webkit-slider-thumb {
 .mix-readout { display: flex; gap: 22px; margin: 0; font-size: 12.5px; color: var(--muted); }
 .mix-readout b { color: var(--text); font-weight: 650; margin-left: 5px; }
 
+.content-search { width: 190px; font-size: 12.5px; padding: 6px 10px; }
+/* The session picker's delete sits next to it rather than in the row of
+   actions, because it acts on what the picker has selected. */
+#btn-session-delete { padding: 7px 11px; align-self: flex-end; }
+
 /* Recordings left behind by a pack that is gone. */
 .orphan-note {
   display: flex;

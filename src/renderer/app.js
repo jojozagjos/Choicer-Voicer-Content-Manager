@@ -1822,6 +1822,76 @@ function formatWhen(iso) {
   return `${Math.floor(days / 30)} months ago`;
 }
 
+/**
+ * Asks how a pack should read in the directory.
+ *
+ * Everything here has a sensible default, so the fastest path is still one
+ * press. What it prevents is the default being the *only* thing: a page of
+ * packs all summarised as "A voice pack" with no tags is a page nobody browses.
+ *
+ * Resolves with the details, or null if it was declined.
+ */
+async function askListingDetails(pack) {
+  const said = await askForm({
+    title: 'How should this pack be listed?',
+    detail: 'This is what people see when browsing. Only the summary is needed.',
+    mark: '↗',
+    buttons: ['Continue', 'Cancel'],
+    fields: [
+      {
+        key: 'summary',
+        label: 'One line about it',
+        value: pack.subtitle || '',
+        placeholder: 'What is in it, in a few words',
+        max: 140,
+        required: true,
+      },
+      {
+        key: 'description',
+        label: 'More, if you want',
+        value: '',
+        placeholder: 'Optional',
+        multiline: true,
+        max: 4000,
+      },
+      {
+        key: 'tags',
+        label: 'Tags, separated by commas',
+        value: '',
+        placeholder: 'funny, short, anime',
+        max: 200,
+      },
+      {
+        key: 'licence',
+        label: 'Can other people reuse this?',
+        value: 'unstated',
+        options: [
+          ['unstated', 'Rather not say'],
+          ['cc0', 'Anyone may use it, no credit needed'],
+          ['cc-by', 'Anyone may use it, with credit'],
+          ['cc-by-sa', 'With credit, and shared the same way'],
+          ['cc-by-nc', 'With credit, nothing commercial'],
+          ['cc-by-nc-sa', 'With credit, nothing commercial, shared alike'],
+          ['all-rights-reserved', 'Ask me first'],
+        ],
+      },
+    ],
+  });
+  if (said === null) return null;
+
+  return {
+    summary: said.summary.trim(),
+    description: said.description.trim(),
+    // Lower case, dashes for spaces, deduplicated: the validator wants tags in
+    // that shape and rejecting somebody's typing for a formatting rule they
+    // were never told is the wrong way round.
+    tags: [...new Set(said.tags.split(',')
+      .map((t) => t.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, ''))
+      .filter(Boolean))].slice(0, 8),
+    licence: said.licence || 'unstated',
+  };
+}
+
 /** A time as m:ss, for reading a script against the video. */
 function formatClock(seconds) {
   const whole = Math.max(0, Math.floor(Number(seconds) || 0));
@@ -2258,6 +2328,14 @@ async function publishPack(packaged, pack, updating = false) {
   const me = await ensureSignedIn();
   if (!me) return;
 
+  // How the pack will read in the directory.
+  //
+  // Asked rather than filled in, because the defaults produce listings nobody
+  // can tell apart: every pack summarised as "A voice pack", no tags, and a
+  // licence of "unstated". That is a directory people scroll past.
+  const details = await askListingDetails(pack);
+  if (details === null) return;
+
   // Asked before the upload, because it belongs to the listing rather than to
   // the file, and because a question after several minutes of uploading is a
   // question nobody reads properly.
@@ -2281,7 +2359,10 @@ async function publishPack(packaged, pack, updating = false) {
       id: packIdFor(pack.title),
       type: pack.type,
       title: pack.title,
-      summary: pack.subtitle || `A ${pack.type} pack.`,
+      summary: details.summary,
+      description: details.description,
+      tags: details.tags,
+      licence: details.licence,
       sha256: packaged.sha256,
       content: flags,
       // So the main process can check this pack was not somebody else's.
@@ -3833,6 +3914,81 @@ function askChecklist({ title, detail, options, mark = '?', buttons }) {
     el.confirmDialog.addEventListener('close', onClose);
     el.confirmDialog.showModal();
     go.focus();
+  });
+}
+
+/**
+ * The shared dialog with a short form in it.
+ *
+ * Resolves with the values keyed by field, or null if declined. Fields marked
+ * required block the primary button rather than complaining after the fact.
+ */
+function askForm({ title, detail, fields, buttons, mark = '?' }) {
+  return new Promise((resolve) => {
+    el.confirmMark.textContent = mark;
+    el.confirmMark.classList.remove('danger');
+    el.confirmTitle.textContent = title;
+    el.confirmDetail.textContent = detail || '';
+    el.confirmDetail.hidden = !detail;
+    el.confirmButtons.innerHTML = '';
+
+    const box = document.createElement('div');
+    box.className = 'askform';
+    box.innerHTML = fields.map((f) => {
+      const id = `askform-${f.key}`;
+      const input = f.options
+        ? `<select id="${id}" class="select">${f.options.map(([v, label]) =>
+          `<option value="${escapeHtml(v)}"${v === f.value ? ' selected' : ''}>${
+            escapeHtml(label)}</option>`).join('')}</select>`
+        : f.multiline
+          ? `<textarea id="${id}" class="input" rows="3" maxlength="${f.max || 4000}"
+               placeholder="${escapeHtml(f.placeholder || '')}">${escapeHtml(f.value || '')}</textarea>`
+          : `<input id="${id}" class="input" type="text" maxlength="${f.max || 200}"
+               placeholder="${escapeHtml(f.placeholder || '')}" value="${escapeHtml(f.value || '')}" />`;
+      return `<label class="askform-row"><span>${escapeHtml(f.label)}</span>${input}</label>`;
+    }).join('');
+    el.confirmDetail.after(box);
+
+    const read = () => Object.fromEntries(fields.map((f) =>
+      [f.key, box.querySelector(`#askform-${f.key}`).value]));
+
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      el.confirmDialog.removeEventListener('close', onClose);
+      box.remove();
+      el.confirmDialog.close();
+      resolve(value);
+    };
+    const onClose = () => finish(null);
+
+    const go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'btn btn-small btn-primary';
+    go.textContent = buttons[0];
+    go.addEventListener('click', () => finish(read()));
+
+    // Required fields disable the way forward rather than rejecting an attempt,
+    // which says what is wanted before somebody has committed to pressing it.
+    const check = () => {
+      const values = read();
+      go.disabled = fields.some((f) => f.required && !String(values[f.key]).trim());
+    };
+    box.addEventListener('input', check);
+
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'btn btn-small';
+    cancel.textContent = buttons[1] || 'Cancel';
+    cancel.addEventListener('click', () => finish(null));
+
+    el.confirmButtons.append(go, spacer(), cancel);
+    el.confirmDialog.addEventListener('close', onClose);
+    el.confirmDialog.showModal();
+    check();
+    const first = box.querySelector('input, textarea, select');
+    if (first) first.focus();
   });
 }
 

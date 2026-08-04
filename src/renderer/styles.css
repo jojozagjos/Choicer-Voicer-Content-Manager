@@ -3359,3 +3359,11 @@ input[type="range"]::-webkit-slider-thumb {
   gap: 12px;
   margin-top: 2px;
 }
+
+/* A short form inside the shared dialog. */
+.askform { display: grid; gap: 10px; margin-top: 12px; }
+.askform-row { display: grid; gap: 4px; }
+.askform-row > span { font-size: 12px; color: var(--muted); }
+.askform-row .input,
+.askform-row .select { width: 100%; }
+.askform-row textarea.input { resize: vertical; min-height: 58px; }

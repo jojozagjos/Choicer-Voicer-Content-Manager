@@ -507,6 +507,14 @@ export class PackEditor {
     const stage = el('div', 'editor-stage');
     const videoWrap = el('div', 'editor-video');
     const video = document.createElement('video');
+    // Set before the source, or it has no effect.
+    //
+    // Without it the canvas that grabs a frame is tainted: the video comes from
+    // cvmedia://, which is a different origin from the page, so the browser
+    // refuses to let its pixels be read back and `toDataURL` throws. That is
+    // what stopped clip pictures being captured. The protocol handler answers
+    // with the matching header, so asking for it is all that was missing.
+    video.crossOrigin = 'anonymous';
     video.src = pack.videoUrl;
     video.preload = 'auto';
     video.controls = false;
@@ -1512,8 +1520,18 @@ export class PackEditor {
 
     const ctx = canvas.getContext('2d');
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL('image/png');
+
+    try {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/png');
+    } catch (err) {
+      // A picture is a nicety; the clip is the point. This used to throw and
+      // take the rest of adding a clip with it, so the clip was written to disk
+      // and the list never redrew — which looked like the clip had not been
+      // added until something forced a rescan.
+      console.warn(`Could not grab a frame for this clip: ${err.message}`);
+      return null;
+    }
   }
 
   renderClipList(container) {

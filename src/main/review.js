@@ -191,6 +191,61 @@ async function reject(token, repo, issueNumber, reason) {
 }
 
 /**
+ * Closes a submission without listing it and without holding it against
+ * anybody, so the author can change something and publish again.
+ *
+ * Between yes and no on purpose. Refusing says the pack was unacceptable; a
+ * pack that is nearly right needs a different message, and using the harsher
+ * one for both teaches people that a refusal means nothing in particular.
+ */
+async function sendBack(token, repo, issueNumber, reason) {
+  if (!reason || !reason.trim()) {
+    throw new Error('A reason is needed, so the author knows what to change.');
+  }
+
+  const pull = await pullFor(token, repo, issueNumber);
+  if (pull) {
+    await github.request(`/repos/${repo}/pulls/${pull.number}`, {
+      token, method: 'PATCH', body: JSON.stringify({ state: 'closed' }),
+    });
+  }
+
+  await comment(token, repo, issueNumber,
+    `Not listed yet.\n\n${reason.trim()}\n\nChange that and publish it again — `
+    + 'nothing is held against this account.');
+  await close(token, repo, issueNumber);
+  return { ok: true };
+}
+
+/**
+ * Refuses a pack and blocks the account that sent it.
+ *
+ * The ban is applied the same way a moderator would type it, so it goes through
+ * the same permission check and leaves the same trail rather than being a
+ * second private route to the same state.
+ */
+async function refuseAndBan(token, repo, issueNumber, reason, author) {
+  if (!author) throw new Error('There is nobody named to ban on this submission.');
+
+  await reject(token, repo, issueNumber, reason);
+
+  const issue = await github.request(`/repos/${repo}/issues`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify({
+      title: `Ban: ${author}`,
+      body: `/ban ${author}`,
+      labels: ['moderation'],
+    }),
+  });
+  // A new issue's body does not fire issue_comment, so the command is repeated
+  // as a comment, which does.
+  await comment(token, repo, issue.number, `/ban ${author}`);
+
+  return { ok: true, banned: author, issue: issue.number };
+}
+
+/**
  * What has happened to this person's own submissions.
  *
  * Built from their issues rather than from anything the app remembers, so it is
@@ -319,6 +374,8 @@ module.exports = {
   mySubmissions,
   standingOf,
   setListed,
+  sendBack,
+  refuseAndBan,
   recordIn,
   queue,
   pullFor,

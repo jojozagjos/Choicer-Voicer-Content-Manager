@@ -120,8 +120,8 @@ contextBridge.exposeInMainWorld('api', {
     open: (record) => ipcRenderer.invoke('review:open', { record }),
     close: () => ipcRenderer.invoke('review:close'),
     setListed: (packId, listed) => ipcRenderer.invoke('review:setListed', { packId, listed }),
-    decide: (number, decision, reason) =>
-      ipcRenderer.invoke('review:decide', { number, decision, reason }),
+    decide: (number, decision, reason, author) =>
+      ipcRenderer.invoke('review:decide', { number, decision, reason, author }),
     onProgress: (fn) => on('review:progress', fn),
   },
 

@@ -1454,7 +1454,9 @@ function renderReview(item, record, pack) {
       </div>
       <div class="admin-decide-buttons">
         <button class="btn btn-primary" id="admin-approve">✓ List it</button>
+        <button class="btn" id="admin-setaside">↩ Send back</button>
         <button class="btn btn-danger" id="admin-reject">✕ Refuse it</button>
+        <button class="btn btn-danger" id="admin-ban">⨂ Refuse and ban</button>
       </div>
     </div>`;
 
@@ -1464,33 +1466,78 @@ function renderReview(item, record, pack) {
     .addEventListener('click', () => decideReview(item, 'approve'));
   el.adminMain.querySelector('#admin-reject')
     .addEventListener('click', () => decideReview(item, 'reject'));
+  el.adminMain.querySelector('#admin-setaside')
+    .addEventListener('click', () => decideReview(item, 'setaside'));
+  el.adminMain.querySelector('#admin-ban')
+    .addEventListener('click', () => decideReview(item, 'ban', record.author));
 }
 
 /** Approves or refuses, and says why. */
-async function decideReview(item, decision) {
+async function decideReview(item, decision, author) {
   const approving = decision === 'approve';
+  const banning = decision === 'ban';
+  const setting = decision === 'setaside';
+
+  const asked = {
+    approve: {
+      title: 'List this pack?',
+      detail: 'It will be listed in the Mods tab and the author told. Anything you write here '
+        + 'is added to that message.',
+      placeholder: 'Anything to add (optional)',
+      go: 'List it',
+    },
+    reject: {
+      title: 'Refuse this pack?',
+      detail: 'The author will be told it was not listed, along with what you write here. Say '
+        + 'what would need to change — being refused with no explanation is the worst version '
+        + 'of this for somebody who made something.',
+      placeholder: 'Why it was not listed',
+      go: 'Refuse it',
+    },
+    // Neither yes nor no. For a pack that is nearly right, where the author only
+    // needs to change something and try again — refusing it says the pack was
+    // unacceptable, which is a different and harsher message.
+    setaside: {
+      title: 'Send this back?',
+      detail: 'The submission is closed without listing the pack, and the author is told what '
+        + 'to change so they can publish it again.\n\n'
+        + 'Nothing is held against them — this is for a pack that is nearly right.',
+      placeholder: 'What to change before trying again',
+      go: 'Send it back',
+    },
+    ban: {
+      title: `Refuse this and ban ${author || 'this account'}?`,
+      detail: 'The pack is refused and the account is blocked from publishing anything else. '
+        + 'Anything already listed by them is hidden.\n\n'
+        + 'For packs that should never have been sent. It can be undone later with '
+        + '/unban, but the author is not told anything beyond the refusal.',
+      placeholder: 'Why (the author sees this)',
+      go: 'Refuse and ban',
+    },
+  }[decision];
 
   const reason = await askText({
-    title: approving ? 'List this pack?' : 'Refuse this pack?',
-    detail: approving
-      ? 'It will be listed in the Mods tab and the author told. Anything you write here is '
-        + 'added to that message.'
-      : 'The author will be told it was not listed, along with what you write here. Say what '
-        + 'would need to change — being refused with no explanation is the worst version of '
-        + 'this for somebody who made something.',
-    placeholder: approving ? 'Anything to add (optional)' : 'Why it was not listed',
-    buttons: [approving ? 'List it' : 'Refuse it', 'Cancel'],
+    ...asked,
+    buttons: [asked.go, 'Cancel'],
+    // Only approving can go through without a word. Every other outcome leaves
+    // somebody wondering what happened to their pack.
     required: !approving,
+    mark: banning ? '⨂' : setting ? '↩' : approving ? '✓' : '✕',
   });
   if (reason === null) return;
 
-  const said = await window.api.review.decide(item.number, decision, reason);
+  const said = await window.api.review.decide(item.number, decision, reason, author);
   if (!said.ok) {
     toast(`Could not do that: ${said.error}`, 'error', 10000);
     return;
   }
 
-  toast(approving ? 'Listed.' : 'Refused, and the author told.', 'ok');
+  toast({
+    approve: 'Listed.',
+    reject: 'Refused, and the author told.',
+    setaside: 'Sent back. They can publish it again once it is changed.',
+    ban: `Refused, and ${author || 'that account'} is blocked from publishing.`,
+  }[decision], 'ok');
   state.adminOpen = null;
   el.adminMain.innerHTML = '';
 

@@ -133,10 +133,11 @@ anything a watch cannot see.
 
 ## Where your files live
 
+Will be adding Linux support eventally.
+
 | OS | Path |
 | --- | --- |
 | Windows | `%APPDATA%\YeahMaybe\ChoicerVoicer\game` |
-| macOS | `~/Library/Application Support/YeahMaybe/ChoicerVoicer/game` |
 | Linux | `~/.local/share/YeahMaybe/ChoicerVoicer/game` |
 
 If yours is somewhere else, a portable install or a copied save folder, set it in **Settings**.

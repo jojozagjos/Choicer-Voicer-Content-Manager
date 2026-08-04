@@ -3253,7 +3253,12 @@ input[type="range"]::-webkit-slider-thumb {
 .admin-tabs button {
   flex: 1;
   min-width: 0;
-  padding: 4px 4px;
+  /* Smaller and tighter than a normal segmented control, because four labels
+     have to fit a 260px rail. Ellipsis is the fallback, not the plan — a tab
+     reading "Publi…" is no use for choosing between them. */
+  font-size: 10px;
+  letter-spacing: -0.01em;
+  padding: 4px 2px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

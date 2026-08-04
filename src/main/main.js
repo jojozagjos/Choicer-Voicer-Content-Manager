@@ -3068,13 +3068,17 @@ function registerReviewIpc() {
     }
   });
 
-  ipcMain.handle('review:decide', async (_e, { number, decision, reason }) => {
+  ipcMain.handle('review:decide', async (_e, { number, decision, reason, author }) => {
     const token = tokenOrNull();
     if (!token) return { ok: false, error: 'Not signed in to GitHub.' };
     try {
       const done = decision === 'approve'
         ? await review.approve(token, DIRECTORY_REPO, number, reason)
-        : await review.reject(token, DIRECTORY_REPO, number, reason);
+        : decision === 'setaside'
+          ? await review.sendBack(token, DIRECTORY_REPO, number, reason)
+          : decision === 'ban'
+            ? await review.refuseAndBan(token, DIRECTORY_REPO, number, reason, author)
+            : await review.reject(token, DIRECTORY_REPO, number, reason);
       // The pack has been judged either way; nothing should linger on disk.
       clearReviewSandbox();
       return done;

@@ -132,9 +132,12 @@ async function whyNoChange(token, repo, issueNumber) {
       + 'Re-opening it on GitHub, or asking for the pack to be submitted again, will '
       + 'produce a new one.';
   }
-  return 'No change was ever opened for this submission, which means the directory\'s '
-    + 'submission workflow did not finish. Its most recent run on GitHub will say why. '
-    + 'the usual cause is that it could not fetch the validator from the app repository.';
+  // Deliberately no guess at why. An earlier version named one likely cause,
+  // and when the real failure turned out to be a different step that guess
+  // sent whoever read it looking in the wrong place.
+  return 'No change was ever opened for this submission, so there is nothing to merge. '
+    + 'The submission workflow did not get that far; its most recent run on GitHub says '
+    + 'which step stopped it.';
 }
 
 /**

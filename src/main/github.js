@@ -622,7 +622,7 @@ async function submitRecord(token, record) {
   }
 
   const body = [
-    `**${record.title}** — a ${record.type} pack by ${record.author}.`,
+    `**${record.title}**, a ${record.type} pack by ${record.author}.`,
     '',
     record.summary || '',
     '',

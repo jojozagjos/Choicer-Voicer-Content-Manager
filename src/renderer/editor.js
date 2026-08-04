@@ -2661,7 +2661,7 @@ export class PackEditor {
       const box = card.querySelector('.slot-preview');
       box.classList.add('clickable');
       box.title = 'Click to see it full size';
-      box.addEventListener('click', () => this.openViewer(url, `${slot.label} — ${file}`));
+      box.addEventListener('click', () => this.openViewer(url, `${slot.label}: ${file}`));
     }
 
     const playBtn = card.querySelector('[data-act="play"]');

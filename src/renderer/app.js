@@ -1199,7 +1199,7 @@ function showPublisher(who) {
   refreshAdminPublishers();
 
   const when = (iso) => {
-    try { return new Date(iso).toLocaleDateString(); } catch { return '—'; }
+    try { return new Date(iso).toLocaleDateString(); } catch { return 'unknown'; }
   };
 
   el.adminMain.innerHTML = `
@@ -1433,11 +1433,16 @@ function renderReview(item, record, pack) {
           <audio src="${a.url}" controls preload="none"></audio></div>`).join('')}
       </div>` : ''}
 
-    ${pack.captions.length ? `<h4 class="admin-h">What is said</h4>
-      <div class="admin-captions">
-        ${pack.captions.map((c) => `<details><summary>${escapeHtml(c.name)}</summary>
-          <pre>${escapeHtml(c.text)}</pre></details>`).join('')}
-      </div>` : ''}
+    ${(pack.lines || []).length ? `<h4 class="admin-h">
+        Everything said in this pack (${pack.lines.length} lines)</h4>
+      <div class="admin-script">
+        ${pack.lines.map((l) => `<div class="script-line">
+          <span class="script-at">${formatClock(l.time)}</span>
+          <span class="script-who">${escapeHtml(l.character || 'nobody set')}</span>
+          <span class="script-said${l.caption ? '' : ' is-empty'}">${
+            l.caption ? escapeHtml(l.caption) : 'nothing written'}</span>
+        </div>`).join('')}
+      </div>` : '<p class="muted small">This pack has no spoken lines.</p>'}
 
     <h4 class="admin-h">Everything in it</h4>
     <div class="admin-files">
@@ -1489,7 +1494,7 @@ async function decideReview(item, decision, author) {
     reject: {
       title: 'Refuse this pack?',
       detail: 'The author will be told it was not listed, along with what you write here. Say '
-        + 'what would need to change — being refused with no explanation is the worst version '
+        + 'what would need to change. Being refused with no explanation is the worst version '
         + 'of this for somebody who made something.',
       placeholder: 'Why it was not listed',
       go: 'Refuse it',
@@ -1501,7 +1506,7 @@ async function decideReview(item, decision, author) {
       title: 'Send this back?',
       detail: 'The submission is closed without listing the pack, and the author is told what '
         + 'to change so they can publish it again.\n\n'
-        + 'Nothing is held against them — this is for a pack that is nearly right.',
+        + 'Nothing is held against them. This is for a pack that is nearly right.',
       placeholder: 'What to change before trying again',
       go: 'Send it back',
     },
@@ -1621,7 +1626,7 @@ async function renderInbox() {
   const note = standing.banned
     ? '<p class="admin-warn">This account cannot publish to the directory.</p>'
     : standing.trusted
-      ? '<p class="inbox-standing is-ok">Trusted — your packs are listed without waiting.</p>'
+      ? '<p class="inbox-standing is-ok">Trusted. Your packs are listed without waiting.</p>'
       : '<p class="inbox-standing">Your first pack is looked at by a person. After that they '
         + 'are listed straight away.</p>';
 
@@ -1634,17 +1639,39 @@ async function renderInbox() {
     return;
   }
 
+  // What was already known last time this was opened. Anything whose outcome
+  // has moved since then is marked, so a decision made days ago is not just
+  // another row in a list that all looks the same.
+  const seen = JSON.parse(localStorage.getItem('inboxSeen') || '{}');
+  const nowSeen = {};
+  let changed = 0;
+
   el.modsGrid.innerHTML = note + said.items.map((item) => {
     const shown = INBOX_STATES[item.outcome] || INBOX_STATES.closed;
-    return `<article class="inbox-item">
+    nowSeen[item.number] = item.outcome;
+    const isNew = seen[item.number] !== undefined && seen[item.number] !== item.outcome;
+    if (isNew) changed++;
+
+    return `<article class="inbox-item${isNew ? ' is-changed' : ''}">
       <div class="inbox-head">
-        <b>${escapeHtml(item.title)}</b>
+        <b>${isNew ? '<i class="inbox-dot" title="This changed since you last looked"></i>' : ''}${
+          escapeHtml(item.title)}</b>
         <span class="inbox-state is-${shown.tone}">${shown.label}</span>
       </div>
       ${item.reason ? `<p class="inbox-reason">${escapeHtml(item.reason)}</p>` : ''}
-      <button class="btn btn-small" data-url="${escapeHtml(item.url)}">Open on GitHub</button>
+      <div class="inbox-foot">
+        <span class="muted small">Sent ${formatWhen(item.openedAt)}</span>
+        <button class="btn btn-small" data-url="${escapeHtml(item.url)}">Open on GitHub</button>
+      </div>
     </article>`;
   }).join('');
+
+  // Written after drawing, so the marks survive until they have been seen.
+  localStorage.setItem('inboxSeen', JSON.stringify(nowSeen));
+  if (changed) {
+    el.modsSubtitle.textContent
+      = `Signed in as ${said.login} · ${changed} update${changed === 1 ? '' : 's'}`;
+  }
 
   for (const button of el.modsGrid.querySelectorAll('[data-url]')) {
     button.addEventListener('click', () => window.api.shell.openExternal(button.dataset.url));
@@ -1775,6 +1802,30 @@ function renderMods() {
   for (const pack of packs) {
     el.modsGrid.append(modCard(pack));
   }
+}
+
+/**
+ * How long ago something happened, in words.
+ *
+ * A date on its own makes the reader do arithmetic to answer the only question
+ * they actually have, which is whether this is recent.
+ */
+function formatWhen(iso) {
+  const then = Date.parse(iso);
+  if (!then) return 'recently';
+
+  const days = Math.floor((Date.now() - then) / 86400000);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 30) return `${days} days ago`;
+  if (days < 60) return 'last month';
+  return `${Math.floor(days / 30)} months ago`;
+}
+
+/** A time as m:ss, for reading a script against the video. */
+function formatClock(seconds) {
+  const whole = Math.max(0, Math.floor(Number(seconds) || 0));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
 
 /**
@@ -1942,7 +1993,7 @@ async function offerToShare(result, pack, saved, canPublish, already) {
       + 'Send it to anyone. They open the Mods tab and pick it.'
       + (already
         ? '\n\nThis pack is already in the directory. Updating it replaces what is listed '
-          + 'with this version — the listing keeps its place and its download count.'
+          + 'with this version. The listing keeps its place and its download count.'
         : canPublish
           ? '\n\nOr publish it, which uploads it to your own GitHub account and offers it to '
             + 'the pack directory so anyone can find it.'
@@ -2091,7 +2142,7 @@ async function unlinkGithub() {
   const sure = await askConfirm({
     title: 'Unlink GitHub?',
     detail: 'This app will forget the sign-in. Packs you have already published stay exactly '
-      + 'where they are on your account — nothing is taken down.\n\n'
+      + 'where they are on your account. Nothing is taken down.\n\n'
       + 'You will be asked to sign in again the next time you publish.',
     buttons: ['Unlink', 'Cancel'],
     mark: '🔑',
@@ -2262,17 +2313,12 @@ async function publishPack(packaged, pack, updating = false) {
       : `"${pack.title}" is on your GitHub account and anyone with the address can install `
         + 'it.\n\nThere is no pack directory set up yet, so it has not been listed anywhere. '
         + 'The address works regardless.',
-    buttons: ['Copy the address', result.submitted ? 'See the submission' : 'See the release', 'Done'],
+    buttons: [result.submitted ? 'See the submission' : 'See the release', 'Done'],
     mark: '✓',
-    cancelIndex: 2,
+    cancelIndex: 1,
   });
 
-  if (where === 0) {
-    await navigator.clipboard.writeText(result.downloadUrl).catch(() => {});
-    toast('Address copied.', 'ok');
-  } else if (where === 1) {
-    window.api.shell.openExternal(result.issueUrl || result.releaseUrl);
-  }
+  if (where === 0) window.api.shell.openExternal(result.issueUrl || result.releaseUrl);
 }
 
 function renderContentTypes() {
@@ -3087,7 +3133,7 @@ async function checkForUpdate() {
   }
 
   state.update = result;
-  el.aboutUpdate.innerHTML = ` — <b>${escapeHtml(result.latest)} available</b>`;
+  el.aboutUpdate.innerHTML = ` <b>${escapeHtml(result.latest)} available</b>`;
 
   // The alert bar can be dismissed, and once it is there was nothing left to
   // say an update existed. The version badge is always on screen, so it

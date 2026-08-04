@@ -2899,16 +2899,63 @@ function describeForReview(dir) {
   const images = files.filter((f) => ['.png', '.jpg', '.jpeg', '.webp'].includes(ext(f)));
   const audio = files.filter((f) => ['.wav', '.ogg', '.mp3', '.opus'].includes(ext(f)));
 
-  // Captions live beside their audio as .txt or .ini, and are the part most
-  // worth reading before listing anything.
-  const captions = [];
-  for (const f of files) {
-    if (!['.txt', '.ini'].includes(ext(f))) continue;
-    try {
-      const text = fs.readFileSync(f.full, 'utf8');
-      if (text.length < 8000) captions.push({ name: f.rel, text });
-    } catch { /* unreadable is not fatal here */ }
+  // Everything said in the pack, in the order it is said.
+  //
+  // Read as a script rather than dumped as config files. What a reviewer needs
+  // to judge is the words and who says them, and that was buried in `.ini`
+  // syntax across dozens of files — which meant nobody read it, which defeats
+  // the point of reviewing at all.
+  // Keyed off the audio, not the metadata. A line is a sound somebody recorded;
+  // what describes it varies. Some packs carry a `.ini` per clip, others only a
+  // `.txt` with the words in it, and one real pack has thirty captions and a
+  // single `.ini` for the pack itself — building this from `.ini` files showed
+  // one line out of thirty.
+  const byBase = new Map();
+  const noExt = (rel) => rel.slice(0, rel.length - path.extname(rel).length);
+
+  for (const f of audio) {
+    byBase.set(noExt(f.rel), { base: path.basename(noExt(f.rel)), time: 0, character: '', caption: '' });
   }
+
+  /** Pulls whatever a parsed clip config has to say into a line. */
+  const takeFrom = (line, data) => {
+    if (!data) return;
+    const times = Array.isArray(data.dub_timestamps) ? data.dub_timestamps : [];
+    if (times.length) {
+      line.time = typeof times[0] === 'number' ? times[0] : parseFloat(times[0]) || 0;
+    }
+    if (Array.isArray(data.dub_characters)) {
+      line.character = String(data.dub_characters[0] || '').trim();
+    }
+    if (typeof data.caption === 'string' && data.caption.trim()) {
+      // Captions are written quoted in the config, and the quotes are syntax
+      // rather than something anybody said.
+      line.caption = data.caption.trim().replace(/^"(.*)"$/s, '$1').trim();
+    }
+  };
+
+  for (const f of files) {
+    const line = byBase.get(noExt(f.rel));
+    if (!line) continue;
+    if (!['.ini', '.txt'].includes(ext(f))) continue;
+
+    // The extension does not say which of the two forms a file is in. Some
+    // packs keep clip settings in `.ini`, others in a `.txt` written in the
+    // same syntax, and a `.txt` can equally just be the words. Deciding by
+    // what is inside covers all three; deciding by extension covered one.
+    let raw = '';
+    try { raw = fs.readFileSync(f.full, 'utf8'); } catch { continue; }
+
+    const looksLikeConfig = /^\s*\[[^\]]+\]/m.test(raw) || /^\s*\w+\s*=/m.test(raw);
+    if (looksLikeConfig) {
+      try { takeFrom(line, gamedata.parseIni(f.full)); } catch { /* unreadable */ }
+    } else if (raw.trim()) {
+      line.caption = raw.trim();
+    }
+  }
+
+  const lines = [...byBase.values()].sort((a, b) => a.time - b.time
+    || String(a.base).localeCompare(String(b.base), undefined, { numeric: true }));
 
   return {
     files: files.map((f) => ({ name: f.rel, bytes: fs.statSync(f.full).size })),
@@ -2916,7 +2963,7 @@ function describeForReview(dir) {
     video: video ? { name: video.rel, url: url(video) } : null,
     images: images.map((f) => ({ name: f.rel, url: url(f) })),
     audio: audio.map((f) => ({ name: f.rel, url: url(f) })),
-    captions,
+    lines,
   };
 }
 
@@ -3038,7 +3085,7 @@ function registerReviewIpc() {
           files: described.files,
           type: actualType,
           claimedType: checked.record.type,
-          captions: described.captions,
+          captions: described.lines.map((l) => ({ name: l.base, text: l.caption })),
         }),
       };
     } catch (err) {

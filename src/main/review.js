@@ -124,7 +124,7 @@ async function pullFor(token, repo, issueNumber, { state = 'open' } = {}) {
 async function whyNoChange(token, repo, issueNumber) {
   const any = await pullFor(token, repo, issueNumber, { state: 'all' });
   if (any && any.merged_at) {
-    return 'This pack has already been listed — its change was merged '
+    return 'This pack has already been listed. Its change was merged '
       + `on ${new Date(any.merged_at).toLocaleDateString()}.`;
   }
   if (any) {
@@ -133,7 +133,7 @@ async function whyNoChange(token, repo, issueNumber) {
       + 'produce a new one.';
   }
   return 'No change was ever opened for this submission, which means the directory\'s '
-    + 'submission workflow did not finish. Its most recent run on GitHub will say why — '
+    + 'submission workflow did not finish. Its most recent run on GitHub will say why. '
     + 'the usual cause is that it could not fetch the validator from the app repository.';
 }
 
@@ -211,7 +211,7 @@ async function sendBack(token, repo, issueNumber, reason) {
   }
 
   await comment(token, repo, issueNumber,
-    `Not listed yet.\n\n${reason.trim()}\n\nChange that and publish it again — `
+    `Not listed yet.\n\n${reason.trim()}\n\nChange that and publish it again. `
     + 'nothing is held against this account.');
   await close(token, repo, issueNumber);
   return { ok: true };

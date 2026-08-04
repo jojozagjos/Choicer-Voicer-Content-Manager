@@ -3297,3 +3297,65 @@ input[type="range"]::-webkit-slider-thumb {
   color: var(--muted);
 }
 .mod-flag.is-adult { border-color: var(--danger, #e5534b); color: var(--danger, #e5534b); }
+
+/* The pack's script, laid out so it can be read straight down.
+   Fixed columns for the time and speaker, so the words line up and the eye
+   only has to travel down one edge. */
+.admin-script {
+  display: grid;
+  gap: 1px;
+  max-height: 420px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.script-line {
+  display: grid;
+  grid-template-columns: 46px 110px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.script-at { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11.5px; }
+.script-who {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Wrapped rather than cut: the words are the thing being judged. */
+.script-said { white-space: pre-wrap; word-break: break-word; }
+.script-said.is-empty { color: var(--muted); font-style: italic; }
+
+/* Your submissions: a card per pack, with the outcome carried by a coloured
+   edge as well as the words, so the state of the list reads at a glance. */
+.inbox-item {
+  border-left-width: 3px;
+  transition: border-color 0.15s ease;
+}
+.inbox-item:has(.inbox-state.is-ok) { border-left-color: var(--ok); }
+.inbox-item:has(.inbox-state.is-bad) { border-left-color: var(--danger, #e5534b); }
+
+/* Something decided since this was last opened. Marked rather than reordered:
+   moving a row under somebody as they read it is worse than a quiet dot. */
+.inbox-item.is-changed { border-color: var(--accent-dim); }
+.inbox-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+}
+
+.inbox-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 2px;
+}

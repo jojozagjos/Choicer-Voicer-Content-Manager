@@ -3867,6 +3867,44 @@ function registerIpc() {
   });
 
   /** Stores a frame grabbed from the video as a clip's picture. */
+  /**
+   * Cuts one frame out of a video and saves it as a clip's picture.
+   *
+   * Done here rather than by drawing the video onto a canvas in the renderer.
+   * The video is served over cvmedia://, which is a different origin from the
+   * page, so the canvas is tainted and its pixels cannot be read back. The
+   * obvious fix, asking the video for cross-origin access, is worse than the
+   * problem: Chromium refuses cross-origin requests to custom schemes outright
+   * and the video stops loading at all.
+   *
+   * ffmpeg has the file on disk and no such rules, and it is already sizing
+   * character pictures elsewhere, so the result matches what the rest of the
+   * app produces.
+   */
+  handleWrite('content:grabFrame', (p) => p.destDir, async (_e, { videoPath, time, destDir, base }) => {
+    if (!isAllowed(videoPath) || !isAllowed(destDir)) {
+      return { ok: false, error: 'That file is outside the game folder' };
+    }
+    const target = path.join(destDir, `${base}.png`);
+    try {
+      await ffmpeg.runFfmpeg([
+        // Seeking before the input is the fast form, and frame-accurate enough
+        // for a still somebody is choosing by eye.
+        '-ss', String(Math.max(0, Number(time) || 0)),
+        '-i', videoPath,
+        '-frames:v', '1',
+        '-vf', 'scale=500:1000:force_original_aspect_ratio=decrease',
+        '-f', 'image2', '-c:v', 'png',
+        '-y', target,
+      ]);
+      if (!fs.existsSync(target)) throw new Error('ffmpeg produced nothing');
+      bumpMedia(destDir);
+      return { ok: true, file: target, url: mediaUrl(target) };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
   handleWrite('content:saveImage', (p) => p.destDir, (_e, { destDir, base, dataUrl }) => {
     if (!isAllowed(destDir)) return { ok: false, error: 'That folder is outside the game folder' };
     try {

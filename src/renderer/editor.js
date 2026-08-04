@@ -36,7 +36,7 @@ const CHARACTER_PACKS = new Set(['player', 'host', 'judges']);
 // cutout the game stands in when a pack has none. Kept the same across clip
 // pictures, pack icons and the standing art so packs look consistent beside
 // each other.
-const PICTURE_BOX = { width: 500, height: 1000 };
+// Clip pictures are cut to this by ffmpeg in the main process.
 
 const TYPE_GLYPH = {
   voice: '🎙️', player: '🧍', host: '🎤', judges: '⭐',
@@ -507,14 +507,11 @@ export class PackEditor {
     const stage = el('div', 'editor-stage');
     const videoWrap = el('div', 'editor-video');
     const video = document.createElement('video');
-    // Set before the source, or it has no effect.
-    //
-    // Without it the canvas that grabs a frame is tainted: the video comes from
-    // cvmedia://, which is a different origin from the page, so the browser
-    // refuses to let its pixels be read back and `toDataURL` throws. That is
-    // what stopped clip pictures being captured. The protocol handler answers
-    // with the matching header, so asking for it is all that was missing.
-    video.crossOrigin = 'anonymous';
+    // Deliberately not `crossOrigin`. Asking for it looks like the fix for the
+    // tainted canvas that stops frames being grabbed, and it is not: Chromium
+    // refuses cross-origin requests to any scheme outside its short built-in
+    // list whatever headers are sent, so setting it blocks the video outright.
+    // Frames are cut by ffmpeg in the main process instead, where the file is.
     video.src = pack.videoUrl;
     video.preload = 'auto';
     video.controls = false;
@@ -885,10 +882,15 @@ export class PackEditor {
     });
 
     panel.querySelector('[data-act="grab-icon"]').addEventListener('click', async () => {
-      const frame = this.video && this.captureFrame(this.video);
-      if (!frame) { this.toast('Nothing to grab yet. Let the video load first.', 'warn'); return; }
-      const result = await this.api.content.saveImage({
-        destDir: this.pack.dir, base: '_icon', dataUrl: frame,
+      if (!this.video || !this.video.videoWidth) {
+        this.toast('Nothing to grab yet. Let the video load first.', 'warn');
+        return;
+      }
+      const result = await this.api.content.grabFrame({
+        videoPath: this.pack.videoPath,
+        time: this.video.currentTime,
+        destDir: this.pack.dir,
+        base: '_icon',
       });
       if (!result.ok) { this.toast(`Could not save it: ${result.error}`, 'error', 7000); return; }
       this.toast('Icon set from the video.', 'ok');
@@ -1472,14 +1474,11 @@ export class PackEditor {
     }
 
     // A frame from the middle of the range makes a sensible default picture.
-    const wasAt = video.currentTime;
-    video.currentTime = start + duration / 2;
-    await new Promise((resolve) => video.addEventListener('seeked', resolve, { once: true }));
-    const frame = this.captureFrame(video);
-    if (frame) {
-      await this.api.content.saveImage({ destDir: pack.dir, base: result.base, dataUrl: frame });
-    }
-    video.currentTime = wasAt;
+    //
+    // Cut by ffmpeg from the file rather than grabbed off the video element:
+    // the element's pixels cannot be read back, and this does not disturb
+    // playback to do it.
+    await this.grabPicture(pack, result.base, start + duration / 2);
 
     pack.clipCount = index;
     this._lastAdded = result.base;
@@ -1510,28 +1509,28 @@ export class PackEditor {
    * video wrote a 1920 pixel wide PNG for a picture the game draws small. Fitted
    * into the same box as every other character picture, and never enlarged.
    */
-  captureFrame(video, box = PICTURE_BOX) {
-    if (!video.videoWidth) return null;
+  /**
+   * Saves a still from the video as a clip's picture.
+   *
+   * A picture is a nicety and the clip is the point, so a failure here is said
+   * once and does not stop anything. Losing that distinction is what made a
+   * failed frame grab look like the clip had not been added at all.
+   */
+  async grabPicture(pack, base, time) {
+    if (!pack.videoPath) return false;
+    const done = await this.api.content.grabFrame({
+      videoPath: pack.videoPath,
+      time,
+      destDir: pack.dir,
+      base,
+    }).catch((err) => ({ ok: false, error: err.message }));
 
-    const scale = Math.min(1, box.width / video.videoWidth, box.height / video.videoHeight);
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
-    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
-
-    const ctx = canvas.getContext('2d');
-    ctx.imageSmoothingQuality = 'high';
-
-    try {
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      return canvas.toDataURL('image/png');
-    } catch (err) {
-      // A picture is a nicety; the clip is the point. This used to throw and
-      // take the rest of adding a clip with it, so the clip was written to disk
-      // and the list never redrew — which looked like the clip had not been
-      // added until something forced a rescan.
-      console.warn(`Could not grab a frame for this clip: ${err.message}`);
-      return null;
+    if (!done || !done.ok) {
+      this.toast(`Added, but its picture could not be made: ${done ? done.error : 'no answer'}`,
+        'warn', 6000);
+      return false;
     }
+    return true;
   }
 
   renderClipList(container) {
@@ -1732,9 +1731,11 @@ export class PackEditor {
       this.toast('Let the video load first.', 'warn');
       return;
     }
-    const frame = this.captureFrame(this.video);
-    const result = await this.api.content.saveImage({
-      destDir: this.pack.dir, base: clip.base, dataUrl: frame,
+    const result = await this.api.content.grabFrame({
+      videoPath: this.pack.videoPath,
+      time: this.video.currentTime,
+      destDir: this.pack.dir,
+      base: clip.base,
     });
     if (!result.ok) { this.toast(`Could not save it: ${result.error}`, 'error', 7000); return; }
 

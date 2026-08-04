@@ -74,6 +74,9 @@ contextBridge.exposeInMainWorld('api', {
     deleteSession: (payload) => ipcRenderer.invoke('content:deleteSession', payload),
     restoreClip: (payload) => ipcRenderer.invoke('content:restoreClip', payload),
     saveImage: (payload) => ipcRenderer.invoke('content:saveImage', payload),
+    // Frames are cut by ffmpeg, not by a canvas: the video is a different
+    // origin from the page and a canvas holding it cannot be read back.
+    grabFrame: (payload) => ipcRenderer.invoke('content:grabFrame', payload),
     writePackInfo: (payload) => ipcRenderer.invoke('content:writePackInfo', payload),
     writeIniSections: (payload) => ipcRenderer.invoke('content:writeIniSections', payload),
     // Both are per pack and only fetched when one is opened, because doing

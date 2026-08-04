@@ -70,14 +70,23 @@ export class DubPlayer {
     this.videoSource.connect(this.originalGain);
   }
 
+  /**
+   * Reads and decodes one audio file, remembering it.
+   *
+   * The bytes come over IPC rather than from `fetch`. Chromium refuses a
+   * cross-origin fetch to any scheme outside http, https and a short built-in
+   * list, whatever headers the handler sets — so reading our own cvmedia://
+   * addresses this way is not a preference, it is the only way that works.
+   */
   async _decode(url, signal) {
     if (!url) return null;
     if (this.buffers.has(url)) return this.buffers.get(url);
 
-    const res = await fetch(url, { signal });
-    if (!res.ok) throw new Error(`Could not read audio (${res.status})`);
-    const bytes = await res.arrayBuffer();
-    const buffer = await this.ctx.decodeAudioData(bytes);
+    const got = await window.api.media.bytes(url);
+    if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
+    if (!got || !got.ok) throw new Error(`Could not read audio: ${got ? got.error : 'no answer'}`);
+
+    const buffer = await this.ctx.decodeAudioData(got.bytes);
     this.buffers.set(url, buffer);
     return buffer;
   }

@@ -416,7 +416,10 @@ function readPack(packsRoot, recordingsRoot, packName) {
     });
   }
 
-  lines.sort((a, b) => a.time - b.time || a.base.localeCompare(b.base));
+  // Numerically, or `10_clip` sorts above `2_clip` and a long pack reads as
+  // shuffled from the tenth line onwards.
+  lines.sort((a, b) => a.time - b.time
+    || String(a.base).localeCompare(String(b.base), undefined, { numeric: true }));
 
   return {
     id: packName,

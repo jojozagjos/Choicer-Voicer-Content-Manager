@@ -318,9 +318,14 @@ function writeClipMeta(packDir, base, meta = {}) {
     caption: meta.caption || '',
     image: meta.image || '',
     dub_timestamps: Array.isArray(meta.timestamps) ? meta.timestamps : [Number(meta.timestamp) || 0],
-    dub_characters: Array.isArray(meta.characters)
+    // Trimmed on the way out as well as in, so a name typed with a stray space
+    // is not written back and does not become a second character next time the
+    // pack is read.
+    dub_characters: (Array.isArray(meta.characters)
       ? meta.characters
-      : (meta.character ? [meta.character] : []),
+      : (meta.character ? [meta.character] : []))
+      .map((name) => String(name).trim())
+      .filter(Boolean),
   };
   const file = path.join(packDir, `${base}.ini`);
   writeIni(file, data);

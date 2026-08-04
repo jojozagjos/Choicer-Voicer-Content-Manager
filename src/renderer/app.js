@@ -1,7 +1,20 @@
 import { DubPlayer } from './player.js';
 import { PackEditor } from './editor.js';
 
-const $ = (sel) => document.querySelector(sel);
+/**
+ * Finds an element, and says so loudly when it is not there.
+ *
+ * Returning null quietly is how a renamed id in the markup turns into
+ * "Cannot read properties of null" thrown from a line that has nothing to do
+ * with the mistake — usually an addEventListener several hundred lines later,
+ * which takes the whole start-up down with it and names none of the guilty
+ * parties. Failing here instead names the selector.
+ */
+const $ = (sel) => {
+  const found = document.querySelector(sel);
+  if (!found) throw new Error(`The interface is missing ${sel}`);
+  return found;
+};
 
 const el = {
   splash: $('#splash'),
@@ -172,6 +185,26 @@ const el = {
   sidebar: document.querySelector('.sidebar'),
   stage: document.querySelector('.stage'),
   contentView: $('#content-view'),
+  modsView: $('#mods-view'),
+  modsTypes: $('#mods-types'),
+  modsTitle: $('#mods-title'),
+  modsSubtitle: $('#mods-subtitle'),
+  modsGrid: $('#mods-grid'),
+  modsSearch: $('#mods-search'),
+  btnModsRefresh: $('#btn-mods-refresh'),
+  btnModsBrowse: $('#btn-mods-browse'),
+  btnModsInbox: $('#btn-mods-inbox'),
+  tabAdmin: $('#tab-admin'),
+  adminView: $('#admin-view'),
+  adminList: $('#admin-list'),
+  adminMain: $('#admin-main'),
+  btnAdminRefresh: $('#btn-admin-refresh'),
+  adminTabs: document.querySelectorAll('[data-admin]'),
+  adminSearch: $('#admin-search'),
+  githubStatus: $('#github-status'),
+  githubNote: $('#github-note'),
+  btnGithubLink: $('#btn-github-link'),
+  btnGithubUnlink: $('#btn-github-unlink'),
   contentTypes: $('#content-types'),
   contentTitle: $('#content-title'),
   contentSubtitle: $('#content-subtitle'),
@@ -219,6 +252,20 @@ const state = {
   diskChangeTimer: null,
   // What is typed in the Content search box.
   contentSearch: '',
+  // The directory, once fetched. Held for the session so revisiting the tab
+  // does not re-fetch it; Refresh is what forces that.
+  mods: null,
+  modsType: 'all',
+  modsShow: 'browse',
+  // Whether GitHub says this account can moderate. Decides what is drawn, never
+  // what is allowed — GitHub refuses the actions themselves.
+  moderator: false,
+  adminItems: [],
+  adminShow: 'submissions',
+  // Issues decided in this session, so a slow refetch cannot resurrect one.
+  adminDecided: new Set(),
+  publishers: [],
+  adminOpen: null,
 };
 
 const player = new DubPlayer(el.video);
@@ -699,6 +746,7 @@ const TAGLINES = {
   home: '',
   export: 'Preview a dub you recorded, then export it as a video.',
   content: 'Everything installed in your game folder, and anything wrong with it.',
+  mods: 'Packs other people have shared, ready to install.',
 };
 
 const TYPE_ICONS = {
@@ -729,6 +777,15 @@ async function switchTab(tab) {
   el.sidebar.hidden = tab !== 'export';
   el.stage.hidden = tab !== 'export';
   el.contentView.hidden = tab !== 'content';
+  el.modsView.hidden = tab !== 'mods';
+  el.adminView.hidden = tab !== 'admin';
+
+  // Leaving admin ends any review, so a pack cannot sit unpacked on disk while
+  // you are somewhere else in the app.
+  if (tab !== 'admin' && state.adminOpen !== null) {
+    state.adminOpen = null;
+    window.api.review.close();
+  }
 
   // The dub-recording nudge can already be up from an earlier rescan on
   // Export, with nothing new happening here to clear it. Content is not the
@@ -741,6 +798,13 @@ async function switchTab(tab) {
 
   if (tab === 'content') await refreshContent();
   if (tab === 'home') await renderHome();
+  if (tab === 'mods') {
+    // The library is what says whether a listed pack is already installed, so
+    // it has to be known before the grid is drawn.
+    if (!state.content) await refreshContent();
+    await refreshMods();
+  }
+  if (tab === 'admin') await showAdmin(state.adminShow || 'submissions');
 }
 
 // Home
@@ -909,6 +973,1260 @@ async function refreshContent() {
     const fresh = result.types.flatMap((t) => t.packs).find((p) => p.id === state.contentPackId);
     if (fresh) renderContentDetail(fresh);
     else el.contentDetail.hidden = true;
+  }
+}
+
+// Admin
+//
+// The tab is hidden from people who cannot use it, and that is a courtesy
+// rather than a defence: anyone can reveal it, and revealing it achieves
+// nothing. Approving and rejecting are GitHub API calls made with the person's
+// own token, so GitHub refuses them for anyone without write access to the
+// directory. The check here decides what to draw, never what is permitted.
+
+/**
+ * Asks whether this account can moderate, and shows the tab if so.
+ *
+ * Failure is quiet. Somebody who is not a moderator is the overwhelmingly
+ * common case and is not an error worth reporting to them.
+ */
+async function refreshAdminAccess() {
+  const said = await window.api.review.status().catch(() => null);
+  const allowed = Boolean(said && said.ok && said.moderator);
+  el.tabAdmin.hidden = !allowed;
+  state.moderator = allowed;
+  return allowed;
+}
+
+/**
+ * Narrows an admin list by what is typed in the search box.
+ *
+ * One function for both lists, taking whatever text each row should be matched
+ * on. The alternative is two nearly identical filters that stop agreeing about
+ * things like case the first time one of them is touched.
+ */
+function matchingAdmin(rows, textOf) {
+  const query = (el.adminSearch.value || '').trim().toLowerCase();
+  if (!query) return rows;
+  return rows.filter((row) => textOf(row).toLowerCase().includes(query));
+}
+
+/**
+ * Switches between the admin views.
+ *
+ * Uploads and reports are separated because they are different jobs with
+ * different urgency — a pack waiting to be looked at can wait, and somebody
+ * reporting what is already listed usually cannot. One combined queue buried
+ * the second kind inside the first.
+ */
+async function showAdmin(which = 'submissions', { force = false } = {}) {
+  state.adminShow = which;
+  state.adminOpen = null;
+  for (const button of el.adminTabs) {
+    button.classList.toggle('on', button.dataset.admin === which);
+  }
+  el.adminMain.innerHTML = '';
+  el.adminSearch.placeholder = which === 'publishers' ? 'Search people…' : 'Search…';
+
+  // Both of these read the directory, which is otherwise held for the session.
+  if (force && (which === 'publishers' || which === 'listed')) state.mods = null;
+
+  if (which === 'publishers') await refreshAdminPublishers();
+  else if (which === 'listed') await refreshAdminListed();
+  else await refreshAdminQueue();
+}
+
+/**
+ * Everything currently listed, so a pack can be taken down without first
+ * working out who published it.
+ */
+async function refreshAdminListed() {
+  el.adminList.innerHTML = '<p class="muted small">Reading the directory…</p>';
+  if (!state.mods) state.mods = await window.api.mods.index().catch(() => null);
+  const data = state.mods;
+
+  if (!data || !data.ok || !data.configured) {
+    el.adminList.innerHTML = '<p class="muted small">No directory to read yet.</p>';
+    return;
+  }
+
+  const packs = matchingAdmin(data.packs, (p) => `${p.title} ${p.author} ${p.id}`);
+  if (!packs.length) {
+    el.adminList.innerHTML = '<p class="muted small">Nothing listed.</p>';
+    return;
+  }
+
+  el.adminList.innerHTML = '';
+  for (const pack of packs) {
+    const button = document.createElement('button');
+    button.className = 'admin-item';
+    button.classList.toggle('on', state.adminOpen === pack.id);
+    button.innerHTML = `
+      <span class="admin-kind">${escapeHtml(pack.type)}</span>
+      <span class="admin-item-title">${escapeHtml(pack.title)}</span>
+      <span class="muted small">by ${escapeHtml(pack.author)}${pack.listed === false ? ' · hidden' : ''}</span>`;
+    button.addEventListener('click', () => showListedPack(pack));
+    el.adminList.append(button);
+  }
+}
+
+/** One listed pack, with the action that applies to it. */
+function showListedPack(pack) {
+  state.adminOpen = pack.id;
+  refreshAdminListed();
+
+  const hidden = pack.listed === false;
+  el.adminMain.innerHTML = `
+    <header class="admin-head">
+      <div>
+        <h2>${escapeHtml(pack.title)}</h2>
+        <p class="muted small">${escapeHtml(pack.type)} pack by ${escapeHtml(pack.author)} ·
+          ${formatBytes(pack.bytes)} · ${formatDownloads(pack.downloads)}</p>
+      </div>
+      <button class="btn btn-small" id="listed-open">Open the download</button>
+    </header>
+    ${hidden ? '<p class="admin-warn">This pack is not listed at the moment.</p>' : ''}
+    <p class="admin-summary">${escapeHtml(pack.summary || '')}</p>
+    ${contentNoteHtml(pack.content)}
+    <div class="admin-decide">
+      <div class="admin-decide-what">
+        <b>${escapeHtml(pack.id)}</b>
+        <span class="muted small">${escapeHtml(pack.licence || 'unstated')} licence</span>
+      </div>
+      <div class="admin-decide-buttons">
+        <button class="btn btn-small${hidden ? '' : ' btn-danger'}" id="listed-toggle">
+          ${hidden ? 'List again' : 'Unlist'}
+        </button>
+      </div>
+    </div>`;
+
+  el.adminMain.querySelector('#listed-open')
+    .addEventListener('click', () => window.api.shell.openExternal(pack.downloadUrl));
+  el.adminMain.querySelector('#listed-toggle')
+    .addEventListener('click', () => setPackListed(pack.id, hidden));
+}
+
+/** The content warnings an author declared, if any. */
+function contentNoteHtml(content) {
+  if (!content || !content.length) return '';
+  const labels = { language: 'Strong language', sexual: 'Sexual content', nudity: 'Nudity',
+    violence: 'Graphic violence', drugs: 'Drug or alcohol reference', flashing: 'Flashing images' };
+  return `<p class="admin-finding is-note"><b>The author marked this as containing</b>
+    <span>${content.map((c) => escapeHtml(labels[c] || c)).join(', ')}</span></p>`;
+}
+
+/**
+ * Everyone who has published, worked out from the directory itself.
+ *
+ * Derived rather than stored. There is no accounts table anywhere in this
+ * design — a publisher is simply someone with packs listed — so counting them
+ * from the index means the list cannot drift out of step with what is really
+ * there.
+ */
+function publishersFrom(packs) {
+  const by = new Map();
+  for (const pack of packs) {
+    const key = (pack.author || '').toLowerCase();
+    if (!by.has(key)) {
+      by.set(key, {
+        handle: pack.author, packs: [], downloads: 0, bytes: 0, listed: 0, hidden: 0,
+        first: pack.published, latest: pack.updated || pack.published,
+      });
+    }
+    const who = by.get(key);
+    who.packs.push(pack);
+    who.downloads += pack.downloads || 0;
+    who.bytes += pack.bytes || 0;
+    if (pack.listed === false) who.hidden++; else who.listed++;
+    if (pack.published < who.first) who.first = pack.published;
+    const touched = pack.updated || pack.published;
+    if (touched > who.latest) who.latest = touched;
+  }
+  // Ranked and counted by what is actually listed. A pack that is hidden, or
+  // still waiting to be looked at, is not something somebody has published —
+  // counting it would credit work nobody can install.
+  return [...by.values()].sort((a, b) => b.listed - a.listed
+    || a.handle.localeCompare(b.handle));
+}
+
+/** The publishers list, and one publisher in full. */
+async function refreshAdminPublishers() {
+  el.adminList.innerHTML = '<p class="muted small">Reading the directory…</p>';
+
+  // The Mods tab may never have been opened, so the index is fetched rather
+  // than assumed.
+  if (!state.mods) state.mods = await window.api.mods.index().catch(() => null);
+  const data = state.mods;
+
+  if (!data || !data.ok || !data.configured) {
+    el.adminList.innerHTML = '<p class="muted small">No directory to read yet.</p>';
+    el.adminMain.innerHTML = '<div class="mods-empty"><h3>Nothing published yet</h3>'
+      + '<p class="muted">Publishers appear here once packs are listed.</p></div>';
+    return;
+  }
+
+  const people = publishersFrom(data.packs);
+  state.publishers = people;
+
+  if (!people.length) {
+    el.adminList.innerHTML = '<p class="muted small">Nobody has published yet.</p>';
+    return;
+  }
+
+  const shown = matchingAdmin(people, (w) => `${w.handle} ${w.packs.map((p) => p.title).join(' ')}`);
+  if (!shown.length) {
+    el.adminList.innerHTML = '<p class="muted small">Nobody matches that.</p>';
+    return;
+  }
+
+  el.adminList.innerHTML = '';
+  for (const who of shown) {
+    const button = document.createElement('button');
+    button.className = 'admin-item';
+    button.classList.toggle('on', state.adminOpen === `@${who.handle}`);
+    button.innerHTML = `
+      <span class="admin-item-title">@${escapeHtml(who.handle)}</span>
+      <span class="muted small">${who.listed} pack${who.listed === 1 ? '' : 's'}
+        · ${formatDownloads(who.downloads)}${who.hidden ? ` · ${who.hidden} hidden` : ''}</span>`;
+    button.addEventListener('click', () => showPublisher(who));
+    el.adminList.append(button);
+  }
+}
+
+/** Everything known about one publisher. */
+function showPublisher(who) {
+  state.adminOpen = `@${who.handle}`;
+  refreshAdminPublishers();
+
+  const when = (iso) => {
+    try { return new Date(iso).toLocaleDateString(); } catch { return '—'; }
+  };
+
+  el.adminMain.innerHTML = `
+    <header class="admin-head">
+      <div>
+        <h2>@${escapeHtml(who.handle)}</h2>
+        <p class="muted small">
+          ${who.listed} listed${who.hidden ? `, ${who.hidden} hidden` : ''} ·
+          ${formatDownloads(who.downloads)} · ${formatBytes(who.bytes)} ·
+          first published ${when(who.first)} · last ${when(who.latest)}
+        </p>
+      </div>
+      <button class="btn btn-small" id="admin-open-profile">Open on GitHub</button>
+    </header>
+
+    ${who.hidden ? `<p class="admin-warn">${who.hidden} of their packs
+      ${who.hidden === 1 ? 'is' : 'are'} hidden.</p>` : ''}
+
+    <h4 class="admin-h">Their packs</h4>
+    <div class="admin-packs">
+      ${who.packs.map((p) => `<div class="admin-pack${p.listed === false ? ' is-hidden' : ''}">
+        <div class="admin-pack-what">
+          <span>${escapeHtml(p.title)}</span>
+          <span class="muted small">${escapeHtml(p.type)} · ${formatBytes(p.bytes)}
+            · ${formatDownloads(p.downloads)}${p.listed === false ? ' · hidden' : ''}</span>
+        </div>
+        <button class="btn btn-small${p.listed === false ? '' : ' btn-danger'}"
+                data-pack="${escapeHtml(p.id)}" data-listed="${p.listed === false ? '1' : '0'}">
+          ${p.listed === false ? 'List again' : 'Unlist'}
+        </button>
+      </div>`).join('')}
+    </div>`;
+
+  for (const button of el.adminMain.querySelectorAll('[data-pack]')) {
+    button.addEventListener('click', () => setPackListed(
+      button.dataset.pack, button.dataset.listed === '1',
+    ));
+  }
+
+  el.adminMain.querySelector('#admin-open-profile').addEventListener('click',
+    () => window.api.shell.openExternal(`https://github.com/${who.handle}`));
+}
+
+/**
+ * Hides a listed pack, or puts it back.
+ *
+ * Asks first when hiding, because it takes somebody's work off the directory —
+ * and does not when restoring, because putting it back is not the dangerous
+ * direction.
+ */
+async function setPackListed(packId, listed) {
+  if (!listed) {
+    const sure = await askConfirm({
+      title: 'Unlist this pack?',
+      detail: 'It stops appearing in the Mods tab. The record is kept and the file stays '
+        + 'on its author\'s account, so this can be undone at any time.\n\n'
+        + 'The author is not told automatically.',
+      buttons: ['Unlist it', 'Cancel'],
+      mark: '✕',
+      danger: true,
+    });
+    if (sure !== 0) return;
+  }
+
+  const done = await window.api.review.setListed(packId, listed);
+  if (!done.ok) {
+    toast(`Could not do that: ${done.error}`, 'error', 9000);
+    return;
+  }
+
+  toast(listed ? 'Listed again.' : 'Unlisted.', 'ok');
+  // The directory changes when the workflow runs, which is not instant, so what
+  // is held here is stale either way.
+  state.mods = null;
+  await refreshAdminPublishers();
+}
+
+/** Everything waiting to be looked at. */
+async function refreshAdminQueue() {
+  const wantReports = state.adminShow === 'reports';
+  el.adminList.innerHTML = '<p class="muted small">Looking…</p>';
+
+  const said = await window.api.review.queue().catch((e) => ({ ok: false, error: e.message }));
+  if (!said.ok) {
+    el.adminList.innerHTML = `<p class="muted small">${escapeHtml(said.error)}</p>`;
+    return;
+  }
+
+  // Anything decided in this session stays gone even if GitHub still reports it
+  // as open, which it does for a few seconds after closing.
+  state.adminItems = said.items.filter((i) => !state.adminDecided.has(i.number));
+
+  // Uploads and reports are separate jobs. Kept in one fetch because they are
+  // one list on GitHub, but never shown together — a report about a pack that
+  // is already listed gets lost among packs waiting to be read.
+  const mine = state.adminItems.filter((i) => (i.kind === 'report') === wantReports);
+
+  if (!mine.length) {
+    const nothing = wantReports ? 'No reports.' : 'Nothing waiting to be looked at.';
+    el.adminList.innerHTML = `<p class="muted small">${nothing}</p>`;
+    el.adminMain.innerHTML = `<div class="mods-empty"><h3>All clear</h3>
+      <p class="muted">${nothing}</p></div>`;
+    return;
+  }
+
+  drawAdminQueue(mine);
+}
+
+/** Draws the queue rail from a list of items, narrowed by the search box. */
+function drawAdminQueue(items) {
+  const shown = matchingAdmin(items,
+    (i) => `${i.record ? i.record.title : i.title} ${i.author || ''} #${i.number}`);
+  el.adminList.innerHTML = '';
+  if (!shown.length) {
+    el.adminList.innerHTML = '<p class="muted small">Nothing matches that.</p>';
+    return;
+  }
+  for (const item of shown) {
+    const button = document.createElement('button');
+    button.className = 'admin-item';
+    button.classList.toggle('on', state.adminOpen === item.number);
+    // Every one of these fields came from a stranger. None of it is trusted as
+    // markup.
+    button.innerHTML = `
+      <span class="admin-kind ${item.kind === 'report' ? 'is-report' : ''}">
+        ${item.kind === 'report' ? 'Report' : 'Pack'}
+      </span>
+      <span class="admin-item-title">${escapeHtml(item.record ? item.record.title : item.title)}</span>
+      <span class="muted small">#${item.number} by ${escapeHtml(item.author || 'someone')}</span>`;
+    button.addEventListener('click', () => openForReview(item));
+    el.adminList.append(button);
+  }
+}
+
+/** Opens one queue item, downloading its pack into the sandbox. */
+async function openForReview(item) {
+  state.adminOpen = item.number;
+  await window.api.review.close();
+  refreshAdminQueue();
+
+  if (item.kind === 'report' || !item.record) {
+    // A report is words, not a pack. Shown as written, escaped.
+    el.adminMain.innerHTML = `
+      <header class="admin-head">
+        <div>
+          <h2>${escapeHtml(item.title)}</h2>
+          <p class="muted small">Report #${item.number} by ${escapeHtml(item.author || 'someone')}</p>
+        </div>
+        <a class="btn btn-small" id="admin-open-github">Open on GitHub</a>
+      </header>
+      <pre class="admin-body">${escapeHtml(item.body || '(nothing written)')}</pre>`;
+    el.adminMain.querySelector('#admin-open-github')
+      .addEventListener('click', () => window.api.shell.openExternal(item.url));
+    return;
+  }
+
+  const record = item.record;
+  el.adminMain.innerHTML = `<div class="mods-empty"><h3>Fetching the pack…</h3>
+    <p class="muted small" id="admin-progress"></p></div>`;
+  const progress = el.adminMain.querySelector('#admin-progress');
+
+  const stop = window.api.review.onProgress(({ stage, percent }) => {
+    if (!progress) return;
+    progress.textContent = stage ? `${stage}…`
+      : percent != null ? `downloading ${Math.round(percent)}%` : '';
+  });
+
+  let pack;
+  try {
+    pack = await window.api.review.open(record);
+  } finally {
+    stop();
+  }
+
+  if (!pack.ok) {
+    el.adminMain.innerHTML = `<div class="mods-empty"><h3>Could not open it</h3>
+      <p class="muted">${escapeHtml(pack.error)}</p></div>`;
+    return;
+  }
+
+  renderReview(item, record, pack);
+}
+
+/** The pack itself, laid out to be judged. */
+function renderReview(item, record, pack) {
+  // Whatever the check found, worst first. Nothing at all is the normal
+  // outcome and deliberately shows as nothing rather than as a green tick —
+  // a reassurance on every pack is a reassurance nobody reads.
+  const report = pack.report || { findings: [] };
+  const warn = report.findings.map((f) => `
+    <p class="admin-finding is-${f.level}">
+      <b>${escapeHtml(f.what)}</b>
+      <span>${escapeHtml(f.detail)}</span>
+    </p>`).join('');
+
+  el.adminMain.innerHTML = `
+    <header class="admin-head">
+      <div>
+        <h2>${escapeHtml(record.title)}</h2>
+        <p class="muted small">
+          ${escapeHtml(record.type)} pack by ${escapeHtml(record.author)} ·
+          ${formatBytes(pack.totalBytes)} · ${pack.files.length} files ·
+          submission #${item.number}
+        </p>
+      </div>
+      <button class="btn btn-small" id="admin-open-github">Open on GitHub</button>
+    </header>
+
+    ${warn}
+    <p class="admin-summary">${escapeHtml(record.summary || '')}</p>
+
+    ${pack.video ? (pack.video.playable === false
+      ? `<p class="admin-warn">The video could not be prepared for playing, so it cannot be
+         checked here: ${escapeHtml(pack.video.why || 'no reason given')}</p>`
+      : `<video class="admin-video" src="${pack.video.url}" controls preload="metadata"></video>`)
+      : '<p class="muted small">This pack has no video.</p>'}
+
+    ${pack.images.length ? `<h4 class="admin-h">Pictures</h4>
+      <div class="admin-images">
+        ${pack.images.map((i) => `<figure>
+          <img src="${i.url}" alt="${escapeHtml(i.name)}" loading="lazy"
+               onerror="this.closest('figure').classList.add('broken')" />
+          <span class="admin-broken">could not be shown</span>
+          <figcaption class="muted small">${escapeHtml(i.name)}</figcaption></figure>`).join('')}
+      </div>` : ''}
+
+    ${pack.audio.length ? `<h4 class="admin-h">Audio (${pack.audio.length})</h4>
+      <div class="admin-audio">
+        ${pack.audio.map((a) => `<div class="admin-clip">
+          <span class="muted small">${escapeHtml(a.name)}</span>
+          <audio src="${a.url}" controls preload="none"></audio></div>`).join('')}
+      </div>` : ''}
+
+    ${pack.captions.length ? `<h4 class="admin-h">What is said</h4>
+      <div class="admin-captions">
+        ${pack.captions.map((c) => `<details><summary>${escapeHtml(c.name)}</summary>
+          <pre>${escapeHtml(c.text)}</pre></details>`).join('')}
+      </div>` : ''}
+
+    <h4 class="admin-h">Everything in it</h4>
+    <div class="admin-files">
+      ${pack.files.map((f) => `<div><span>${escapeHtml(f.name)}</span>
+        <span class="muted small">${formatBytes(f.bytes)}</span></div>`).join('')}
+    </div>
+
+    <div class="admin-decide">
+      <div class="admin-decide-what">
+        <b>${escapeHtml(record.title)}</b>
+        <span class="muted small">by ${escapeHtml(record.author)} ·
+          ${escapeHtml(record.licence || 'unstated')} licence ·
+          ${(record.tags || []).length ? escapeHtml((record.tags || []).join(', ')) : 'no tags'}</span>
+      </div>
+      <div class="admin-decide-buttons">
+        <button class="btn btn-primary" id="admin-approve">✓ List it</button>
+        <button class="btn btn-danger" id="admin-reject">✕ Refuse it</button>
+      </div>
+    </div>`;
+
+  el.adminMain.querySelector('#admin-open-github')
+    .addEventListener('click', () => window.api.shell.openExternal(item.url));
+  el.adminMain.querySelector('#admin-approve')
+    .addEventListener('click', () => decideReview(item, 'approve'));
+  el.adminMain.querySelector('#admin-reject')
+    .addEventListener('click', () => decideReview(item, 'reject'));
+}
+
+/** Approves or refuses, and says why. */
+async function decideReview(item, decision) {
+  const approving = decision === 'approve';
+
+  const reason = await askText({
+    title: approving ? 'List this pack?' : 'Refuse this pack?',
+    detail: approving
+      ? 'It will be listed in the Mods tab and the author told. Anything you write here is '
+        + 'added to that message.'
+      : 'The author will be told it was not listed, along with what you write here. Say what '
+        + 'would need to change — being refused with no explanation is the worst version of '
+        + 'this for somebody who made something.',
+    placeholder: approving ? 'Anything to add (optional)' : 'Why it was not listed',
+    buttons: [approving ? 'List it' : 'Refuse it', 'Cancel'],
+    required: !approving,
+  });
+  if (reason === null) return;
+
+  const said = await window.api.review.decide(item.number, decision, reason);
+  if (!said.ok) {
+    toast(`Could not do that: ${said.error}`, 'error', 10000);
+    return;
+  }
+
+  toast(approving ? 'Listed.' : 'Refused, and the author told.', 'ok');
+  state.adminOpen = null;
+  el.adminMain.innerHTML = '';
+
+  // Dropped from the list here rather than waiting for the refetch to notice.
+  // GitHub does not always report an issue as closed the instant it is closed,
+  // so refreshing alone left a decided pack sitting in the queue looking like
+  // the decision had not taken.
+  state.adminItems = state.adminItems.filter((i) => i.number !== item.number);
+  state.adminDecided.add(item.number);
+  drawAdminQueue(state.adminItems);
+
+  await refreshAdminQueue();
+}
+
+// Mods
+//
+// Browsing and installing never ask for an account. The directory is public and
+// the app reads it anonymously; only publishing needs anyone to sign in.
+
+/** The rail down the side. "Everything" first, then one per pack type. */
+const MOD_TYPES = [
+  { id: 'all', label: 'Everything' },
+  { id: 'voice', label: 'Voice & dubs' },
+  { id: 'player', label: 'Players' },
+  { id: 'host', label: 'Hosts' },
+  { id: 'judges', label: 'Judges' },
+  { id: 'studio', label: 'Studios' },
+  { id: 'menu', label: 'Menus' },
+  { id: 'chatter', label: 'Chatter' },
+];
+
+/** How each submission outcome is shown. */
+const INBOX_STATES = {
+  waiting: { label: 'Waiting to be looked at', tone: 'muted' },
+  listed: { label: 'Listed', tone: 'ok' },
+  refused: { label: 'Not listed', tone: 'bad' },
+  closed: { label: 'Closed', tone: 'muted' },
+};
+
+/** Switches the Mods tab between browsing and your own submissions. */
+async function showMods(which = 'browse') {
+  state.modsShow = which;
+  el.btnModsBrowse.classList.toggle('on', which === 'browse');
+  el.btnModsInbox.classList.toggle('on', which === 'inbox');
+  // Searching the whole directory makes no sense while looking at your own few.
+  el.modsSearch.hidden = which !== 'browse';
+
+  if (which === 'inbox') await renderInbox();
+  else await refreshMods();
+}
+
+/**
+ * Your own submissions, and where you stand with the directory.
+ *
+ * The reason a pack was refused is written on a GitHub issue, which is
+ * somewhere almost nobody looks. Being refused and never finding out why is the
+ * worst version of this for someone who made something, so it is shown here in
+ * full rather than left where it happened.
+ */
+async function renderInbox() {
+  el.modsTypes.hidden = true;
+  el.modsTitle.textContent = 'Your submissions';
+  el.modsSubtitle.textContent = '';
+  el.modsGrid.innerHTML = '<p class="muted small">Looking…</p>';
+
+  const said = await window.api.mods.inbox().catch((e) => ({ ok: false, error: e.message }));
+
+  if (!said.ok) {
+    el.modsGrid.innerHTML = `<div class="mods-empty"><h3>Could not be read</h3>
+      <p class="muted">${escapeHtml(said.error)}</p></div>`;
+    return;
+  }
+  if (!said.configured || !said.signedIn) {
+    el.modsGrid.innerHTML = `<div class="mods-empty"><h3>Not signed in</h3>
+      <p class="muted">Link a GitHub account in Settings to publish packs and to see what
+         happened to them.</p></div>`;
+    return;
+  }
+
+  const standing = said.standing || {};
+  const note = standing.banned
+    ? '<p class="admin-warn">This account cannot publish to the directory.</p>'
+    : standing.trusted
+      ? '<p class="inbox-standing is-ok">Trusted — your packs are listed without waiting.</p>'
+      : '<p class="inbox-standing">Your first pack is looked at by a person. After that they '
+        + 'are listed straight away.</p>';
+
+  el.modsSubtitle.textContent = `Signed in as ${said.login}`;
+
+  if (!said.items.length) {
+    el.modsGrid.innerHTML = `${note}<div class="mods-empty"><h3>Nothing submitted yet</h3>
+      <p class="muted">Packs you publish from Content show up here, with what happened to
+         them.</p></div>`;
+    return;
+  }
+
+  el.modsGrid.innerHTML = note + said.items.map((item) => {
+    const shown = INBOX_STATES[item.outcome] || INBOX_STATES.closed;
+    return `<article class="inbox-item">
+      <div class="inbox-head">
+        <b>${escapeHtml(item.title)}</b>
+        <span class="inbox-state is-${shown.tone}">${shown.label}</span>
+      </div>
+      ${item.reason ? `<p class="inbox-reason">${escapeHtml(item.reason)}</p>` : ''}
+      <button class="btn btn-small" data-url="${escapeHtml(item.url)}">Open on GitHub</button>
+    </article>`;
+  }).join('');
+
+  for (const button of el.modsGrid.querySelectorAll('[data-url]')) {
+    button.addEventListener('click', () => window.api.shell.openExternal(button.dataset.url));
+  }
+}
+
+/**
+ * Fetches the directory.
+ *
+ * Cached for the session, because the index does not change while the app is
+ * open and re-fetching it on every visit to the tab is rude to whoever is
+ * serving it. Refresh forces it.
+ */
+async function refreshMods({ force = false } = {}) {
+  if (state.mods && !force) {
+    renderModTypes();
+    renderMods();
+    return;
+  }
+
+  el.modsSubtitle.textContent = 'Looking…';
+  const result = await window.api.mods.index().catch((err) => ({ ok: false, error: err.message }));
+  state.mods = result;
+  renderModTypes();
+  renderMods();
+}
+
+function renderModTypes() {
+  el.modsTypes.innerHTML = '';
+  const packs = (state.mods && state.mods.packs) || [];
+
+  for (const type of MOD_TYPES) {
+    const count = type.id === 'all'
+      ? packs.length
+      : packs.filter((p) => p.type === type.id).length;
+
+    const button = document.createElement('button');
+    button.className = 'type-btn';
+    button.dataset.type = type.id;
+    button.classList.toggle('on', type.id === (state.modsType || 'all'));
+    button.innerHTML = `
+      <span>${type.id === 'all' ? '✦' : TYPE_ICONS[type.id] || '📦'}</span>
+      <span>${escapeHtml(type.label)}</span>
+      <span class="count">${count}</span>`;
+    button.addEventListener('click', () => {
+      state.modsType = type.id;
+      renderModTypes();
+      renderMods();
+    });
+    el.modsTypes.append(button);
+  }
+}
+
+/** Download counts are approximate, so they are shown that way. */
+function formatDownloads(count) {
+  if (!count) return 'new';
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}k downloads`;
+  return `${count} download${count === 1 ? '' : 's'}`;
+}
+
+/** Whether a listed pack is already installed, by title. */
+function isModInstalled(pack) {
+  if (!state.content) return false;
+  const wanted = (pack.title || '').toLowerCase();
+  return state.content.types.some((type) => type.id === pack.type
+    && type.packs.some((p) => (p.title || '').toLowerCase() === wanted));
+}
+
+function renderMods() {
+  const data = state.mods;
+  el.modsGrid.innerHTML = '';
+
+  if (!data) return;
+
+  if (!data.ok) {
+    el.modsTypes.hidden = true;
+    el.modsSubtitle.textContent = 'Could not be reached.';
+    el.modsGrid.innerHTML = `
+      <div class="mods-empty">
+        <h3>The directory could not be read</h3>
+        <p class="muted">${escapeHtml(data.error || 'No reason given.')}</p>
+        <p class="muted small">Everything else in the app works without it.</p>
+      </div>`;
+    return;
+  }
+
+  // Nothing set up yet, which is the normal state until a directory exists.
+  // Said plainly rather than shown as an error, because nothing is wrong.
+  if (!data.configured) {
+    el.modsTypes.hidden = true;
+    el.modsSubtitle.textContent = 'Not set up yet.';
+    el.modsGrid.innerHTML = `
+      <div class="mods-empty">
+        <h3>No packs yet</h3>
+        <p class="muted">This is where packs other people have shared will appear, ready to
+           install in one press. Nothing has been listed yet.</p>
+        <p class="muted small">Everything else in the app works without it, and always will.</p>
+      </div>`;
+    return;
+  }
+
+  el.modsTypes.hidden = false;
+
+  const chosen = MOD_TYPES.find((t) => t.id === (state.modsType || 'all')) || MOD_TYPES[0];
+  el.modsTitle.textContent = chosen.label;
+
+  const query = (el.modsSearch.value || '').trim().toLowerCase();
+  let packs = data.packs;
+  if (chosen.id !== 'all') packs = packs.filter((p) => p.type === chosen.id);
+  if (query) {
+    packs = packs.filter((p) => `${p.title} ${p.author} ${(p.tags || []).join(' ')}`
+      .toLowerCase().includes(query));
+  }
+
+  el.modsSubtitle.textContent = query
+    ? `${packs.length} of ${data.packs.length} matching "${query}"`
+    : `${packs.length} pack${packs.length === 1 ? '' : 's'}`;
+
+  if (!packs.length) {
+    el.modsGrid.innerHTML = `
+      <div class="mods-empty">
+        <h3>Nothing here</h3>
+        <p class="muted">${query ? 'No pack matches that.' : 'No packs of this kind yet.'}</p>
+      </div>`;
+    return;
+  }
+
+  for (const pack of packs) {
+    el.modsGrid.append(modCard(pack));
+  }
+}
+
+/**
+ * The warnings an author declared, as small labels.
+ *
+ * Nothing at all is the common case and shows as nothing — a row of "no
+ * violence, no nudity" on every pack would bury the ones that say otherwise.
+ */
+function contentFlagsHtml(content) {
+  if (!content || !content.length) return '';
+  const known = (state.info && state.info.contentFlags) || [];
+  const labelFor = (id) => (known.find((f) => f.id === id) || { label: id }).label;
+  const adult = new Set(['sexual', 'nudity']);
+
+  return `<div class="mod-flags">${content.map((id) =>
+    `<span class="mod-flag${adult.has(id) ? ' is-adult' : ''}">${escapeHtml(labelFor(id))}</span>`
+  ).join('')}</div>`;
+}
+
+/** One pack in the grid. */
+function modCard(pack) {
+  const card = document.createElement('article');
+  card.className = 'mod-card';
+
+  const installed = isModInstalled(pack);
+  card.innerHTML = `
+    <div class="mod-card-head">
+      <span class="mod-icon">${TYPE_ICONS[pack.type] || '📦'}</span>
+      <div class="mod-card-name">
+        <h3>${escapeHtml(pack.title)}</h3>
+        <p class="muted small">by ${escapeHtml(pack.author)}</p>
+      </div>
+    </div>
+    <p class="mod-summary">${escapeHtml(pack.summary || '')}</p>
+    ${contentFlagsHtml(pack.content)}
+    <div class="mod-card-foot">
+      <span class="muted small">${formatBytes(pack.bytes)} · ${formatDownloads(pack.downloads)}</span>
+      <span class="mod-actions">
+        <span class="mod-status muted small"></span>
+        <button class="btn btn-small ${installed ? '' : 'btn-primary'}">
+          ${installed ? 'Installed' : 'Install'}
+        </button>
+      </span>
+    </div>`;
+
+  const button = card.querySelector('button');
+  const status = card.querySelector('.mod-status');
+  if (installed) button.disabled = true;
+  else button.addEventListener('click', () => installMod(pack, button, status));
+
+  return card;
+}
+
+/**
+ * Downloads and installs one listed pack.
+ *
+ * Stages are reported as they happen: checking and unpacking a large pack takes
+ * long enough that a still button reads as a broken one.
+ */
+async function installMod(pack, button, status) {
+  button.disabled = true;
+  status.textContent = 'starting…';
+
+  const stop = window.api.mods.onProgress(({ stage, percent }) => {
+    if (stage) status.textContent = `${stage}…`;
+    else if (percent != null) status.textContent = `downloading ${Math.round(percent)}%`;
+  });
+
+  try {
+    const result = await window.api.mods.install(pack);
+    if (!result.ok) {
+      status.textContent = '';
+      button.disabled = false;
+      if (!result.cancelled) toast(`Could not install it: ${result.error}`, 'error', 9000);
+      return;
+    }
+    status.textContent = '';
+    button.textContent = 'Installed';
+    toast(`Installed "${pack.title}".`, 'ok');
+    await refreshContent();
+  } finally {
+    stop();
+  }
+}
+
+
+/**
+ * Packages a pack into a single zip anybody can install.
+ *
+ * The zip carries its own record inside it, so what comes out is one file that
+ * knows what it is — no second file to keep track of and nothing to fill in
+ * before it can be handed over.
+ */
+async function sharePack(pack) {
+  const go = await askConfirm({
+    title: `Share "${pack.title}"?`,
+    detail: 'This makes one zip in your exports folder, ready to send to anyone.\n\n'
+      + 'It is shrunk on the way, usually to about half the size, which is worth a few '
+      + 'minutes for a pack with video in it. Your own copy is not touched.\n\n'
+      + 'Nothing is uploaded and nothing leaves this machine.',
+    buttons: ['Make the zip', 'Cancel'],
+    mark: '↗',
+  });
+  if (go !== 0) return;
+
+  // A bar rather than toasts. Packaging a pack with video in it is minutes of
+  // re-encoding, and something that has to be waited for should look like it,
+  // not like a notification that has already gone.
+  showProgress(true, 'Packaging…', '');
+  el.progressName.textContent = pack.title;
+  el.progressQueue.textContent = '';
+  el.btnProgressCancel.hidden = true;
+  el.btnProgressCancelAll.hidden = true;
+
+  const stop = window.api.mods.onProgress(({ stage, file, percent }) => {
+    if (stage) showProgress(true, `${stage}…`, file || '');
+    if (percent != null) el.progressFill.style.width = `${percent}%`;
+  });
+
+  let result;
+  try {
+    result = await window.api.mods.share(pack.dir, {
+      type: pack.type,
+      title: pack.title,
+      summary: pack.subtitle || `A ${pack.type} pack.`,
+      author: (state.settings.shareHandle || '').trim(),
+      licence: 'unstated',
+    });
+  } finally {
+    stop();
+    showProgress(false);
+    el.btnProgressCancel.hidden = false;
+  }
+
+  if (!result || !result.ok) {
+    toast(`Could not package it: ${(result && result.error) || 'no reason given'}`, 'error', 9000);
+    return;
+  }
+
+  // Worth saying what the wait bought, since on a big pack it is minutes.
+  const shrunk = result.shrunk;
+  const saved = shrunk && shrunk.saved > 0
+    ? `Shrunk from ${formatBytes(shrunk.before)} to ${formatBytes(shrunk.after)}, so it `
+      + `downloads about ${Math.round((1 - shrunk.ratio) * 100)}% faster.\n\n`
+    : '';
+
+  const who = await window.api.mods.whoAmI().catch(() => ({ configured: false }));
+  const canPublish = who.configured;
+  const already = who.signedIn ? await alreadyPublished(pack, who.login) : null;
+
+  await offerToShare(result, pack, saved, canPublish, already);
+}
+
+/**
+ * The "ready to share" dialog, and what each button does.
+ *
+ * Opening the folder brings the dialog back rather than dismissing it. Looking
+ * at where a file landed is not a decision, and closing on it meant packaging
+ * the pack all over again to reach Publish.
+ */
+async function offerToShare(result, pack, saved, canPublish, already) {
+  const open = await askConfirm({
+    title: 'Ready to share',
+    detail: `${pack.title}.zip (${formatBytes(result.bytes)}) is in your exports folder, `
+      + 'under "Shared packs".\n\n'
+      + saved
+      + 'Send it to anyone. They open the Mods tab and pick it.'
+      + (already
+        ? '\n\nThis pack is already in the directory. Updating it replaces what is listed '
+          + 'with this version — the listing keeps its place and its download count.'
+        : canPublish
+          ? '\n\nOr publish it, which uploads it to your own GitHub account and offers it to '
+            + 'the pack directory so anyone can find it.'
+          : ''),
+    buttons: canPublish
+      ? [already ? 'Update it' : 'Publish it', 'Open the folder', 'Done']
+      : ['Open the folder', 'Done'],
+    mark: '✓',
+    cancelIndex: canPublish ? 2 : 1,
+  });
+
+  if (canPublish && open === 0) {
+    await publishPack(result, pack, Boolean(already));
+    return;
+  }
+  // With the publish button present, everything after it shifts by one.
+  if (open !== (canPublish ? 1 : 0)) return;
+
+  await openSharedFolder(result.zipPath);
+  await offerToShare(result, pack, saved, canPublish, already);
+}
+
+/** Opens the folder a packaged zip landed in. */
+async function openSharedFolder(zipPath) {
+  // Cut back to the folder rather than blanked to one: a trailing separator
+  // upsets the folder check on Windows.
+  const folder = zipPath.replace(/[\\/][^\\/]+$/, '');
+  // openPath answers with a reason instead of throwing, and dropping that
+  // answer is what makes a button like this look as though it does nothing.
+  const failed = await window.api.shell.openPath(folder);
+  if (failed) toast(`Could not open the folder: ${failed}`, 'error', 9000);
+}
+
+/**
+ * Signs in to GitHub, if not already.
+ *
+ * The device flow shows a code to type on github.com. The dialog stays up while
+ * that happens, because the code is useless once it is dismissed and there is
+ * no way to ask for it again without starting over.
+ */
+async function ensureSignedIn({ force = false } = {}) {
+  const who = await window.api.mods.whoAmI();
+  if (!who.configured) {
+    toast('This build cannot sign in to GitHub.', 'error', 7000);
+    return null;
+  }
+  // `force` is for linking a different account from Settings, where already
+  // being signed in is the reason you pressed the button.
+  if (who.signedIn && !force) return who;
+
+  const go = await askConfirm({
+    title: 'Sign in to GitHub',
+    detail: 'Publishing puts the pack on your own GitHub account, so it stays yours and you '
+      + 'can take it down whenever you like.\n\n'
+      + 'You will get a short code to type on github.com. It is only asked for once.\n\n'
+      + 'The app can create one repository for your packs and add releases to it. It cannot '
+      + 'read your other repositories.',
+    buttons: ['Sign in', 'Cancel'],
+    mark: '🔑',
+  });
+  if (go !== 0) return null;
+
+  // Arrives while signIn is still waiting, which is the only moment it is
+  // useful, so it is shown from here rather than returned.
+  const stop = window.api.mods.onDeviceCode(({ userCode, verificationUri }) => {
+    window.api.shell.openExternal(verificationUri);
+    askConfirm({
+      title: 'Your code',
+      detail: `Type this on ${verificationUri}, which should have just opened:\n\n`
+        + `        ${userCode}\n\n`
+        + 'Leave this open until it is done.',
+      buttons: ['Done'],
+      mark: '🔑',
+    });
+  });
+
+  try {
+    const result = await window.api.mods.signIn();
+    if (!result.ok) {
+      toast(`Could not sign in: ${result.error}`, 'error', 9000);
+      return null;
+    }
+    toast(`Signed in as ${result.login}.`, 'ok');
+    if (!result.remembered) {
+      toast('This machine cannot store the sign-in, so it will be asked for again next time.',
+        'warn', 8000);
+    }
+    return result;
+  } finally {
+    stop();
+  }
+}
+
+/**
+ * Shows who is linked, in Settings.
+ *
+ * Asked of the main process rather than remembered here, because the answer
+ * includes whether the stored token still works — a token can be revoked on
+ * github.com without this app ever being told.
+ */
+async function renderGithubLink() {
+  if (!el.githubStatus) return;
+
+  const who = await window.api.mods.whoAmI().catch(() => null);
+
+  if (!who || !who.configured) {
+    el.githubStatus.textContent = 'Publishing is not available in this build.';
+    el.githubNote.hidden = true;
+    el.btnGithubLink.hidden = true;
+    el.btnGithubUnlink.hidden = true;
+    return;
+  }
+
+  el.githubNote.hidden = false;
+  if (who.signedIn) {
+    el.githubStatus.innerHTML = `Linked as <b>@${escapeHtml(who.login)}</b>.`;
+    el.githubNote.textContent = who.canSubmit
+      ? 'Packs you publish go on your own account and are offered to the pack directory.'
+      : 'Packs you publish go on your own account. There is no pack directory set up yet, '
+        + 'so they are not listed anywhere, but the address works.';
+    el.btnGithubLink.textContent = 'Link a different account';
+    el.btnGithubUnlink.hidden = false;
+  } else {
+    el.githubStatus.textContent = 'Not linked.';
+    el.githubNote.textContent = 'Link a GitHub account to publish packs. Packs go on your own '
+      + 'account, so they stay yours and you can take them down whenever you like.';
+    el.btnGithubLink.textContent = 'Link GitHub';
+    el.btnGithubUnlink.hidden = true;
+  }
+}
+
+/** Links an account from Settings, then redraws the section. */
+async function linkGithub() {
+  el.btnGithubLink.disabled = true;
+  try {
+    await ensureSignedIn({ force: true });
+  } finally {
+    el.btnGithubLink.disabled = false;
+    await renderGithubLink();
+    // Signing in as a different account can change whether Admin belongs there.
+    await refreshAdminAccess();
+  }
+}
+
+async function unlinkGithub() {
+  const sure = await askConfirm({
+    title: 'Unlink GitHub?',
+    detail: 'This app will forget the sign-in. Packs you have already published stay exactly '
+      + 'where they are on your account — nothing is taken down.\n\n'
+      + 'You will be asked to sign in again the next time you publish.',
+    buttons: ['Unlink', 'Cancel'],
+    mark: '🔑',
+  });
+  if (sure !== 0) return;
+
+  await window.api.mods.signOut();
+  toast('GitHub unlinked.', 'ok');
+  await renderGithubLink();
+  await refreshAdminAccess();
+  if (state.tab === 'admin') switchTab('home');
+}
+
+/**
+ * The steps publishing goes through, and where each one sits on the bar.
+ *
+ * Uploading gets the whole middle because it is the only step that takes real
+ * time; the rest are single API calls that pass in under a second. Giving them
+ * equal shares would make the bar leap to two thirds and then appear to hang.
+ */
+const PUBLISH_STEPS = {
+  checking: { at: 4, span: 4, say: 'Checking your account' },
+  preparing: { at: 8, span: 8, say: 'Preparing your pack repository' },
+  release: { at: 16, span: 8, say: 'Making the release' },
+  uploading: { at: 24, span: 64, say: 'Uploading the pack' },
+  submitting: { at: 88, span: 10, say: 'Offering it to the directory' },
+  done: { at: 100, span: 0, say: 'Finished' },
+};
+
+/** Drives the shared progress bar from a publish stage. */
+function showPublishProgress({ stage, percent, sent, bytes }, updating = false) {
+  const step = PUBLISH_STEPS[stage];
+  if (!step) return;
+  // Same steps either way; only the wording differs, and only where it would
+  // otherwise say something untrue.
+  const say = updating && stage === 'submitting' ? 'Sending the update' : step.say;
+
+  // Within a step, byte progress moves the bar across that step's own span
+  // rather than the whole width, so the number never goes backwards when the
+  // next stage starts.
+  const within = percent != null ? (percent / 100) * step.span : 0;
+  const total = Math.min(100, step.at + within);
+
+  const detail = stage === 'uploading' && bytes
+    ? `${formatBytes(sent || 0)} of ${formatBytes(bytes)}`
+    : '';
+
+  showProgress(true, `${say}…`, detail);
+  el.progressName.textContent = '';
+  el.progressQueue.textContent = '';
+  // Publishing cannot be interrupted halfway without leaving a half-made
+  // release behind, so the export bar's Skip and Cancel are not offered here.
+  el.btnProgressCancel.hidden = true;
+  el.btnProgressCancelAll.hidden = true;
+  el.progressFill.style.width = `${total.toFixed(1)}%`;
+}
+
+/**
+ * Uploads a packaged zip and offers it to the directory.
+ *
+ * Takes what `sharePack` already produced rather than repackaging, so the file
+ * that gets published is the exact one whose checksum is in the record.
+ */
+/**
+ * The id a pack will be published under.
+ *
+ * Kept in one place because publishing, updating and recognising an existing
+ * listing all have to agree on it. Two copies of this rule that drift would
+ * mean an update quietly becoming a second listing.
+ */
+function packIdFor(title) {
+  return String(title).toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 64);
+}
+
+/**
+ * The listing for this pack, if the signed-in account already published it.
+ *
+ * Only their own listing counts. A pack of the same name by somebody else is
+ * not an update, and offering to "update" it would be offering something that
+ * will be refused.
+ */
+async function alreadyPublished(pack, login) {
+  if (!login) return null;
+  if (!state.mods) state.mods = await window.api.mods.index().catch(() => null);
+  const data = state.mods;
+  if (!data || !data.ok || !data.configured) return null;
+
+  const id = packIdFor(pack.title);
+  return data.packs.find((p) => p.id === id
+    && (p.author || '').toLowerCase() === login.toLowerCase()) || null;
+}
+
+async function publishPack(packaged, pack, updating = false) {
+  // A listing with no picture is a grey box in a grid of pictures, and nobody
+  // installs it. Refused here rather than after the upload, so the work is not
+  // wasted on something that would look broken in the directory.
+  if (!pack.iconPath && !pack.iconUrl) {
+    await askConfirm({
+      title: 'This pack needs a picture first',
+      detail: 'Packs in the directory are shown as a grid of pictures, and one without a '
+        + 'picture is a blank space nobody clicks.\n\n'
+        + 'Add one by opening the pack and setting its picture, then publish it again. '
+        + 'Packaging it as a zip to send to somebody works without one.',
+      buttons: ['Done'],
+      mark: '🖼',
+    });
+    return;
+  }
+
+  const me = await ensureSignedIn();
+  if (!me) return;
+
+  // Asked before the upload, because it belongs to the listing rather than to
+  // the file, and because a question after several minutes of uploading is a
+  // question nobody reads properly.
+  const flags = await askChecklist({
+    title: 'Does this pack contain any of these?',
+    detail: 'Anything ticked is shown on the listing so people know what they are '
+      + 'installing. Nothing here stops a pack being listed.\n\n'
+      + 'Leave them all clear if none apply.',
+    options: (state.info && state.info.contentFlags) || [],
+    buttons: ['Publish it', 'Cancel'],
+    mark: '⚠',
+  });
+  if (flags === null) return;
+
+  const stop = window.api.mods.onPublishProgress((p) => showPublishProgress(p, updating));
+  showPublishProgress({ stage: 'checking' }, updating);
+
+  let result;
+  try {
+    result = await window.api.mods.publish(packaged.zipPath, {
+      id: packIdFor(pack.title),
+      type: pack.type,
+      title: pack.title,
+      summary: pack.subtitle || `A ${pack.type} pack.`,
+      sha256: packaged.sha256,
+      content: flags,
+      // So the main process can check this pack was not somebody else's.
+      packDir: pack.dir,
+      licence: 'unstated',
+    });
+  } finally {
+    stop();
+    showProgress(false);
+    el.btnProgressCancel.hidden = false;
+  }
+
+  if (!result.ok) {
+    toast(`Could not publish it: ${result.error}`, 'error', 10000);
+    return;
+  }
+
+  // The directory has changed, so the copy held for this session is stale.
+  state.mods = null;
+
+  const where = await askConfirm({
+    title: result.submitted ? (updating ? 'Update sent' : 'Published') : 'Uploaded',
+    detail: result.submitted
+      ? `"${pack.title}" is on your GitHub account and has been ${updating ? 'offered as an update' : 'offered to the directory'}.\n\n`
+        + (updating
+          ? 'The listing keeps its place and its download count. Nothing else is needed from you.'
+          : 'It will appear in the Mods tab once it has been looked over. Nothing else is '
+            + 'needed from you.')
+      : `"${pack.title}" is on your GitHub account and anyone with the address can install `
+        + 'it.\n\nThere is no pack directory set up yet, so it has not been listed anywhere. '
+        + 'The address works regardless.',
+    buttons: ['Copy the address', result.submitted ? 'See the submission' : 'See the release', 'Done'],
+    mark: '✓',
+    cancelIndex: 2,
+  });
+
+  if (where === 0) {
+    await navigator.clipboard.writeText(result.downloadUrl).catch(() => {});
+    toast('Address copied.', 'ok');
+  } else if (where === 1) {
+    window.api.shell.openExternal(result.issueUrl || result.releaseUrl);
   }
 }
 
@@ -1099,6 +2417,8 @@ function renderContentDetail(pack) {
     <div class="detail-actions">
       <button type="button" class="btn btn-primary" id="btn-detail-edit"
               ${converting ? 'disabled' : ''}>✎ Edit this pack</button>
+      <button type="button" class="btn" id="btn-detail-share"
+              ${converting ? 'disabled' : ''}>↗ Share this pack</button>
       <button type="button" class="btn" id="btn-detail-open">📂 Open folder</button>
       <button type="button" class="btn btn-danger" id="btn-detail-delete"
               ${converting ? 'disabled' : ''}>✕ Delete</button>
@@ -1106,6 +2426,9 @@ function renderContentDetail(pack) {
 
   el.contentDetail.querySelector('#btn-detail-edit')
     .addEventListener('click', () => openEditorFor(pack));
+
+  el.contentDetail.querySelector('#btn-detail-share')
+    .addEventListener('click', () => sharePack(pack));
 
   el.contentDetail.querySelector('#btn-detail-open')
     .addEventListener('click', () => window.api.shell.openPath(pack.dir));
@@ -1239,41 +2562,6 @@ async function installPacks(paths) {
     renderContentTypes();
     renderContentGrid();
   }
-}
-
-/** Copies or converts files into an existing pack, then rescans. */
-async function importIntoPack(pack, paths) {
-  if (!paths || !paths.length) return;
-
-  const described = await window.api.content.describe(paths);
-  const usable = described.filter((f) => f.kind);
-  if (!usable.length) {
-    toast('None of those are audio, video or images.', 'warn');
-    return;
-  }
-
-  toast(`Adding ${usable.length} file${usable.length > 1 ? 's' : ''}…`);
-  let added = 0;
-  let failed = 0;
-
-  for (const file of usable) {
-    const target = importTargetName(pack.type, file, usable);
-    const result = await window.api.content.import(pack.dir, [file.path], {
-      baseName: target.base,
-      kind: file.kind,
-      audioFormat: target.audioFormat,
-      maxSeconds: target.maxSeconds,
-    });
-    if (result.ok && result.results.every((r) => r.ok)) added++;
-    else failed++;
-  }
-
-  if (failed) toast(`Added ${added}, but ${failed} failed.`, 'warn', 7000);
-  else toast(`Added ${added} file${added > 1 ? 's' : ''} to "${pack.title}".`, 'ok');
-
-  await refreshContent();
-  const fresh = (currentContentType() || { packs: [] }).packs.find((p) => p.id === pack.id);
-  if (fresh) renderContentDetail(fresh);
 }
 
 async function removePack(pack) {
@@ -2339,6 +3627,124 @@ function askConfirm({ title, detail, buttons, mark = '?', danger = false, cancel
   });
 }
 
+/**
+ * The same dialog, with somewhere to type.
+ *
+ * Resolves with the text, or null if it was declined. Empty text and a decline
+ * are different answers, so they are not both null: approving with nothing to
+ * add is a perfectly ordinary thing to do.
+ */
+function askText({ title, detail, placeholder = '', buttons, mark = '?', required = false }) {
+  return new Promise((resolve) => {
+    el.confirmMark.textContent = mark;
+    el.confirmMark.classList.remove('danger');
+    el.confirmTitle.textContent = title;
+    el.confirmDetail.textContent = detail || '';
+    el.confirmDetail.hidden = !detail;
+    el.confirmButtons.innerHTML = '';
+
+    const field = document.createElement('textarea');
+    field.className = 'input';
+    field.rows = 3;
+    field.placeholder = placeholder;
+    field.style.width = '100%';
+    field.style.marginTop = '10px';
+    el.confirmDetail.after(field);
+
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      el.confirmDialog.removeEventListener('close', onClose);
+      field.remove();
+      el.confirmDialog.close();
+      resolve(value);
+    };
+    const onClose = () => finish(null);
+
+    const go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'btn btn-small btn-primary';
+    go.textContent = buttons[0];
+    go.addEventListener('click', () => {
+      const said = field.value.trim();
+      if (required && !said) {
+        field.focus();
+        return;
+      }
+      finish(said);
+    });
+
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'btn btn-small';
+    cancel.textContent = buttons[1] || 'Cancel';
+    cancel.addEventListener('click', () => finish(null));
+
+    el.confirmButtons.append(go, spacer(), cancel);
+    el.confirmDialog.addEventListener('close', onClose);
+    el.confirmDialog.showModal();
+    field.focus();
+  });
+}
+
+/**
+ * The same dialog, with a list of things to tick.
+ *
+ * Resolves with the chosen ids, or null if it was declined. Ticking nothing is
+ * a real answer and comes back as an empty list, which is different from
+ * backing out.
+ */
+function askChecklist({ title, detail, options, mark = '?', buttons }) {
+  return new Promise((resolve) => {
+    el.confirmMark.textContent = mark;
+    el.confirmMark.classList.remove('danger');
+    el.confirmTitle.textContent = title;
+    el.confirmDetail.textContent = detail || '';
+    el.confirmDetail.hidden = !detail;
+    el.confirmButtons.innerHTML = '';
+
+    const box = document.createElement('div');
+    box.className = 'checklist';
+    box.innerHTML = options.map((o) => `
+      <label class="checklist-row">
+        <input type="checkbox" value="${escapeHtml(o.id)}" />
+        <span>${escapeHtml(o.label)}</span>
+      </label>`).join('');
+    el.confirmDetail.after(box);
+
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      el.confirmDialog.removeEventListener('close', onClose);
+      box.remove();
+      el.confirmDialog.close();
+      resolve(value);
+    };
+    const onClose = () => finish(null);
+
+    const go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'btn btn-small btn-primary';
+    go.textContent = buttons[0];
+    go.addEventListener('click', () => finish(
+      [...box.querySelectorAll('input:checked')].map((i) => i.value),
+    ));
+
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'btn btn-small';
+    cancel.textContent = buttons[1] || 'Cancel';
+    cancel.addEventListener('click', () => finish(null));
+
+    el.confirmButtons.append(go, spacer(), cancel);
+    el.confirmDialog.addEventListener('close', onClose);
+    el.confirmDialog.showModal();
+    go.focus();
+  });
+}
+
 function spacer() {
   const span = document.createElement('span');
   span.className = 'grow';
@@ -3032,6 +4438,9 @@ function showProgress(visible, title, detail) {
 // Settings
 
 function openSettings() {
+  // Not awaited: it asks GitHub whether the stored sign-in still works, and the
+  // rest of the panel should not wait on the network to appear.
+  renderGithubLink();
   el.setGameDir.value = state.settings.gameDir || '';
   el.setOutDir.value = state.settings.outputDir || '';
   el.setFfmpeg.value = state.settings.ffmpegPath || '';
@@ -3380,6 +4789,16 @@ function wireEvents() {
     state.contentSearch = '';
     renderContentGrid();
   });
+  el.modsSearch.addEventListener('input', () => renderMods());
+  el.modsSearch.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    el.modsSearch.value = '';
+    renderMods();
+  });
+  el.btnModsRefresh.addEventListener('click', () => (state.modsShow === 'inbox' ? renderInbox() : refreshMods({ force: true })));
+  el.btnModsBrowse.addEventListener('click', () => showMods('browse'));
+  el.btnModsInbox.addEventListener('click', () => showMods('inbox'));
+
   el.btnBack.addEventListener('click', () => {
     if (!state.loading) player.seek(el.video.currentTime - 5);
   });
@@ -3445,6 +4864,24 @@ function wireEvents() {
       state.outputPathChosen = true;
     }
   });
+
+  el.btnGithubLink.addEventListener('click', linkGithub);
+  el.btnGithubUnlink.addEventListener('click', unlinkGithub);
+  el.btnAdminRefresh.addEventListener('click', () => showAdmin(state.adminShow, { force: true }));
+  el.adminSearch.addEventListener('input', () => {
+    showAdmin(state.adminShow);
+  });
+  el.adminSearch.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    el.adminSearch.value = '';
+    el.adminSearch.dispatchEvent(new Event('input'));
+  });
+  for (const button of el.adminTabs) {
+    button.addEventListener('click', () => showAdmin(button.dataset.admin));
+  }
+  // Asked once at start-up. Signing in or out asks again, since that is the
+  // only thing that can change the answer.
+  refreshAdminAccess();
 
   el.btnPickGameDir.addEventListener('click', pickGameDir);
   el.btnPickOutDir.addEventListener('click', async () => {

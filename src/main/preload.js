@@ -30,6 +30,10 @@ const on = makeEmitter([
   'proxy:progress',
   'import:progress',
   'content:changedOnDisk',
+  'mods:progress',
+  'mods:deviceCode',
+  'mods:publishProgress',
+  'review:progress',
 ]);
 
 contextBridge.exposeInMainWorld('api', {
@@ -91,11 +95,43 @@ contextBridge.exposeInMainWorld('api', {
     onChangedOnDisk: (fn) => on('content:changedOnDisk', fn),
   },
 
+  mods: {
+    index: () => ipcRenderer.invoke('mods:index'),
+    install: (record) => ipcRenderer.invoke('mods:install', { record }),
+    share: (packDir, details) => ipcRenderer.invoke('mods:share', { packDir, details }),
+    onProgress: (fn) => on('mods:progress', fn),
+
+    // Publishing. Only these ask for an account; everything above is anonymous.
+    whoAmI: () => ipcRenderer.invoke('mods:whoAmI'),
+    // Your own submissions, and whether you are trusted or blocked.
+    inbox: () => ipcRenderer.invoke('mods:inbox'),
+    signIn: () => ipcRenderer.invoke('mods:signIn'),
+    signOut: () => ipcRenderer.invoke('mods:signOut'),
+    publish: (zipPath, details) => ipcRenderer.invoke('mods:publish', { zipPath, details }),
+    // The device code arrives while signIn is still waiting, so it can be shown.
+    onDeviceCode: (fn) => on('mods:deviceCode', fn),
+    onPublishProgress: (fn) => on('mods:publishProgress', fn),
+  },
+
+  // Moderation. Whether any of this works is GitHub's decision, not a setting.
+  review: {
+    status: () => ipcRenderer.invoke('review:status'),
+    queue: () => ipcRenderer.invoke('review:queue'),
+    open: (record) => ipcRenderer.invoke('review:open', { record }),
+    close: () => ipcRenderer.invoke('review:close'),
+    setListed: (packId, listed) => ipcRenderer.invoke('review:setListed', { packId, listed }),
+    decide: (number, decision, reason) =>
+      ipcRenderer.invoke('review:decide', { number, decision, reason }),
+    onProgress: (fn) => on('review:progress', fn),
+  },
+
   media: {
     probe: (files) => ipcRenderer.invoke('media:probe', files),
     proxy: (videoPath, options) => ipcRenderer.invoke('media:proxy', videoPath, options),
     cancelProxy: (videoPath) => ipcRenderer.invoke('media:cancelProxy', videoPath),
     onProxyProgress: (fn) => on('proxy:progress', fn),
+    // Bytes over IPC, because fetch on the custom scheme is cross-origin.
+    bytes: (filePath) => ipcRenderer.invoke('media:bytes', filePath),
   },
 
   dialog: {

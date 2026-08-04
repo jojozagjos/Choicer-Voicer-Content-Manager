@@ -206,7 +206,12 @@ function inspectVoice(dir, files, { parseIni, findAudioSibling }) {
         id: prefix ? `${prefix}/${base}` : base,
         time: typeof times[0] === 'number' ? times[0] : parseFloat(times[0]) || 0,
         caption: readClipCaption(folderDir, folderFiles, base, data),
-        character: Array.isArray(data.dub_characters) ? data.dub_characters[0] || '' : '',
+        // Trimmed on the way in. A stray space is invisible in the editor but
+        // makes " Bob" a different character from "Bob" everywhere it matters:
+        // the colour, the volume, the list of who is in the pack.
+        character: Array.isArray(data.dub_characters)
+          ? String(data.dub_characters[0] || '').trim()
+          : '',
         image: typeof data.image === 'string' ? data.image : '',
         audio: findAudioSibling(folderDir, base, folderFiles),
         fillerImage: folderFiller ? path.join(folderDir, folderFiller) : null,
@@ -304,7 +309,15 @@ function inspectVoice(dir, files, { parseIni, findAudioSibling }) {
     videoPath: video ? path.join(dir, video) : null,
     backingPath: backingName ? path.join(dir, backingName) : null,
     // Sorted, so the editor lists them in the order they play.
-    clips: clips.sort((a, b) => a.time - b.time),
+    //
+    // The name breaks ties. Without it, clips sharing a time — which every clip
+    // in a new pack does, before any of them has been placed — came back in
+    // whatever order the filesystem happened to list them, so a pack looked
+    // shuffled the moment it was made.
+    //
+    // Compared numerically, or `10_clip` sorts above `2_clip`.
+    clips: clips.sort((a, b) => a.time - b.time
+      || String(a.base).localeCompare(String(b.base), undefined, { numeric: true })),
     clipCount: clips.length,
     childFolders,
     characters: [...new Set(clips.map((c) => c.character).filter(Boolean))],

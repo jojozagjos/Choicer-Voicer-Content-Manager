@@ -2,7 +2,43 @@
 
 ## 1.0.3
 
-Working with a pack that has been recorded several times over.
+Sharing packs, and working with a pack that has been recorded several times over.
+
+### Sharing a pack
+
+- Any pack can be packaged into a single zip from Content, ready to send to
+  anyone. The zip carries its own description inside it, so it is one file rather
+  than two and needs nothing filled in before it can be handed over.
+- Packing shrinks the pack on the way, usually to about half the size. Video
+  above 3 Mbps is re-encoded to 720p and lossless audio becomes Vorbis; anything
+  already efficient is left alone, since re-encoding it would make it larger.
+  The pack in the game folder is never touched.
+- A pack can be published to a shared directory instead, which uploads it to the
+  author's own GitHub account and offers it for listing. Signing in is asked for
+  once and only when publishing.
+- Publishing a pack that is already listed offers to update it instead. The
+  listing keeps its place, its first published date and its download count, and
+  the button says so rather than offering to publish something twice.
+- Publishing asks whether the pack contains strong language, sexual content,
+  nudity, graphic violence, drug references or flashing images. Anything marked
+  is shown on the listing, so nobody installs something they did not expect.
+- A pack that has not changed since it was last packaged is not re-encoded
+  again, so packaging one a second time is instant rather than another few
+  minutes.
+- Packaging shows how far along it is, and a pack cannot be published without a
+  picture — a listing without one is a blank space in a grid of pictures.
+
+### The Mods tab
+
+- A new tab listing packs other people have shared, by kind, with a search box.
+  Installing one checks it against the checksum it was published with, refuses
+  anything malformed, and adds it to the library.
+- Browsing and installing never ask for an account.
+- A submissions list shows what happened to every pack offered to the directory,
+  and why. A pack that was not listed carries the reason with it, rather than the
+  explanation sitting somewhere nobody looks.
+- A pack installed from the directory keeps its author. It can still be packaged
+  and passed on, but not published under a different name.
 
 ### Recording sessions
 
@@ -14,10 +50,36 @@ Working with a pack that has been recorded several times over.
   one that has to be worked out from the names.
 - The mark comes off as soon as the session is opened.
 
+### The editor
+
+- The character box opens as a name is typed, and the arrow keys move through
+  the matches with Enter to take one.
+- Each character's clips are drawn in that character's own colour, so who speaks
+  when can be read off the timeline without reading any labels.
+- Playing a line pauses the video first, moves the playhead to that line, and
+  brings it into view. Two takes of the same line no longer play at once.
+- Clicking a line's time scrolls the timeline to it instead of moving the
+  playhead somewhere off screen.
+- A newly added line is scrolled to, rather than left below the fold where
+  nothing appeared to happen.
+- Lines are ordered by name when they share a time, so a pack no longer looks
+  shuffled the moment it is made. Numbers sort as numbers, so line 10 follows
+  line 9 rather than line 1.
+- A stray space around a character's name is ignored, instead of quietly making
+  a second character with the same name.
+
 ### Content
 
 - The content list has a search box, narrowing the packs shown as a name is
   typed.
+- Opening the exports folder works from the buttons that offer it. It was being
+  refused for being outside the game folder, and the refusal was not shown.
+
+### Under the hood
+
+- Updated to a current Chromium, and the window that displays packs now runs
+  sandboxed. Both matter more than they used to, because the app now opens files
+  that came from other people.
 
 ## 1.0.2
 

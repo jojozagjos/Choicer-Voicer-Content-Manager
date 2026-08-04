@@ -39,6 +39,10 @@ export class Timeline {
     this.playhead = 0;
     this.selected = null;
     this.maxClip = options.maxClip || 6;
+    // Told from outside, so the timeline does not need to know where character
+    // colours are kept. Returns null for "no colour of its own", which is what
+    // an unnamed clip gets.
+    this.colourFor = options.colourFor || (() => null);
 
     // View window, in seconds. Zooming narrows it.
     this.viewStart = 0;
@@ -134,6 +138,31 @@ export class Timeline {
 
   setPlayhead(time) {
     this.playhead = time;
+    this.draw();
+  }
+
+  /**
+   * Scrolls the view so a moment is on screen.
+   *
+   * Only moves when it has to. Recentring on every seek makes the timeline
+   * lurch under the cursor while you are working in one part of it, so a time
+   * already comfortably in view is left where it is.
+   */
+  showAround(time) {
+    if (!Number.isFinite(time) || !this.duration) return;
+
+    const span = this.viewSpan;
+    // A margin, so a clip landing right on the edge still gets moved.
+    const edge = span * 0.12;
+
+    if (time >= this.viewStart + edge && time <= this.viewEnd - edge) return;
+
+    let start = time - span / 2;
+    // Clamped, so the view never scrolls past either end of the video.
+    start = Math.max(0, Math.min(start, Math.max(0, this.duration - span)));
+
+    this.viewStart = start;
+    this.viewEnd = start + span;
     this.draw();
   }
 
@@ -356,8 +385,14 @@ export class Timeline {
       const h = box.h;
       const gripH = Math.min(GRIP_H, h * 0.45);
 
-      ctx.fillStyle = isSelected ? accent : `${accent}55`;
-      ctx.strokeStyle = accent;
+      // Each character gets their own colour, so who is speaking can be read
+      // off the shape of the timeline without reading any labels. Clips with
+      // nobody set fall back to the accent, as before.
+      const own = this.colourFor(clip.character);
+      const tint = own || accent;
+
+      ctx.fillStyle = isSelected ? tint : `${tint}55`;
+      ctx.strokeStyle = tint;
       ctx.lineWidth = isSelected ? 2 : 1;
 
       ctx.beginPath();

@@ -611,7 +611,16 @@ export class PackEditor {
     const q = (role) => controls.querySelector(`[data-role="${role}"]`);
     const clipList = clipPanel.querySelector('[data-role="clips"]');
 
-    const timeline = new Timeline(q('timeline'), { maxClip: 6 });
+    const timeline = new Timeline(q('timeline'), {
+      maxClip: 6,
+      // Only a real colour is passed on. `characterColour` answers with a CSS
+      // variable when a character has none set, and canvas cannot read those —
+      // it would paint every unnamed clip transparent.
+      colourFor: (name) => {
+        const set = (this.settings && this.settings.characterColors) || {};
+        return (name && set[name]) || null;
+      },
+    });
     this.timeline = timeline;
     timeline.setClips(this.pack.clips || []);
 
@@ -1146,7 +1155,10 @@ export class PackEditor {
     // Straight into typing, which is the whole point of the button.
     const row = this.root.querySelector(`.clip-row[data-base="${CSS.escape(this._lastAdded || '')}"]`);
     const field = row && row.querySelector('[data-field="caption"]');
-    if (field) { field.focus(); field.scrollIntoView({ block: 'nearest' }); }
+    // Centred rather than merely brought to the nearest edge. A new clip lands
+    // at the end of the list, and "nearest" leaves it hard against the bottom
+    // where it reads as an accident rather than the thing just created.
+    if (field) { field.focus(); field.scrollIntoView({ block: 'center' }); }
   }
 
   /**
@@ -1240,19 +1252,31 @@ export class PackEditor {
     }
   }
 
-  /** Decodes the backing track once, for the waveform under the timeline. */
+  /**
+   * Decodes the backing track once, for the waveform under the timeline.
+   *
+   * Read over IPC rather than with `fetch` on the cvmedia:// address. That is a
+   * cross-origin request from a file:// page and it is refused, which is why
+   * this quietly produced nothing while the video — loaded by a media element,
+   * which needs no such permission — kept working.
+   */
   async loadBackingPeaks() {
+    if (!this.pack.backingPath) return;
     try {
-      const res = await fetch(this.pack.backingUrl);
-      const bytes = await res.arrayBuffer();
+      const got = await this.api.media.bytes(this.pack.backingPath);
+      if (!got || !got.ok) throw new Error(got ? got.error : 'no answer');
+
       const ctx = new AudioContext();
-      const buffer = await ctx.decodeAudioData(bytes);
+      const buffer = await ctx.decodeAudioData(got.bytes);
       this.backingPeaks = computePeaks(buffer);
       this.backingDuration = buffer.duration;
       ctx.close();
       this.drawBackingWave();
-    } catch {
-      // The lane still works as a control strip without its picture.
+    } catch (err) {
+      // The lane still works as a control strip without its picture, so this is
+      // not worth interrupting anyone over — but it should not be invisible
+      // either, or a broken waveform looks like a pack with no music.
+      console.warn(`The backing waveform could not be drawn: ${err.message}`);
     }
   }
 
@@ -1326,14 +1350,20 @@ export class PackEditor {
     }
   }
 
-  /** Decodes the preview audio once and hands the timeline its peaks. */
+  /**
+   * Decodes the preview audio once and hands the timeline its peaks.
+   *
+   * Over IPC, for the same reason as the backing track: a cross-origin fetch to
+   * cvmedia:// is refused by Chromium outright.
+   */
   async loadWaveform(timeline) {
     if (!this.pack.videoUrl) return;
     try {
-      const res = await fetch(this.pack.videoUrl);
-      const bytes = await res.arrayBuffer();
+      const got = await this.api.media.bytes(this.pack.videoUrl);
+      if (!got || !got.ok) throw new Error(got ? got.error : 'no answer');
+
       const ctx = new AudioContext();
-      const buffer = await ctx.decodeAudioData(bytes);
+      const buffer = await ctx.decodeAudioData(got.bytes);
       timeline.setPeaks(computePeaks(buffer));
       ctx.close();
     } catch {
@@ -1452,8 +1482,16 @@ export class PackEditor {
     if (this.timeline) {
       this.timeline.setClips(this.pack.clips || []);
       this.timeline.select(result.base);
+      const made = (this.pack.clips || []).find((c) => c.base === result.base);
+      if (made && Number.isFinite(made.time)) this.timeline.showAround(made.time);
     }
     this.renderClipList(clipList);
+
+    // A new clip is added at the end of a long list, which puts it below the
+    // fold — so it looked as though nothing had happened. Brought into view
+    // after the list is drawn, since it does not exist until then.
+    const row = clipList.querySelector(`.clip-row[data-base="${CSS.escape(result.base)}"]`);
+    if (row) row.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }
 
   /** Grabs the current video frame as a PNG data URL. */
@@ -1573,7 +1611,13 @@ export class PackEditor {
 
       row.querySelector('.line-time').addEventListener('click', () => {
         if (this.video) this.video.currentTime = clip.time;
-        if (this.timeline) this.timeline.select(clip.base);
+        if (this.timeline) {
+          this.timeline.select(clip.base);
+          // Moving the playhead somewhere off screen leaves you looking at a
+          // part of the video you did not ask about, so the view follows it.
+          this.timeline.setPlayhead(clip.time);
+          this.timeline.showAround(clip.time);
+        }
         this.renderClipList(container);
       });
 
@@ -1912,9 +1956,62 @@ export class PackEditor {
       window.addEventListener('resize', close);
     };
 
+    /** Moves the highlight, wrapping at both ends. */
+    const move = (delta) => {
+      if (!list) return;
+      const options = [...list.querySelectorAll('button')];
+      if (!options.length) return;
+
+      const at = options.findIndex((o) => o.classList.contains('on'));
+      const next = at === -1
+        ? (delta > 0 ? 0 : options.length - 1)
+        : (at + delta + options.length) % options.length;
+
+      for (const option of options) option.classList.remove('on');
+      options[next].classList.add('on');
+      // Keeps the highlight visible when the list is longer than its box.
+      options[next].scrollIntoView({ block: 'nearest' });
+    };
+
+    /** Takes the highlighted name, or the first one if none is highlighted. */
+    const take = () => {
+      if (!list) return false;
+      const chosen = list.querySelector('button.on') || list.querySelector('button');
+      if (!chosen) return false;
+      input.value = chosen.dataset.name;
+      close();
+      onPick();
+      return true;
+    };
+
     button.addEventListener('click', open);
+
+    // Typing opens the list and re-sorts it, so the names narrow as you go
+    // rather than waiting for the arrow to be pressed. Reopened rather than
+    // filtered in place, because `open` already knows how to rank against what
+    // has been typed and two orderings would drift apart.
+    input.addEventListener('input', () => {
+      if (list) close();
+      if (input.value.trim()) open();
+    });
+
     input.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') close();
+      if (event.key === 'Escape') { close(); return; }
+
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        // Opening on the first press means the list can be reached from the
+        // keyboard without touching the mouse at all.
+        if (!list) open();
+        else move(event.key === 'ArrowDown' ? 1 : -1);
+        event.preventDefault();
+        return;
+      }
+
+      if (event.key === 'Enter' && list) {
+        // Only swallowed when the list is open and something was taken from
+        // it; otherwise Enter still means whatever it meant before.
+        if (take()) event.preventDefault();
+      }
     });
   }
 
@@ -1962,6 +2059,19 @@ export class PackEditor {
         this.clipButton = null;
         return;
       }
+    }
+
+    // The video is the pack's own audio, so leaving it running means hearing
+    // two takes of the same line at once and being unable to judge either.
+    const video = this.el && this.el.querySelector('video');
+    if (video && !video.paused) video.pause();
+
+    // Put the playhead on the line being listened to, and bring it into view.
+    // Hearing a clip while the timeline shows a different part of the video is
+    // the kind of thing that makes an editor feel like it is fighting you.
+    if (this.timeline && Number.isFinite(clip.time)) {
+      this.timeline.setPlayhead(clip.time);
+      if (this.timeline.showAround) this.timeline.showAround(clip.time);
     }
 
     const audio = new Audio(clip.audioUrl);

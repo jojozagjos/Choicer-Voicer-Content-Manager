@@ -17,13 +17,47 @@ const { scanContent } = require('./content');
 const {
   createPack, installPack, deletePack, trashClip, restoreClip, writeClipMeta, saveImage, writeIni,
   clipRecordings, pruneTrash, packSessions, orphanSessions, deleteSessions, deleteSession,
-  writeIniSections,
+  writeIniSections, identifyPack,
 } = require('./create');
 const convert = require('./convert');
+const {
+  validateRecord, validateIndex, checkArchiveShape, CONTENT_FLAGS,
+} = require('./directory');
+const {
+  installFromRecord, packForSharing, download, checksum, listEntries, extractInto,
+} = require('./modinstall');
+const github = require('./github');
+const review = require('./review');
+const { scanPack } = require('./packscan');
 
 const execFileAsync = promisify(execFile);
 
 const APP_NAME = 'Choicer Voicer Content Manager';
+
+/**
+ * The OAuth application publishing signs in against.
+ *
+ * Public on purpose, and safe in source: it appears in the address of every
+ * device-flow sign-in. The flow deliberately has no client secret, because a
+ * desktop app cannot keep one — anything shipped inside it can be read straight
+ * out of the files by whoever installed it.
+ */
+const GITHUB_CLIENT_ID = 'Ov23lifiasIdhnLhqPR3';
+
+/**
+ * The repository holding the pack directory.
+ *
+ * Submissions are opened as issues here and the index is read from it. Kept as
+ * two constants rather than one built from the other, because the index is
+ * fetched from raw.githubusercontent.com while issues go to the API, and
+ * guessing one address from the other is how a typo becomes hard to find.
+ */
+const DIRECTORY_REPO = 'jojozagjos/choicer-voicer-directory';
+const DIRECTORY_INDEX_URL =
+  `https://raw.githubusercontent.com/${DIRECTORY_REPO}/main/index.json`;
+
+/** How big a directory index is allowed to be before it is refused. */
+const MAX_INDEX_BYTES = 8 * 1024 * 1024;
 
 // Windows works out what to call a program in the volume mixer, the taskbar
 // and its notifications from these. Without them it falls back to the Electron
@@ -474,6 +508,72 @@ function isAllowed(filePath) {
   return false;
 }
 
+/**
+ * Whether a folder may be revealed in the file manager.
+ *
+ * Wider than `isAllowed`, and only for opening. Writes stay confined to the
+ * game folder, but the app also puts things in the exports folder — shared
+ * packs, rendered videos — and offering to open a folder that is then refused
+ * is worse than not offering at all.
+ *
+ * Unlike `isAllowed`, an exact match on a root counts. "Shared packs" sits at
+ * the top of the exports folder and the caller may well ask for the root
+ * itself, which is not an escape attempt.
+ */
+function isOpenableFolder(target) {
+  const resolved = path.resolve(target);
+  const roots = [...allowedRoots];
+  for (const extra of [settings && settings.outputDir, app.getPath('documents')]) {
+    if (extra) roots.push(path.resolve(extra));
+  }
+  for (const root of roots) {
+    const rel = path.relative(root, resolved);
+    if (!rel) return true;
+    if (!rel.startsWith('..') && !path.isAbsolute(rel)) return true;
+  }
+  return false;
+}
+
+/**
+ * The folder holding the pack currently being reviewed, if any.
+ *
+ * Reviewing means looking at somebody's unvetted video and audio, which has to
+ * happen somewhere the renderer can reach. That somewhere is a temporary folder
+ * and never the game folder: a pack being judged must not be able to end up
+ * installed, and one that is refused must leave nothing behind.
+ */
+let reviewSandbox = null;
+
+/** Whether a path is inside the pack currently open for review. */
+function inReviewSandbox(filePath) {
+  if (!reviewSandbox) return false;
+  const rel = path.relative(reviewSandbox, path.resolve(filePath));
+  return Boolean(rel) && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+/** Throws away the sandbox, whatever is in it. */
+function clearReviewSandbox() {
+  if (!reviewSandbox) return;
+  try { fs.rmSync(reviewSandbox, { recursive: true, force: true }); } catch { /* temp */ }
+  reviewSandbox = null;
+}
+
+/**
+ * What lets the renderer `fetch()` from this scheme rather than only play from
+ * it.
+ *
+ * The window is a `file://` page and this is a registered standard, secure
+ * scheme, so they are separate origins and a fetch between them is cross-origin
+ * — refused without these headers. Media elements never needed them, which is
+ * why video kept playing while the editor's waveform quietly stopped loading:
+ * the backing track is read with fetch, not by an `<audio>` tag.
+ *
+ * Opening it to `*` costs nothing here. The handler already refuses any path
+ * outside the game folder and the review sandbox, so the answer to a request
+ * from anywhere else is a 403 either way.
+ */
+const CORS = { 'Access-Control-Allow-Origin': '*' };
+
 function registerMediaProtocol() {
   protocol.handle(MEDIA_SCHEME, async (request) => {
     let filePath;
@@ -483,7 +583,13 @@ function registerMediaProtocol() {
       return new Response('Bad request', { status: 400 });
     }
 
-    if (!isAllowed(filePath)) return new Response('Forbidden', { status: 403 });
+    // The review sandbox is the one place outside the game folder the renderer
+    // may play media from, and only while a pack is actually open for review.
+    // It is a single exact folder, set when a review starts and cleared when it
+    // ends, rather than a standing exception.
+    if (!isAllowed(filePath) && !inReviewSandbox(filePath)) {
+      return new Response('Forbidden', { status: 403 });
+    }
 
     let stat;
     try {
@@ -510,6 +616,7 @@ function registerMediaProtocol() {
               'Content-Length': String(end - start + 1),
               'Content-Range': `bytes ${start}-${end}/${stat.size}`,
               'Accept-Ranges': 'bytes',
+              ...CORS,
             },
           });
         }
@@ -522,6 +629,7 @@ function registerMediaProtocol() {
         'Content-Type': type,
         'Content-Length': String(stat.size),
         'Accept-Ranges': 'bytes',
+        ...CORS,
       },
     });
   });
@@ -642,7 +750,17 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      // On, because the renderer decodes files that came from strangers.
+      //
+      // Every pack installed from the directory is somebody else's video and
+      // audio going through Chromium's decoders, and those have had real
+      // remote-code-execution holes. The sandbox is what keeps a decoder bug
+      // inside the renderer instead of handing over the whole machine.
+      //
+      // Affordable here because the preload asks for nothing Node-specific —
+      // only contextBridge, ipcRenderer and webUtils, all of which a sandboxed
+      // preload can still use. Everything else already goes over IPC.
+      sandbox: true,
     },
   });
 
@@ -2444,12 +2562,678 @@ function runSmokeTest(win) {
 const exportJobs = new Map();
 let nextJobId = 1;
 
+/**
+ * Fetches the directory index.
+ *
+ * Size-capped twice: the declared length is refused early so a huge file is
+ * never pulled down, and the text is checked again afterwards because a server
+ * is free to lie about, or simply omit, content-length.
+ */
+async function fetchDirectory(url) {
+  const parsed = new URL(url);
+  if (parsed.protocol !== 'https:') throw new Error('the directory address has to be https');
+
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(15000),
+    headers: { accept: 'application/json' },
+  });
+  if (!response.ok) throw new Error(`the directory answered ${response.status}`);
+
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > MAX_INDEX_BYTES) {
+    throw new Error('the directory is far larger than it should be');
+  }
+
+  const text = await response.text();
+  if (text.length > MAX_INDEX_BYTES) {
+    throw new Error('the directory is far larger than it should be');
+  }
+  return text;
+}
+
+/**
+ * Registers everything the Mods tab needs.
+ *
+ * Kept together rather than scattered through registerIpc, because these are
+ * the only handlers that talk to the outside world and it is worth being able
+ * to see all of them at once.
+ */
+/**
+ * Where the GitHub token is kept between runs.
+ *
+ * Encrypted with `safeStorage`, which hands the actual key to the OS keychain —
+ * Credential Manager on Windows, Keychain on macOS. The file that lands on disk
+ * is therefore useless to anyone who copies it off the machine, which a plain
+ * JSON file in userData would not be.
+ */
+function tokenFile() {
+  return path.join(app.getPath('userData'), 'github-token');
+}
+
+function saveToken(token) {
+  const { safeStorage } = require('electron');
+  if (!safeStorage.isEncryptionAvailable()) {
+    // Refused rather than written in the clear. Someone whose OS cannot encrypt
+    // it can still publish; they just sign in each time, which is a smaller
+    // cost than a readable token sitting in their profile forever.
+    return false;
+  }
+  fs.writeFileSync(tokenFile(), safeStorage.encryptString(token));
+  return true;
+}
+
+function loadToken() {
+  const { safeStorage } = require('electron');
+  try {
+    if (!fs.existsSync(tokenFile()) || !safeStorage.isEncryptionAvailable()) return null;
+    return safeStorage.decryptString(fs.readFileSync(tokenFile()));
+  } catch {
+    // A token encrypted by a different machine or a reinstalled OS cannot be
+    // read back. Signing in again is the fix, so this is not worth reporting.
+    return null;
+  }
+}
+
+function forgetToken() {
+  try { fs.rmSync(tokenFile(), { force: true }); } catch { /* already gone */ }
+}
+
+/**
+ * Who made each pack that was installed from somewhere else.
+ *
+ * Kept here rather than as a file inside the pack, because the game folder is
+ * the player's and nothing belongs in it that the game did not ask for.
+ *
+ * The point is credit, not enforcement against a determined person — anyone
+ * could rebuild a pack by hand. It stops the easy mistake: installing
+ * somebody's work and publishing it as your own without ever meaning to.
+ */
+function originsFile() {
+  return path.join(app.getPath('userData'), 'installed-origins.json');
+}
+
+function readOrigins() {
+  try {
+    return JSON.parse(fs.readFileSync(originsFile(), 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+/** Remembers that a pack folder came from someone else. */
+function noteOrigin(packDir, record) {
+  if (!packDir || !record) return;
+  // A dropped folder has no author to record, and that absence is the point:
+  // it is known not to have been made here, which is enough to refuse
+  // publishing it.
+  if (!record.author && !record.dropped) return;
+
+  const all = readOrigins();
+  all[path.resolve(packDir).toLowerCase()] = {
+    author: record.author || '',
+    id: record.id || '',
+    title: record.title || '',
+    dropped: Boolean(record.dropped),
+    at: new Date().toISOString(),
+  };
+  try {
+    fs.writeFileSync(originsFile(), `${JSON.stringify(all, null, 2)}\n`);
+  } catch { /* losing this costs credit, not correctness */ }
+}
+
+/** What is known about where a pack came from, if anything. */
+function originOf(packDir) {
+  if (!packDir) return null;
+  return readOrigins()[path.resolve(packDir).toLowerCase()] || null;
+}
+
+/** Publishing: sign in, upload, submit. */
+function registerPublishIpc() {
+  /** Who is signed in, if anyone, and whether publishing is possible at all. */
+  ipcMain.handle('mods:whoAmI', async () => {
+    if (!github.isConfigured()) return { ok: true, configured: false };
+    const token = loadToken();
+    if (!token) return { ok: true, configured: true, signedIn: false, canSubmit: github.canSubmit() };
+    try {
+      const me = await github.whoAmI(token);
+      return { ok: true, configured: true, signedIn: true, canSubmit: github.canSubmit(), ...me };
+    } catch {
+      // The stored token no longer works — revoked, expired, or from another
+      // account. Dropping it means the next press offers a fresh sign-in
+      // instead of failing the same way again.
+      forgetToken();
+      return { ok: true, configured: true, signedIn: false, canSubmit: github.canSubmit() };
+    }
+  });
+
+  /**
+   * Starts the device flow and waits for approval.
+   *
+   * The code is sent to the renderer as soon as GitHub gives it, so it can be
+   * shown while this call is still waiting.
+   */
+  ipcMain.handle('mods:signIn', async (event) => {
+    if (!github.isConfigured()) {
+      return { ok: false, error: 'This build cannot sign in to GitHub.' };
+    }
+    try {
+      const start = await github.startSignIn();
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('mods:deviceCode', {
+          userCode: start.userCode,
+          verificationUri: start.verificationUri,
+          expiresInMs: start.expiresInMs,
+        });
+      }
+      const token = await github.waitForToken(start);
+      const stored = saveToken(token);
+      const me = await github.whoAmI(token);
+      return { ok: true, ...me, remembered: stored };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('mods:signOut', () => {
+    forgetToken();
+    return { ok: true };
+  });
+
+  /**
+   * What has happened to this person's own submissions, and where they stand.
+   *
+   * The reason a pack was refused lives on a GitHub issue, which is somewhere
+   * almost nobody will look. Bringing it into the app is the difference between
+   * being told why and being ignored.
+   */
+  ipcMain.handle('mods:inbox', async () => {
+    if (!github.isConfigured() || !DIRECTORY_REPO) return { ok: true, configured: false };
+    const token = loadToken();
+    if (!token) return { ok: true, configured: true, signedIn: false };
+
+    try {
+      const me = await github.whoAmI(token);
+      const [items, standing] = await Promise.all([
+        review.mySubmissions(token, DIRECTORY_REPO, me.login),
+        review.standingOf(DIRECTORY_REPO, me.login),
+      ]);
+      return { ok: true, configured: true, signedIn: true, login: me.login, items, standing };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  /**
+   * Uploads a packaged zip to the author's own account and offers it to the
+   * directory.
+   *
+   * The record is rebuilt here from what GitHub actually returned rather than
+   * from anything the renderer supplied, so the address in it is the address
+   * the file really has.
+   */
+  ipcMain.handle('mods:publish', async (event, { zipPath, details }) => {
+    const token = loadToken();
+    if (!token) return { ok: false, error: 'Not signed in to GitHub.' };
+    if (!fs.existsSync(zipPath)) return { ok: false, error: 'That zip is no longer there.' };
+
+    // Refused here rather than only in the interface, because this is the rule
+    // that keeps credit honest and the renderer is not where it should live.
+    const origin = originOf(details.packDir);
+    if (origin && origin.dropped) {
+      return {
+        ok: false,
+        error: `"${origin.title || details.title}" was added by dragging it in, so this app `
+          + 'has no way to know who made it. Only packs made or installed here can be '
+          + 'published. You can still package it as a zip and pass it on.',
+      };
+    }
+    if (origin && origin.author) {
+      const me = await github.whoAmI(token).catch(() => null);
+      if (!me || me.login.toLowerCase() !== String(origin.author).toLowerCase()) {
+        return {
+          ok: false,
+          error: `"${origin.title || details.title}" was made by ${origin.author} and installed `
+            + 'from the directory, so it cannot be published under another name. You can still '
+            + 'package it as a zip and pass it on.',
+        };
+      }
+    }
+
+    try {
+      const uploaded = await github.publish(token, {
+        zipPath,
+        packId: details.id,
+        title: details.title,
+      }, {
+        onProgress: ({ stage, percent, sent, bytes }) => {
+          if (event.sender.isDestroyed()) return;
+          event.sender.send('mods:publishProgress', { stage, percent, sent, bytes });
+        },
+      });
+
+      const now = new Date().toISOString();
+      const record = {
+        version: 1,
+        id: details.id,
+        type: details.type,
+        title: details.title,
+        summary: details.summary,
+        description: details.description || '',
+        // The account that actually holds the file, so the record can never
+        // claim someone it is not hosted by.
+        author: uploaded.author,
+        licence: details.licence || 'unstated',
+        content: Array.isArray(details.content) ? details.content : [],
+        tags: details.tags || [],
+        downloadUrl: uploaded.downloadUrl,
+        sha256: details.sha256,
+        bytes: uploaded.bytes,
+        gameVersion: details.gameVersion || null,
+        published: now,
+        updated: now,
+      };
+
+      const checked = validateRecord(record);
+      if (!checked.ok) {
+        return {
+          ok: false,
+          error: `The pack uploaded, but its record is not valid: ${checked.problems[0].message}`,
+          releaseUrl: uploaded.releaseUrl,
+        };
+      }
+
+      const say = (stage) => {
+        if (!event.sender.isDestroyed()) event.sender.send('mods:publishProgress', { stage });
+      };
+
+      if (!github.canSubmit()) {
+        // Uploaded and valid, with nowhere to list it yet. Said plainly, and
+        // the address is handed back so the work is not lost.
+        return {
+          ok: true,
+          submitted: false,
+          downloadUrl: uploaded.downloadUrl,
+          releaseUrl: uploaded.releaseUrl,
+          record: checked.record,
+        };
+      }
+
+      say('submitting');
+      const issue = await github.submitRecord(token, checked.record);
+      say('done');
+      return {
+        ok: true,
+        submitted: true,
+        downloadUrl: uploaded.downloadUrl,
+        releaseUrl: uploaded.releaseUrl,
+        issueUrl: issue.url,
+        record: checked.record,
+      };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+}
+
+/**
+ * Describes an unpacked pack well enough to judge it.
+ *
+ * Everything is handed back as a cvmedia:// address so the renderer can play
+ * and show it without ever being given a filesystem path.
+ */
+function describeForReview(dir) {
+  const files = [];
+  const walk = (at, base) => {
+    for (const entry of fs.readdirSync(at, { withFileTypes: true })) {
+      const full = path.join(at, entry.name);
+      if (entry.isDirectory()) walk(full, base);
+      else if (entry.isFile()) files.push({ rel: path.relative(base, full), full });
+    }
+  };
+  walk(dir, dir);
+
+  const ext = (f) => path.extname(f.rel).toLowerCase();
+  const url = (f) => mediaUrl(f.full);
+
+  const video = files.find((f) => ext(f) === '.ogv' || ext(f) === '.mp4');
+  const images = files.filter((f) => ['.png', '.jpg', '.jpeg', '.webp'].includes(ext(f)));
+  const audio = files.filter((f) => ['.wav', '.ogg', '.mp3', '.opus'].includes(ext(f)));
+
+  // Captions live beside their audio as .txt or .ini, and are the part most
+  // worth reading before listing anything.
+  const captions = [];
+  for (const f of files) {
+    if (!['.txt', '.ini'].includes(ext(f))) continue;
+    try {
+      const text = fs.readFileSync(f.full, 'utf8');
+      if (text.length < 8000) captions.push({ name: f.rel, text });
+    } catch { /* unreadable is not fatal here */ }
+  }
+
+  return {
+    files: files.map((f) => ({ name: f.rel, bytes: fs.statSync(f.full).size })),
+    totalBytes: files.reduce((n, f) => n + fs.statSync(f.full).size, 0),
+    video: video ? { name: video.rel, url: url(video) } : null,
+    images: images.map((f) => ({ name: f.rel, url: url(f) })),
+    audio: audio.map((f) => ({ name: f.rel, url: url(f) })),
+    captions,
+  };
+}
+
+/** Moderation: the queue, the sandbox, and the two decisions. */
+function registerReviewIpc() {
+  const tokenOrNull = () => loadToken();
+
+  /** Whether this account may moderate. Drives whether the tab exists at all. */
+  ipcMain.handle('review:status', async () => {
+    if (!github.isConfigured() || !DIRECTORY_REPO) return { ok: true, moderator: false };
+    const token = tokenOrNull();
+    if (!token) return { ok: true, moderator: false, signedIn: false };
+    try {
+      const me = await github.whoAmI(token);
+      const said = await review.permissionOf(token, DIRECTORY_REPO, me.login);
+      return { ok: true, signedIn: true, login: me.login, ...said, repo: DIRECTORY_REPO };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('review:queue', async () => {
+    const token = tokenOrNull();
+    if (!token) return { ok: false, error: 'Not signed in to GitHub.' };
+    try {
+      return { ok: true, items: await review.queue(token, DIRECTORY_REPO) };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  /**
+   * Downloads a submitted pack into the sandbox so it can be looked at.
+   *
+   * Every check that guards installing runs here too — checksum, archive shape,
+   * safe entry paths — because a pack being reviewed is the least trusted file
+   * the app ever opens, not the most.
+   */
+  ipcMain.handle('review:open', async (event, { record }) => {
+    const checked = validateRecord(record);
+    if (!checked.ok) {
+      return { ok: false, error: `That record is not valid: ${checked.problems[0].message}` };
+    }
+
+    clearReviewSandbox();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cvreview-'));
+    const zipPath = path.join(dir, 'pack.zip');
+    const unpacked = path.join(dir, 'pack');
+
+    const say = (stage) => {
+      if (!event.sender.isDestroyed()) event.sender.send('review:progress', { stage });
+    };
+
+    try {
+      say('downloading');
+      await download(checked.record.downloadUrl, zipPath, {
+        expectedBytes: checked.record.bytes,
+        onProgress: ({ percent }) => {
+          if (!event.sender.isDestroyed()) event.sender.send('review:progress', { percent });
+        },
+      });
+
+      say('checking');
+      const got = await checksum(zipPath);
+      if (got !== checked.record.sha256) {
+        throw new Error('The file does not match the checksum in the record. It has changed '
+          + 'since it was submitted, so it has not been opened.');
+      }
+
+      say('inspecting');
+      const shape = checkArchiveShape(await listEntries(zipPath));
+      if (!shape.ok) throw new Error(`This pack looks wrong: ${shape.problems.join('; ')}`);
+
+      say('unpacking');
+      fs.mkdirSync(unpacked, { recursive: true });
+      await extractInto(zipPath, unpacked);
+
+      let root = unpacked;
+      const top = fs.readdirSync(unpacked);
+      if (top.length === 1 && fs.statSync(path.join(unpacked, top[0])).isDirectory()) {
+        root = path.join(unpacked, top[0]);
+      }
+
+      // Opened only once everything above has passed, so a pack that failed a
+      // check is never reachable by the renderer.
+      reviewSandbox = path.resolve(dir);
+
+      const actualType = identifyPack(root);
+      const described = describeForReview(root);
+
+      // Pack video is Ogg Theora, which Chromium cannot decode — it plays as a
+      // black rectangle. The rest of the app already works around this with an
+      // MP4 proxy, and review needs the same or the one thing a reviewer most
+      // needs to see is the one thing they cannot.
+      //
+      // Built inside the sandbox so it is thrown away with everything else.
+      if (described.video) {
+        try {
+          say('converting');
+          const proxy = await ensureProxy(
+            path.join(root, described.video.name),
+            path.join(dir, 'proxy'),
+          );
+          described.video = { ...described.video, url: mediaUrl(proxy.path), playable: true };
+        } catch (err) {
+          // Said rather than left as a black rectangle nobody can explain.
+          described.video = { ...described.video, playable: false, why: err.message };
+        }
+      }
+
+      return {
+        ok: true,
+        type: actualType,
+        typeMatches: actualType === checked.record.type,
+        ...described,
+        // Advisory only. Everything genuinely dangerous was refused before
+        // extraction; this is the softer question of whether the pack is right.
+        report: scanPack({
+          files: described.files,
+          type: actualType,
+          claimedType: checked.record.type,
+          captions: described.captions,
+        }),
+      };
+    } catch (err) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      reviewSandbox = null;
+      return { ok: false, error: err.message };
+    }
+  });
+
+  /** Ends a review, taking the sandbox with it. */
+  ipcMain.handle('review:close', () => {
+    clearReviewSandbox();
+    return { ok: true };
+  });
+
+  /** Hides or restores a listed pack. */
+  ipcMain.handle('review:setListed', async (_e, { packId, listed }) => {
+    const token = tokenOrNull();
+    if (!token) return { ok: false, error: 'Not signed in to GitHub.' };
+    try {
+      const done = await review.setListed(token, DIRECTORY_REPO, packId, listed);
+      // The index will change once the workflow runs, so what is held here is
+      // already out of date.
+      return done;
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('review:decide', async (_e, { number, decision, reason }) => {
+    const token = tokenOrNull();
+    if (!token) return { ok: false, error: 'Not signed in to GitHub.' };
+    try {
+      const done = decision === 'approve'
+        ? await review.approve(token, DIRECTORY_REPO, number, reason)
+        : await review.reject(token, DIRECTORY_REPO, number, reason);
+      // The pack has been judged either way; nothing should linger on disk.
+      clearReviewSandbox();
+      return done;
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+}
+
+/**
+ * Hands a media file to the renderer as bytes.
+ *
+ * The editor needs the whole backing track in memory to draw its waveform, and
+ * it used to read it with `fetch` on the cvmedia:// scheme. That is a
+ * cross-origin request from a file:// page to a registered standard scheme, and
+ * it stopped working — so the waveform silently vanished while video, which is
+ * loaded by a media element and never needed CORS, carried on fine.
+ *
+ * Reading it over IPC has no origin to be wrong about. The path is checked the
+ * same way the protocol handler checks it, so this opens nothing new.
+ */
+function registerMediaBytesIpc() {
+  ipcMain.handle('media:bytes', async (_e, target) => {
+    if (!target) return { ok: false, error: 'no file given' };
+
+    // Takes either a path or one of our own cvmedia:// addresses, so callers
+    // that only ever held a URL do not have to learn about paths.
+    let filePath = target;
+    if (String(target).startsWith(`${MEDIA_SCHEME}://`)) {
+      try {
+        filePath = pathFromMediaUrl(target);
+      } catch {
+        return { ok: false, error: 'that is not a media address' };
+      }
+    }
+
+    if (!isAllowed(filePath) && !inReviewSandbox(filePath)) {
+      return { ok: false, error: 'that file is outside the game folder' };
+    }
+    try {
+      const bytes = await fsp.readFile(filePath);
+      // Sent as a plain array buffer; the renderer decodes it itself.
+      return { ok: true, bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+}
+
+function registerModsIpc() {
+  registerMediaBytesIpc();
+  registerPublishIpc();
+  registerReviewIpc();
+
+  /** Reads the directory, dropping any record that does not validate. */
+  ipcMain.handle('mods:index', async () => {
+    // A setting is only for pointing somewhere else — a fork, or a test index.
+    // Left alone it uses the real directory.
+    const url = settings.modsIndexUrl || DIRECTORY_INDEX_URL;
+    if (!url) return { ok: true, configured: false, packs: [], rejected: 0 };
+
+    try {
+      const result = validateIndex(JSON.parse(await fetchDirectory(url)));
+      if (!result.ok) return { ok: false, error: result.error };
+      if (result.rejected.length) {
+        console.warn(`Directory: dropped ${result.rejected.length} record(s) that did not validate`);
+      }
+      return {
+        ok: true,
+        configured: true,
+        packs: result.packs,
+        rejected: result.rejected.length,
+        updated: new Date().toISOString(),
+      };
+    } catch (err) {
+      // A 404 means the directory has not been published yet, which is a
+      // different thing from it being broken and should not be shown as a
+      // failure the reader is expected to do something about.
+      if (/answered 404/.test(err.message)) {
+        return { ok: true, configured: false, packs: [], rejected: 0 };
+      }
+      return { ok: false, error: err.message };
+    }
+  });
+
+  /** Downloads, checks and installs one pack from the directory. */
+  handleWrite('mods:install', () => null, async (event, { record }) => {
+    const gameDir = gamedata.resolveGameDir(settings.gameDir || gamedata.defaultGameDir());
+    if (!gameDir) return { ok: false, error: 'No game folder found' };
+
+    // Checked again here rather than trusted from the renderer, which is where
+    // a record has been sitting in memory being drawn.
+    const checked = validateRecord(record);
+    if (!checked.ok) {
+      return { ok: false, error: `That listing is not valid: ${checked.problems[0].message}` };
+    }
+
+    const jobId = `mod-${Date.now()}`;
+    const job = startJob(jobId);
+    try {
+      const result = await installFromRecord(checked.record, gameDir, {
+        signal: job.signal,
+        onStage: (name) => {
+          if (!event.sender.isDestroyed()) event.sender.send('mods:progress', { stage: name });
+        },
+        onProgress: ({ percent }) => {
+          if (!event.sender.isDestroyed()) event.sender.send('mods:progress', { percent });
+        },
+      });
+      invalidatePack(result.dir);
+      // Remembered so this pack cannot later be published under someone else's
+      // name by mistake.
+      noteOrigin(result.dir, checked.record);
+      return result;
+    } catch (err) {
+      return { ok: false, error: err.message, cancelled: job.signal.aborted };
+    } finally {
+      endJob(jobId);
+    }
+  });
+
+  /** Packages a pack into a single shareable zip. */
+  ipcMain.handle('mods:share', async (event, { packDir, details }) => {
+    if (!isAllowed(packDir)) return { ok: false, error: 'That folder is outside the game folder' };
+    try {
+      const outDir = path.join(settings.outputDir || app.getPath('documents'), 'Shared packs');
+      return await packForSharing(packDir, outDir, {
+        ...(details || {}),
+        // Shrinking a large pack is minutes of ffmpeg, and without this the
+        // window sits silent long enough to look hung.
+        onProgress: ({ file, stage, done, total }) => {
+          if (event.sender.isDestroyed()) return;
+          event.sender.send('mods:progress', {
+            stage: stage === 'video' ? 'Shrinking video'
+              : stage === 'audio' ? 'Converting audio' : 'Packaging',
+            file,
+            percent: total ? Math.round((done / total) * 100) : null,
+          });
+        },
+      });
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+}
+
 function registerIpc() {
+  registerModsIpc();
+
   ipcMain.handle('app:info', () => ({
     version: app.getVersion(),
     platform: process.platform,
     ffmpeg: ffmpeg.status(),
     defaultGameDir: gamedata.defaultGameDir(),
+    // Sent rather than repeated in the renderer, so the list somebody ticks is
+    // the same list the validator accepts. Two copies would disagree the first
+    // time one is edited, and the disagreement would only show as a submission
+    // being refused for a warning that was offered.
+    contentFlags: CONTENT_FLAGS,
     links: {
       discord: DISCORD_URL,
       releases: `https://github.com/${GITHUB_REPO}/releases`,
@@ -2748,7 +3532,12 @@ function registerIpc() {
     const rejected = [];
     for (const dir of dirs || []) {
       try {
-        installed.push(installPack(gameDir, dir));
+        const done = installPack(gameDir, dir);
+        installed.push(done);
+        // A folder dragged in came from somewhere else by definition — the
+        // person doing it did not make it here. Marked so it cannot later be
+        // published as their own work; packaging it as a zip still works.
+        noteOrigin(done.dir, { author: '', id: '', title: path.basename(dir), dropped: true });
       } catch (err) {
         rejected.push({ dir, error: err.message });
       }
@@ -3161,7 +3950,7 @@ function registerIpc() {
    */
   ipcMain.handle('shell:openPath', async (_e, target) => {
     if (!target || !fs.existsSync(target)) return 'not found';
-    if (!isAllowed(target)) return 'that folder is outside the game folder';
+    if (!isOpenableFolder(target)) return 'that folder is outside the game and exports folders';
     try {
       if (!fs.statSync(target).isDirectory()) return 'not a folder';
     } catch {
@@ -3198,6 +3987,7 @@ if (!app.requestSingleInstanceLock()) {
     loadSettings();
     loadDurationCache();
     registerMediaProtocol();
+    github.configure({ clientId: GITHUB_CLIENT_ID, directoryRepo: DIRECTORY_REPO });
     registerIpc();
 
     // The undo bin holds whole videos, so a few trims of a long one is all it
@@ -3221,6 +4011,10 @@ if (!app.requestSingleInstanceLock()) {
     for (const controller of exportJobs.values()) controller.abort();
     stopWatching();
     saveDurationCache();
+    // A pack left open for review must not outlive the app. Closing the window
+    // is the one exit path that always happens, whether a review was finished,
+    // abandoned, or interrupted.
+    clearReviewSandbox();
     if (process.platform !== 'darwin') app.quit();
   });
 }

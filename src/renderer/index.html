@@ -23,7 +23,12 @@
   <nav class="tabs" role="tablist">
     <button class="tab on" role="tab" data-tab="home">Home</button>
     <button class="tab" role="tab" data-tab="content">Content</button>
+    <button class="tab" role="tab" data-tab="mods">Mods</button>
     <button class="tab" role="tab" data-tab="export">Export</button>
+    <!-- Only shown to someone GitHub says can write to the directory. Hidden is
+         the correct default: this is not a secret, but it is noise to everyone
+         who cannot act on it. -->
+    <button class="tab tab-admin" role="tab" data-tab="admin" id="tab-admin" hidden>Admin</button>
   </nav>
 
   <p class="tagline" id="tagline">Preview a dub you recorded, then export it as a video.</p>
@@ -234,6 +239,53 @@
     </div>
 
     <aside class="content-detail" id="content-detail" hidden></aside>
+  </section>
+
+  <!-- Packs other people have shared. Browsing and installing never ask for an
+       account; only publishing does. -->
+  <section class="mods-view" id="mods-view" hidden>
+    <aside class="content-types" id="mods-types"></aside>
+
+    <div class="content-main">
+      <header class="content-head">
+        <div>
+          <h2 id="mods-title">Mods</h2>
+          <p class="muted small" id="mods-subtitle"></p>
+        </div>
+        <div class="content-head-actions">
+          <div class="segmented" role="group" aria-label="What to show">
+            <button type="button" id="btn-mods-browse" class="on">Browse</button>
+            <button type="button" id="btn-mods-inbox">Your submissions</button>
+          </div>
+          <input id="mods-search" class="input content-search" type="search"
+                 placeholder="Search packs…" autocomplete="off" />
+          <button id="btn-mods-refresh" class="btn btn-small">Refresh</button>
+        </div>
+      </header>
+
+      <div id="mods-grid" class="content-grid"></div>
+    </div>
+  </section>
+
+  <!-- Moderation. Present for everyone; only usable by someone GitHub agrees
+       is a moderator, which it is asked about directly. -->
+  <section class="admin-view" id="admin-view" hidden>
+    <aside class="admin-queue">
+      <header class="admin-queue-head">
+        <div class="segmented admin-tabs" role="group" aria-label="What to show">
+          <button type="button" data-admin="submissions" class="on">Uploads</button>
+          <button type="button" data-admin="reports">Reports</button>
+          <button type="button" data-admin="listed">Listed</button>
+          <button type="button" data-admin="publishers">People</button>
+        </div>
+        <button id="btn-admin-refresh" class="btn btn-small">Refresh</button>
+      </header>
+      <input id="admin-search" class="input admin-search" type="search"
+             placeholder="Search…" autocomplete="off" />
+      <div id="admin-list" class="admin-list"></div>
+    </aside>
+
+    <div class="admin-main" id="admin-main"></div>
   </section>
 
   <!-- Full screen pack editor -->
@@ -510,6 +562,20 @@
                 the wording and timing without leaving the editor.</em>
           </span>
         </label>
+      </section>
+
+      <!-- Only publishing needs this. Browsing and installing never ask. -->
+      <section class="settings-group">
+        <h3>Publishing</h3>
+        <p class="muted small" id="github-status">Not linked.</p>
+        <p class="muted small" id="github-note">
+          Link a GitHub account to publish packs. Packs go on your own account, so they stay
+          yours and you can take them down whenever you like.
+        </p>
+        <div class="path-row">
+          <button type="button" id="btn-github-link" class="btn btn-small btn-primary">Link GitHub</button>
+          <button type="button" id="btn-github-unlink" class="btn btn-small" hidden>Unlink</button>
+        </div>
       </section>
 
       <section class="settings-group">

@@ -1740,10 +1740,8 @@ function contentFlagsHtml(content) {
   if (!content || !content.length) return '';
   const known = (state.info && state.info.contentFlags) || [];
   const labelFor = (id) => (known.find((f) => f.id === id) || { label: id }).label;
-  const adult = new Set(['sexual', 'nudity']);
-
   return `<div class="mod-flags">${content.map((id) =>
-    `<span class="mod-flag${adult.has(id) ? ' is-adult' : ''}">${escapeHtml(labelFor(id))}</span>`
+    `<span class="mod-flag">${escapeHtml(labelFor(id))}</span>`
   ).join('')}</div>`;
 }
 

@@ -478,7 +478,14 @@ async function removeAsset(token, repoFullName, releaseId, name) {
     return;
   }
 
-  for (const asset of assets.filter((a) => a.name === name)) {
+  // Matched loosely as well as exactly. GitHub may have stored an earlier
+  // upload under a rewritten name, and an asset that cannot be recognised is
+  // an asset that cannot be cleared — which is what made publishing the same
+  // pack twice impossible.
+  const loose = (value) => String(value).toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const wanted = loose(name);
+
+  for (const asset of assets.filter((a) => a.name === name || loose(a.name) === wanted)) {
     try {
       await api(`/repos/${repoFullName}/releases/assets/${asset.id}`, {
         token, method: 'DELETE', raw: true,
@@ -490,8 +497,24 @@ async function removeAsset(token, repoFullName, releaseId, name) {
   }
 }
 
-async function uploadAsset(token, release, zipPath, { onProgress } = {}) {
-  const name = path.basename(zipPath);
+/**
+ * The name a zip is stored under on the release.
+ *
+ * Not the local filename. GitHub rewrites characters it does not like in asset
+ * names — a space becomes a dot — so a pack called "MY HEART! I LOVED HER!"
+ * uploads as something else entirely. Every later attempt then failed to find
+ * the old asset to clear, saw the name as already taken, and refused.
+ *
+ * Built from the pack's id, which is already lower case letters, numbers and
+ * dashes, so GitHub stores it exactly as sent and it can be found again.
+ */
+function assetNameFor(packId) {
+  const safe = String(packId || 'pack').toLowerCase().replace(/[^a-z0-9._-]+/g, '-');
+  return `${safe || 'pack'}.zip`;
+}
+
+async function uploadAsset(token, release, zipPath, { onProgress, assetName } = {}) {
+  const name = assetName || path.basename(zipPath);
   const bytes = fs.statSync(zipPath).size;
 
   if (bytes > MAX_ASSET_BYTES) {
@@ -658,7 +681,7 @@ async function publish(token, { zipPath, packId, title }, { onProgress } = {}) {
     token,
     { ...release, repoFullName: repo.fullName },
     zipPath,
-    { onProgress },
+    { onProgress, assetName: assetNameFor(packId) },
   ));
 
   say('done');

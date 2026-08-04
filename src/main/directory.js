@@ -41,20 +41,19 @@ const PACK_TYPES = ['voice', 'player', 'host', 'judges', 'studio', 'menu', 'chat
  *
  * Deliberately short. A long list gets skipped, and every entry that nobody
  * ticks makes the ones that matter easier to miss.
+ *
+ * There is no option for sexual content or nudity, and that is not an oversight
+ * — the directory does not list it at all. Offering the tick box would say the
+ * opposite: that such a pack is welcome as long as it is labelled.
  */
 const CONTENT_FLAGS = [
   { id: 'language', label: 'Strong language' },
-  { id: 'sexual', label: 'Sexual content' },
-  { id: 'nudity', label: 'Nudity' },
   { id: 'violence', label: 'Graphic violence' },
   { id: 'drugs', label: 'Drug or alcohol reference' },
   { id: 'flashing', label: 'Flashing images' },
 ];
 
 const CONTENT_FLAG_IDS = CONTENT_FLAGS.map((f) => f.id);
-
-/** Whether anything declared here means the pack is for adults. */
-const ADULT_FLAGS = new Set(['sexual', 'nudity']);
 
 const LICENCES = [
   'cc0', 'cc-by', 'cc-by-sa', 'cc-by-nc', 'cc-by-nc-sa', 'all-rights-reserved', 'unstated',
@@ -323,11 +322,6 @@ function checkContent(problems, content) {
     seen.add(flag);
   }
   return true;
-}
-
-/** Whether a pack's declared content makes it adults-only. */
-function isAdult(content) {
-  return (content || []).some((f) => ADULT_FLAGS.has(f));
 }
 
 function checkTags(problems, tags) {
@@ -609,7 +603,7 @@ module.exports = {
   LICENCES,
   CONTENT_FLAGS,
   CONTENT_FLAG_IDS,
-  isAdult,
+
   ALLOWED_HOSTS,
   LIMITS,
   RESERVED_HANDLES,

@@ -53,6 +53,11 @@ const ignore = [
   // docs/ is already excluded above, which covers the notices file living
   // there now; it is copied into licenses/ by copyLicenses instead.
   /^\/README\.md$/,
+  /^\/\.gitignore$/,
+  // Lives in src/main because the directory's workflows fetch it from there, so
+  // that the rule for unlisting a dead link has one definition rather than two.
+  // The app itself never loads it, so there is no reason to ship it.
+  /^\/src\/main\/linkhealth\.js$/,
   new RegExp(`^/node_modules/ffprobe-static/bin/(${otherPlatforms.join('|')})($|/)`),
   new RegExp(`^/node_modules/ffprobe-static/bin/[^/]+/(${otherArchs.join('|')})($|/)`),
 ];

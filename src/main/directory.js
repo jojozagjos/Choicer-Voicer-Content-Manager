@@ -55,9 +55,28 @@ const CONTENT_FLAGS = [
 
 const CONTENT_FLAG_IDS = CONTENT_FLAGS.map((f) => f.id);
 
-const LICENCES = [
-  'cc0', 'cc-by', 'cc-by-sa', 'cc-by-nc', 'cc-by-nc-sa', 'all-rights-reserved', 'unstated',
+/**
+ * What an author can say about reuse, and how each one is put to them.
+ *
+ * Written as plain sentences rather than licence names. Almost nobody knows
+ * what "CC BY-NC-SA" permits, and a dropdown of initials gets answered by
+ * picking the first one, which is how packs end up licensed by accident.
+ *
+ * The identifiers are kept underneath because they are what the record stores
+ * and what the validator accepts. Both live here so a licence cannot be offered
+ * that the directory then refuses.
+ */
+const LICENCE_CHOICES = [
+  { id: 'unstated', label: 'Rather not say' },
+  { id: 'cc0', label: 'Anyone may use it, no credit needed' },
+  { id: 'cc-by', label: 'Anyone may use it, with credit' },
+  { id: 'cc-by-sa', label: 'With credit, and shared the same way' },
+  { id: 'cc-by-nc', label: 'With credit, nothing commercial' },
+  { id: 'cc-by-nc-sa', label: 'With credit, nothing commercial, shared alike' },
+  { id: 'all-rights-reserved', label: 'Ask me first' },
 ];
+
+const LICENCES = LICENCE_CHOICES.map((l) => l.id);
 
 /**
  * Where a download may point.
@@ -112,6 +131,17 @@ const LIMITS = {
   // A pack is video and audio, so this is generous. It exists to catch a record
   // claiming something absurd, not to police size.
   bytes: 2 * 1024 * 1024 * 1024,
+  // Listings one account may hold at once.
+  //
+  // Not a storage limit. The files sit on the publisher's own GitHub and cost
+  // the directory nothing; what this protects is the directory itself, which is
+  // a single JSON file everyone downloads. One account listing a thousand packs
+  // makes that file slow for everybody and buries every other author.
+  //
+  // Set where a real person making real packs will never meet it, and an
+  // automated flood meets it immediately. Updating a pack already listed does
+  // not count, so the limit never blocks improving what is there.
+  packsPerAuthor: 50,
 };
 
 const ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
@@ -288,12 +318,12 @@ function ownerOfDownload(raw) {
  * unattributable at the point of submission instead, which is where there is
  * enough context to say so usefully.
  */
-function checkAuthorOwnsDownload(problems, author, downloadUrl) {
+function checkAuthorOwnsDownload(problems, author, downloadUrl, field = 'author') {
   const owner = ownerOfDownload(downloadUrl);
   if (!owner) return true;
   if (String(author).toLowerCase() === owner) return true;
 
-  return problems.add('author',
+  return problems.add(field,
     `this says it is by ${author}, but it downloads from ${owner}'s account. `
     + 'A pack has to be hosted by the person it is credited to.');
 }
@@ -351,8 +381,14 @@ function checkTags(problems, tags) {
  * Returns `{ ok, problems, record }`. The returned record is a rebuilt copy
  * holding only known fields, so anything extra a submission carried is dropped
  * rather than stored and later trusted.
+ *
+ * `fromIndex` says the record is already in the directory rather than being
+ * offered to it. The only difference is the download count: a listed pack has
+ * earned one and must keep it, and a submission claiming one is claiming
+ * something nobody counted. Both go through the same function so there is one
+ * definition of a valid record, not two that drift.
  */
-function validateRecord(input) {
+function validateRecord(input, { fromIndex = false } = {}) {
   const problems = new Problems();
 
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
@@ -394,6 +430,26 @@ function validateRecord(input) {
   if (typeof input.sha256 !== 'string' || !SHA256_PATTERN.test(input.sha256)) {
     problems.add('sha256', 'a record needs the SHA-256 of the zip it points at');
   }
+
+  // The icon, if there is one.
+  //
+  // Optional in the schema and required by the app before it will let anything
+  // be shared, which are two different jobs. A record written before icons
+  // existed is not invalid, it just has nothing to show.
+  //
+  // The two fields stand or fall together. An address with no hash is an image
+  // that can be replaced with anything at any time after a pack has been
+  // accepted, which is exactly the swap this is here to prevent, so it is
+  // refused rather than accepted and shown unverified.
+  if (input.iconUrl !== undefined && input.iconUrl !== null) {
+    if (checkDownloadUrl(problems, input.iconUrl, 'iconUrl')) {
+      checkAuthorOwnsDownload(problems, input.author, input.iconUrl, 'iconUrl');
+    }
+    if (typeof input.iconSha256 !== 'string' || !SHA256_PATTERN.test(input.iconSha256)) {
+      problems.add('iconSha256',
+        'an icon needs its SHA-256, so it cannot be swapped for something else later');
+    }
+  }
   if (!Number.isInteger(input.bytes) || input.bytes <= 0 || input.bytes > LIMITS.bytes) {
     problems.add('bytes', 'bytes must be the size of the zip');
   }
@@ -427,15 +483,58 @@ function validateRecord(input) {
       content: (input.content || []).slice().sort(),
       downloadUrl: input.downloadUrl,
       sha256: input.sha256.toLowerCase(),
+      // Null rather than absent when there is none, so every record has the
+      // same shape and nothing downstream has to test for two kinds of missing.
+      iconUrl: input.iconUrl || null,
+      iconSha256: input.iconUrl ? input.iconSha256.toLowerCase() : null,
       bytes: input.bytes,
       gameVersion: typeof input.gameVersion === 'string' ? input.gameVersion : null,
-      // Counted elsewhere and folded into the index when it is built, so a
-      // record without one is simply new rather than wrong.
-      downloads: Number.isInteger(input.downloads) && input.downloads >= 0 ? input.downloads : 0,
+      // Counted elsewhere, never submitted. A record arriving from outside the
+      // index starts at zero whatever number it carries, so a pack cannot be
+      // published claiming thousands of downloads it never had.
+      downloads: fromIndex && Number.isInteger(input.downloads) && input.downloads >= 0
+        ? input.downloads : 0,
+      // Whether the directory still shows this pack.
+      //
+      // Kept only for records already in the index, and true unless something
+      // said otherwise. A submission cannot arrive claiming to be unlisted, and
+      // more to the point it cannot arrive claiming to be listed either, which
+      // is what a hidden pack would try if it were resubmitted.
+      //
+      // This has to survive validation. It did not, and that was the whole of
+      // the unlisting bug: `/hide` wrote the flag into index.json, the record
+      // was then rebuilt from known fields with this one not among them, and
+      // the pack carried on showing as though nothing had happened.
+      listed: fromIndex ? input.listed !== false : true,
       published: new Date(input.published).toISOString(),
       updated: new Date(input.updated || input.published).toISOString(),
     },
   };
+}
+
+/**
+ * Whether an author may add one more listing.
+ *
+ * Replacing a pack they already have listed is always allowed: that is an
+ * update, and a limit that blocked improving an existing pack would push people
+ * into publishing "MyPack v2" beside the old one, which is worse for everybody
+ * and uses more of the limit rather than less.
+ *
+ * Returns `{ ok, held, limit }` so the caller can say the actual numbers rather
+ * than "no".
+ */
+function roomForAnother(packs, author, id) {
+  const mine = (Array.isArray(packs) ? packs : [])
+    // Taken down packs do not count. The limit protects the size of the list
+    // people actually browse, and a hidden pack is not in it. Counting them
+    // would also mean a moderator's decision quietly costing the author a slot
+    // they cannot see and cannot free.
+    .filter((p) => p && p.listed !== false
+      && String(p.author || '').toLowerCase() === String(author).toLowerCase());
+
+  const held = mine.length;
+  if (mine.some((p) => p.id === id)) return { ok: true, held, limit: LIMITS.packsPerAuthor };
+  return { ok: held < LIMITS.packsPerAuthor, held, limit: LIMITS.packsPerAuthor };
 }
 
 /**
@@ -455,7 +554,7 @@ function validateIndex(input) {
   const seen = new Set();
 
   for (const entry of input.packs) {
-    const result = validateRecord(entry);
+    const result = validateRecord(entry, { fromIndex: true });
     if (!result.ok) {
       rejected.push({ id: entry && entry.id, problems: result.problems });
       continue;
@@ -593,23 +692,17 @@ function checkArchiveShape(entries) {
 }
 
 module.exports = {
-  INSTALLABLE_EXTS,
   ARCHIVE_LIMITS,
   ownerOfDownload,
   safeEntryPath,
   checkArchiveShape,
-  RECORD_VERSION,
   PACK_TYPES,
-  LICENCES,
   CONTENT_FLAGS,
-  CONTENT_FLAG_IDS,
-
+  LICENCE_CHOICES,
   ALLOWED_HOSTS,
   LIMITS,
-  RESERVED_HANDLES,
-  HANDLE_PATTERN,
   isReservedHandle,
-  foldConfusables,
+  roomForAnother,
   validateRecord,
   validateIndex,
 };

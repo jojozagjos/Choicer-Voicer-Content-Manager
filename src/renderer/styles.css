@@ -2918,7 +2918,9 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .mod-card-head { display: flex; gap: 9px; align-items: flex-start; }
-.mod-icon { font-size: 20px; line-height: 1.1; }
+/* Sized so the glyph and a real icon occupy the same box, and the card does not
+   jump when one replaces the other after its hash has been checked. */
+.mod-icon { flex: none; width: 34px; height: 34px; font-size: 20px; line-height: 34px; text-align: center; }
 .mod-card-name { min-width: 0; }
 .mod-card-name h3 {
   margin: 0;
@@ -3139,18 +3141,22 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* Your submissions
    One column, because each entry can carry a paragraph of explanation and a
-   grid of cards would cut it off — which is the whole thing this is for. */
+   grid of cards would cut it off, which is the whole thing this is for.
+   Centred in the pane: at 720px in a 1500px window, left aligned left it
+   stranded against one edge with half the screen empty beside it. */
 
 .mods-view:has(#btn-mods-inbox.on) #mods-grid {
   display: block;
-  max-width: 720px;
+  max-width: 700px;
+  margin: 0 auto;
+  padding: 0 4px 24px;
 }
 
 .inbox-standing {
-  margin: 0 0 12px;
-  padding: 9px 11px;
+  margin: 0 0 14px;
+  padding: 10px 12px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 9px;
   background: var(--panel);
   font-size: 12.5px;
   line-height: 1.5;
@@ -3158,12 +3164,16 @@ input[type="range"]::-webkit-slider-thumb {
 .inbox-standing.is-ok { border-color: var(--accent-dim); }
 
 .inbox-item {
-  padding: 11px 12px;
-  margin-bottom: 8px;
+  padding: 13px 14px;
+  margin-bottom: 10px;
   border: 1px solid var(--line);
+  /* A colour down the left edge for the outcome, so the list can be read at a
+     glance without reading every label. Set per state further down. */
+  border-left: 3px solid var(--line);
   border-radius: 10px;
   background: var(--panel);
 }
+.inbox-item:hover { border-color: var(--line-strong, var(--line)); }
 .inbox-head {
   display: flex;
   align-items: baseline;
@@ -3181,6 +3191,7 @@ input[type="range"]::-webkit-slider-thumb {
   color: var(--muted);
 }
 .inbox-state.is-ok { color: var(--ok); }
+.inbox-state.is-warn { color: var(--warn, #d29922); }
 .inbox-state.is-bad { color: var(--danger, #e5534b); }
 
 /* The moderator's words, kept readable rather than truncated: being told why is
@@ -3337,6 +3348,7 @@ input[type="range"]::-webkit-slider-thumb {
   transition: border-color 0.15s ease;
 }
 .inbox-item:has(.inbox-state.is-ok) { border-left-color: var(--ok); }
+.inbox-item:has(.inbox-state.is-warn) { border-left-color: var(--warn, #d29922); }
 .inbox-item:has(.inbox-state.is-bad) { border-left-color: var(--danger, #e5534b); }
 
 /* Something decided since this was last opened. Marked rather than reordered:
@@ -3352,18 +3364,201 @@ input[type="range"]::-webkit-slider-thumb {
   vertical-align: middle;
 }
 
+/* When it was sent, and what it is listed as. Directly under the title rather
+   than in the footer, because it identifies the row and the footer is where the
+   one action lives. */
+.inbox-when { display: block; margin: 0; }
+
 .inbox-foot {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
-  margin-top: 2px;
+  margin-top: 10px;
+}
+
+/* The whole closed row is the control that opens it, so it is a button rather
+   than a div with a listener: keyboard and screen readers get it for free. */
+.inbox-open {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.inbox-open .inbox-head { display: flex; }
+.inbox-chevron {
+  position: absolute;
+  top: 13px;
+  right: 12px;
+  color: var(--muted);
+  font-size: 11px;
+  transition: transform 0.15s ease;
+}
+.inbox-item { position: relative; }
+.inbox-item.is-open .inbox-chevron { transform: rotate(180deg); }
+
+.inbox-body {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+/* A deadline somebody can still act on. Warm rather than alarming: running out
+   of time here costs nothing that cannot be redone in one press. */
+.inbox-wait {
+  display: block;
+  margin-top: 6px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--warn, #d29922);
+}
+
+/* Publishers: a grid of who has put packs in, and one of their pages. */
+
+.publisher-card {
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+.publisher-card:hover { border-color: var(--accent-dim); }
+.publisher-card h3 { margin: 0 0 5px; font-size: 14px; }
+.publisher-card p { margin: 0 0 2px; }
+
+.publisher-page { display: grid; gap: 16px; }
+.publisher-bar { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* The numbers, as a row of figures rather than a sentence. Somebody looking at
+   a publisher wants to compare them, and prose does not compare. */
+.publisher-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+}
+.publisher-stats > div {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+}
+.publisher-stats b { font-size: 15px; }
+
+.publisher-packs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+/* Publishers list and a publisher's page both sit in the pack grid, so they
+   need it to stop being a fixed grid of cards. */
+.mods-view:has(#btn-mods-publishers.on) #mods-grid {
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+}
+
+/* A name that behaves like a link without being one. */
+.linklike {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 2px;
+}
+.linklike:hover { color: var(--accent); text-decoration-color: var(--accent); }
+
+/* A listed pack's own picture, once it has been checked against the hash it was
+   published with. Falls back to the type glyph, which is why this only styles
+   the image case. */
+.mod-icon.has-image {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 8px;
+}
+.mod-icon.has-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 /* A short form inside the shared dialog. */
 .askform { display: grid; gap: 10px; margin-top: 12px; }
 .askform-row { display: grid; gap: 4px; }
-.askform-row > span { font-size: 12px; color: var(--muted); }
+.askform-row > span {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
 .askform-row .input,
 .askform-row .select { width: 100%; }
 .askform-row textarea.input { resize: vertical; min-height: 58px; }
+
+/* Why a button will not do what it says yet. Carried on the button itself, so
+   the rule is visible before it is pressed rather than only after.
+   The button is laid out as a row so this sits beside the label instead of
+   wrapping underneath it and doubling the button's height. */
+.btn:has(.btn-blocked) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.btn-blocked {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--warn, #d29922) 18%, transparent);
+  color: var(--warn, #d29922);
+  /* Deliberately small. It is a footnote on the button, not a second label
+     competing with the one that says what the button does. */
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  line-height: 1.5;
+}
+
+/* Which fields have to be filled in, said on the field rather than only by a
+   button that will not press. */
+.askform-need {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--warn, #d29922);
+  opacity: 0.85;
+}
+
+/* Marked only once the field has been left, so a form does not open in red. */
+.askform-row.is-missing .input,
+.askform-row.is-missing .select,
+.input.is-missing {
+  border-color: var(--warn, #d29922);
+}
+
+/* Why the way forward is closed. Sits between the form and the buttons, which
+   is where somebody looks after pressing a button that did nothing. */
+.askform-why {
+  margin: 9px 0 0;
+  padding: 7px 10px;
+  border: 1px solid var(--warn, #d29922);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--warn, #d29922) 10%, transparent);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}

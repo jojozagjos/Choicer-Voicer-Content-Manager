@@ -33,8 +33,8 @@ quietly ignores it.
 ## Getting it
 
 1. **[Download the latest release](https://github.com/jojozagjos/Choicer-Voicer-Content-Manager/releases/latest)**
-   and unzip it. Unzip the *whole folder* — running the `.exe` from inside the zip will fail,
-   because the app needs the files sitting next to it.
+   and unzip it. Unzip the *whole folder*, because running the `.exe` from inside the zip
+   will fail: the app needs the files sitting next to it.
 2. Run **Choicer Voicer Content Manager.exe**.
 3. Point it at your game folder when it asks.
 

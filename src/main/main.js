@@ -1,6 +1,7 @@
 'use strict';
 
 const { app, BrowserWindow, ipcMain, dialog, shell, protocol, nativeTheme } = require('electron');
+const crypto = require('crypto');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const os = require('os');
@@ -21,7 +22,8 @@ const {
 } = require('./create');
 const convert = require('./convert');
 const {
-  validateRecord, validateIndex, checkArchiveShape, CONTENT_FLAGS,
+  validateRecord, validateIndex, checkArchiveShape, CONTENT_FLAGS, LICENCE_CHOICES,
+  ALLOWED_HOSTS,
 } = require('./directory');
 const {
   installFromRecord, packForSharing, download, checksum, listEntries, extractInto,
@@ -2569,13 +2571,27 @@ let nextJobId = 1;
  * never pulled down, and the text is checked again afterwards because a server
  * is free to lie about, or simply omit, content-length.
  */
-async function fetchDirectory(url) {
+async function fetchDirectory(url, { fresh = false } = {}) {
   const parsed = new URL(url);
   if (parsed.protocol !== 'https:') throw new Error('the directory address has to be https');
 
-  const response = await fetch(url, {
+  // Asking past the cache, when it matters.
+  //
+  // raw.githubusercontent.com serves the index through a CDN that holds it for
+  // around five minutes. That is fine for browsing and wrong immediately after
+  // listing something: the pack was in the file, and the app kept being handed
+  // the copy from before it, so it looked like listing had not worked until
+  // enough time passed. A changing query string is the only thing a CDN cannot
+  // answer from what it already has.
+  if (fresh) parsed.searchParams.set('fresh', String(Date.now()));
+
+  const response = await fetch(parsed.toString(), {
     signal: AbortSignal.timeout(15000),
-    headers: { accept: 'application/json' },
+    cache: fresh ? 'no-store' : 'default',
+    headers: {
+      accept: 'application/json',
+      ...(fresh ? { 'cache-control': 'no-cache' } : {}),
+    },
   });
   if (!response.ok) throw new Error(`the directory answered ${response.status}`);
 
@@ -2687,6 +2703,116 @@ function originOf(packDir) {
   return readOrigins()[path.resolve(packDir).toLowerCase()] || null;
 }
 
+const ICON_EXTS = ['.png', '.jpg', '.jpeg', '.webp'];
+
+// Matches the ceiling github.js refuses to upload past, so an icon that was
+// accepted at publish time can always be fetched back.
+const MAX_ICON_BYTES = 4 * 1024 * 1024;
+
+/**
+ * The pack's icon, but only if it really is inside the pack.
+ *
+ * The renderer says which file it thinks the icon is, and the renderer is not
+ * where that should be decided. Resolved against the pack's own folder so a
+ * doctored message cannot have some unrelated file off the disk uploaded to a
+ * public release.
+ */
+function iconInside(packDir, iconPath) {
+  if (!packDir || !iconPath) return null;
+
+  const root = path.resolve(packDir);
+  const full = path.resolve(iconPath);
+  const within = full === root || full.startsWith(root + path.sep);
+  if (!within) return null;
+  if (!ICON_EXTS.includes(path.extname(full).toLowerCase())) return null;
+  if (!fs.existsSync(full)) return null;
+  return full;
+}
+
+/**
+ * Fetches a listing's icon, checks it is the image that was published, and
+ * keeps it.
+ *
+ * Three separate reasons this does not happen in the renderer:
+ *
+ * The page is not allowed to. Its content security policy permits images from
+ * `cvmedia:` and nothing remote, which is deliberate: a directory record is
+ * somebody else's text, and an `<img>` pointed at an address of their choosing
+ * reports every viewer's IP to whoever wrote it.
+ *
+ * The hash has to be checked before the image is shown, and checking it after
+ * the browser has already fetched and decoded the bytes is checking nothing.
+ *
+ * And an address is not a promise. A release asset can be replaced at any time
+ * without the address changing, so a pack accepted with an innocent icon could
+ * be given a different one afterwards. The hash recorded at publish time is
+ * what makes that swap fail rather than succeed silently.
+ */
+function registerIconIpc() {
+  const cacheDir = path.join(app.getPath('userData'), 'mod-icons');
+  // Served through the media protocol like everything else the renderer shows,
+  // so the page still never sees a filesystem path.
+  fs.mkdirSync(cacheDir, { recursive: true });
+  allowedRoots.add(path.resolve(cacheDir));
+
+  ipcMain.handle('mods:icon', async (_event, { url, sha256 }) => {
+    if (!url || !sha256 || !/^[a-f0-9]{64}$/i.test(String(sha256))) {
+      return { ok: false, error: 'that listing has no verifiable icon' };
+    }
+
+    // Named after the hash, so a changed icon is a different file rather than
+    // something that has to be noticed and evicted.
+    const want = String(sha256).toLowerCase();
+    const cached = path.join(cacheDir, `${want}.img`);
+    if (fs.existsSync(cached)) return { ok: true, url: mediaUrl(cached) };
+
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return { ok: false, error: 'that is not a web address' };
+    }
+    if (parsed.protocol !== 'https:') return { ok: false, error: 'icons have to come over https' };
+
+    const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
+    if (!ALLOWED_HOSTS.some((ok) => host === ok || host.endsWith(`.${ok}`))) {
+      return { ok: false, error: `icons cannot be loaded from ${host}` };
+    }
+
+    try {
+      const response = await fetch(parsed.toString(), {
+        signal: AbortSignal.timeout(20000),
+        headers: { accept: 'image/*' },
+      });
+      if (!response.ok) return { ok: false, error: `the icon answered ${response.status}` };
+
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (bytes.length > MAX_ICON_BYTES) {
+        return { ok: false, error: 'that icon is far larger than an icon should be' };
+      }
+
+      const got = crypto.createHash('sha256').update(bytes).digest('hex');
+      if (got !== want) {
+        // Not shown, and not cached. The file behind the address is not the one
+        // that was published and looked at, so nothing here is willing to put
+        // it on screen.
+        return {
+          ok: false,
+          error: 'this icon is not the image that was published, so it was not shown',
+          swapped: true,
+        };
+      }
+
+      fs.mkdirSync(cacheDir, { recursive: true });
+      fs.writeFileSync(cached, bytes);
+      bumpMedia(cacheDir);
+      return { ok: true, url: mediaUrl(cached) };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+}
+
 /** Publishing: sign in, upload, submit. */
 function registerPublishIpc() {
   /** Who is signed in, if anyone, and whether publishing is possible at all. */
@@ -2771,39 +2897,52 @@ function registerPublishIpc() {
    * from anything the renderer supplied, so the address in it is the address
    * the file really has.
    */
+  // Everything inside one try, including the checks that come before any
+  // uploading. A handler that throws rather than answering leaves the renderer
+  // with a rejected promise and no result to read, and publishing then failed
+  // with nothing said at all. There is one way out of here: an answer.
   ipcMain.handle('mods:publish', async (event, { zipPath, details }) => {
-    const token = loadToken();
-    if (!token) return { ok: false, error: 'Not signed in to GitHub.' };
-    if (!fs.existsSync(zipPath)) return { ok: false, error: 'That zip is no longer there.' };
+    try {
+      const token = loadToken();
+      if (!token) return { ok: false, error: 'Not signed in to GitHub.' };
+      if (!zipPath || !fs.existsSync(zipPath)) {
+        return { ok: false, error: 'That zip is no longer there. Package the pack again.' };
+      }
+      if (!details || !details.id) {
+        return { ok: false, error: 'This pack has no name to be listed under.' };
+      }
 
-    // Refused here rather than only in the interface, because this is the rule
-    // that keeps credit honest and the renderer is not where it should live.
-    const origin = originOf(details.packDir);
-    if (origin && origin.dropped) {
-      return {
-        ok: false,
-        error: `"${origin.title || details.title}" was added by dragging it in, so this app `
-          + 'has no way to know who made it. Only packs made or installed here can be '
-          + 'published. You can still package it as a zip and pass it on.',
-      };
-    }
-    if (origin && origin.author) {
-      const me = await github.whoAmI(token).catch(() => null);
-      if (!me || me.login.toLowerCase() !== String(origin.author).toLowerCase()) {
+      // Refused here rather than only in the interface, because this is the rule
+      // that keeps credit honest and the renderer is not where it should live.
+      const origin = originOf(details.packDir);
+      if (origin && origin.dropped) {
         return {
           ok: false,
-          error: `"${origin.title || details.title}" was made by ${origin.author} and installed `
-            + 'from the directory, so it cannot be published under another name. You can still '
-            + 'package it as a zip and pass it on.',
+          error: `"${origin.title || details.title}" was added by dragging it in, so this app `
+            + 'has no way to know who made it. Only packs made or installed here can be '
+            + 'published. You can still package it as a zip and pass it on.',
         };
       }
-    }
+      if (origin && origin.author) {
+        const me = await github.whoAmI(token).catch(() => null);
+        if (!me || me.login.toLowerCase() !== String(origin.author).toLowerCase()) {
+          return {
+            ok: false,
+            error: `"${origin.title || details.title}" was made by ${origin.author} and installed `
+              + 'from the directory, so it cannot be published under another name. You can still '
+              + 'package it as a zip and pass it on.',
+          };
+        }
+      }
 
-    try {
       const uploaded = await github.publish(token, {
         zipPath,
         packId: details.id,
         title: details.title,
+        // Checked here rather than trusted from the renderer, and checked
+        // against the pack's own folder so this cannot be pointed at some
+        // other file on the machine.
+        iconPath: iconInside(details.packDir, details.iconPath),
       }, {
         onProgress: ({ stage, percent, sent, bytes }) => {
           if (event.sender.isDestroyed()) return;
@@ -2827,6 +2966,8 @@ function registerPublishIpc() {
         tags: details.tags || [],
         downloadUrl: uploaded.downloadUrl,
         sha256: details.sha256,
+        iconUrl: uploaded.iconUrl,
+        iconSha256: uploaded.iconSha256,
         bytes: uploaded.bytes,
         gameVersion: details.gameVersion || null,
         published: now,
@@ -2859,16 +3000,33 @@ function registerPublishIpc() {
       }
 
       say('submitting');
-      const issue = await github.submitRecord(token, checked.record);
-      say('done');
-      return {
-        ok: true,
-        submitted: true,
-        downloadUrl: uploaded.downloadUrl,
-        releaseUrl: uploaded.releaseUrl,
-        issueUrl: issue.url,
-        record: checked.record,
-      };
+
+      // Offering it to the directory is a separate failure from uploading it.
+      // Rolled together, a submission that could not be opened was reported as
+      // the whole publish having failed, which is not true and sends somebody
+      // to re-upload a file that is already sitting on their account.
+      try {
+        const issue = await github.submitRecord(token, checked.record);
+        say('done');
+        return {
+          ok: true,
+          submitted: true,
+          downloadUrl: uploaded.downloadUrl,
+          releaseUrl: uploaded.releaseUrl,
+          issueUrl: issue.url,
+          record: checked.record,
+        };
+      } catch (err) {
+        say('done');
+        return {
+          ok: true,
+          submitted: false,
+          submitError: err.message,
+          downloadUrl: uploaded.downloadUrl,
+          releaseUrl: uploaded.releaseUrl,
+          record: checked.record,
+        };
+      }
     } catch (err) {
       return { ok: false, error: err.message };
     }
@@ -3177,18 +3335,20 @@ function registerMediaBytesIpc() {
 
 function registerModsIpc() {
   registerMediaBytesIpc();
+  registerIconIpc();
   registerPublishIpc();
   registerReviewIpc();
 
   /** Reads the directory, dropping any record that does not validate. */
-  ipcMain.handle('mods:index', async () => {
+  ipcMain.handle('mods:index', async (_event, options = {}) => {
     // A setting is only for pointing somewhere else — a fork, or a test index.
     // Left alone it uses the real directory.
     const url = settings.modsIndexUrl || DIRECTORY_INDEX_URL;
     if (!url) return { ok: true, configured: false, packs: [], rejected: 0 };
 
     try {
-      const result = validateIndex(JSON.parse(await fetchDirectory(url)));
+      const text = await fetchDirectory(url, { fresh: Boolean(options && options.fresh) });
+      const result = validateIndex(JSON.parse(text));
       if (!result.ok) return { ok: false, error: result.error };
       if (result.rejected.length) {
         console.warn(`Directory: dropped ${result.rejected.length} record(s) that did not validate`);
@@ -3217,8 +3377,10 @@ function registerModsIpc() {
     if (!gameDir) return { ok: false, error: 'No game folder found' };
 
     // Checked again here rather than trusted from the renderer, which is where
-    // a record has been sitting in memory being drawn.
-    const checked = validateRecord(record);
+    // a record has been sitting in memory being drawn. Read as a record that
+    // came from the index, because it did, so its download count is the counted
+    // one rather than being reset on the way past.
+    const checked = validateRecord(record, { fromIndex: true });
     if (!checked.ok) {
       return { ok: false, error: `That listing is not valid: ${checked.problems[0].message}` };
     }
@@ -3280,11 +3442,12 @@ function registerIpc() {
     platform: process.platform,
     ffmpeg: ffmpeg.status(),
     defaultGameDir: gamedata.defaultGameDir(),
-    // Sent rather than repeated in the renderer, so the list somebody ticks is
-    // the same list the validator accepts. Two copies would disagree the first
-    // time one is edited, and the disagreement would only show as a submission
-    // being refused for a warning that was offered.
+    // Sent rather than repeated in the renderer, so the lists somebody picks
+    // from are the lists the validator accepts. Two copies would disagree the
+    // first time one is edited, and the disagreement would only show as a
+    // submission being refused for an answer that was offered.
     contentFlags: CONTENT_FLAGS,
+    licences: LICENCE_CHOICES,
     links: {
       discord: DISCORD_URL,
       releases: `https://github.com/${GITHUB_REPO}/releases`,

@@ -78,17 +78,25 @@ explanation rather than accepted and left to fail at install.
 ## Getting in
 
 The app opens an **issue** containing the record. An Action validates it with the
-same `directory.js` the app uses, and opens a pull request.
+same `directory.js` the app uses, and writes it into `index.json`.
 
-An issue rather than a pull request directly, because the app would otherwise
-have to fork the directory, keep the fork in step and branch inside it — three
-things to go wrong before anyone has read the submission.
+An issue rather than a pull request, because the app would otherwise have to fork
+the directory, keep the fork in step and branch inside it: three things to go
+wrong before anyone has read the submission.
 
-**A first pack is always read by a person.** After an author has one merged,
-later submissions are listed automatically. The rule is one human look per
-publisher, not per pack: reviewing every update sounds safer but makes the
-maintainer the bottleneck, and a queue nobody can get to is how a directory dies.
-`/hide` and `/ban` make a wrong call cheap to undo.
+**There are no pull requests anywhere in this flow.** An earlier design staged
+each submission on a branch for a moderator to merge, and opening one from a
+workflow needs a repository setting that is off by default. Every first
+submission failed at that step, and failed silently enough to look like a stuck
+queue rather than a missing switch. Listing now writes the file directly, as
+whoever is doing the listing: a moderator already has write access, so there is
+nothing extra to turn on and nothing left half-staged if the answer is no.
+
+**A first pack is always read by a person.** After an author has one listed,
+later submissions go straight in. The rule is one human look per publisher, not
+per pack: reviewing every update sounds safer but makes the maintainer the
+bottleneck, and a queue nobody can get to is how a directory dies. `/hide` and
+`/ban` make a wrong call cheap to undo.
 
 ## Reviewing
 
@@ -99,8 +107,8 @@ that person's own token and GitHub refuses them for anybody else.
 
 Reviewing downloads the pack into a **temporary sandbox** — never the game folder
 — and plays the video, plays each clip, shows the pictures and the captions and
-the file list. Approving merges; refusing closes the issue with a reason, which
-is required rather than optional.
+the file list. Approving writes the record into the index; refusing closes the
+issue with a reason, which is required rather than optional.
 
 Every check that guards installing runs here too. A pack being judged is the
 least trusted file the app ever opens, not the most.

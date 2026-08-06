@@ -32,6 +32,18 @@ const fmt = (seconds) => {
 // matching what the library grid does.
 const CHARACTER_PACKS = new Set(['player', 'host', 'judges']);
 
+/**
+ * A character's name, as it should be stored.
+ *
+ * Whitespace is the whole problem. A name is the only thing tying a line to a
+ * character, so " Bob", "Bob " and "Bob  Jones" are three separate people to
+ * every part of the app that groups by it, and none of the three differences
+ * can be seen in the box they were typed into.
+ */
+function tidyName(value) {
+  return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+}
+
 // The box every picture of a character is fitted into, matching the cardboard
 // cutout the game stands in when a pack has none. Kept the same across clip
 // pictures, pack icons and the standing art so packs look consistent beside
@@ -1673,9 +1685,22 @@ export class PackEditor {
        * it stops, and the list flushes whatever is pending before it rebuilds.
        */
       const commit = async () => {
-        const after = { caption: captionInput.value, character: characterInput.value };
+        const after = {
+          caption: captionInput.value,
+          // Tidied on the way in, not just when the pack is read back.
+          //
+          // A character is identified by its name, so " Bob" and "Bob" are two
+          // people as far as everything downstream is concerned: two colours on
+          // the timeline, two entries in the character list, two volumes to set.
+          // A trailing space is invisible in the box that produced it, which
+          // makes it the hardest kind of typo to find afterwards.
+          character: tidyName(characterInput.value),
+        };
         if ((clip.caption || '') === after.caption
           && (clip.character || '') === after.character) return;
+        // Put back so the box shows what was actually saved, rather than
+        // leaving the untidied version sitting there looking like the truth.
+        if (characterInput.value !== after.character) characterInput.value = after.character;
         await write(after);
       };
 

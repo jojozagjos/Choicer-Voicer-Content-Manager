@@ -641,7 +641,6 @@ async function packForSharing(packDir, outDir, details) {
 }
 
 module.exports = {
-  hostAllowed,
   download,
   checksum,
   listEntries,
@@ -649,10 +648,5 @@ module.exports = {
   availableZipPath,
   existsReally,
   installFromRecord,
-  unpackAndInstall,
-  zipFolder,
   packForSharing,
-  copyFolder,
-  idFor,
-  RECORD_ENTRY,
 };

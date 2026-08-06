@@ -33,6 +33,7 @@
  * writes to one it did not make.
  */
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Transform } = require('stream');
@@ -513,6 +514,30 @@ function assetNameFor(packId) {
   return `${safe || 'pack'}.zip`;
 }
 
+/** The icon rides on the same release, under a name that cannot clash. */
+function iconNameFor(packId, iconPath) {
+  const safe = String(packId || 'pack').toLowerCase().replace(/[^a-z0-9._-]+/g, '-');
+  const ext = (path.extname(iconPath) || '.png').toLowerCase();
+  return `${safe || 'pack'}-icon${ICON_EXTS.includes(ext) ? ext : '.png'}`;
+}
+
+const ICON_EXTS = ['.png', '.jpg', '.jpeg', '.webp'];
+
+// An icon is a small square. Anything past this is not one, and the directory
+// should not be handing every browser a megabyte per tile.
+const MAX_ICON_BYTES = 4 * 1024 * 1024;
+
+/** The SHA-256 of a file, as hex. */
+function sha256Of(file) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(file);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+    stream.on('error', (err) => { stream.destroy(); reject(err); });
+  });
+}
+
 async function uploadAsset(token, release, zipPath, { onProgress, assetName } = {}) {
   const name = assetName || path.basename(zipPath);
   const bytes = fs.statSync(zipPath).size;
@@ -646,7 +671,7 @@ async function submitRecord(token, record) {
   return { url: issue.html_url, number: issue.number };
 }
 
-async function publish(token, { zipPath, packId, title }, { onProgress } = {}) {
+async function publish(token, { zipPath, packId, title, iconPath }, { onProgress } = {}) {
   const say = (stage, extra) => { if (onProgress) onProgress({ stage, ...extra }); };
 
   /**
@@ -684,6 +709,33 @@ async function publish(token, { zipPath, packId, title }, { onProgress } = {}) {
     { onProgress, assetName: assetNameFor(packId) },
   ));
 
+  // The icon goes on the same release, as its own asset.
+  //
+  // It has to travel separately from the pack because it is needed *before*
+  // anybody downloads anything: the directory shows a grid of them, and reading
+  // one out of a zip nobody has fetched yet is not possible.
+  //
+  // Its hash is taken here, from the file that was actually sent, and stored in
+  // the record. That is what stops an icon being swapped for something else
+  // after a pack has been accepted: the address stays valid and the bytes
+  // behind it can be replaced at any time, so the address alone proves nothing.
+  // The hash is checked again before the image is ever shown.
+  let icon = null;
+  if (iconPath && fs.existsSync(iconPath)) {
+    const iconBytes = fs.statSync(iconPath).size;
+    if (iconBytes > MAX_ICON_BYTES) {
+      throw new Error('That icon is larger than 4 MB, which is far bigger than an icon needs '
+        + 'to be. Use a smaller image.');
+    }
+    const uploaded = await during('uploading the icon', () => uploadAsset(
+      token,
+      { ...release, repoFullName: repo.fullName },
+      iconPath,
+      { assetName: iconNameFor(packId, iconPath) },
+    ));
+    icon = { url: uploaded.url, sha256: await sha256Of(iconPath) };
+  }
+
   say('done');
   return {
     downloadUrl: asset.url,
@@ -692,27 +744,21 @@ async function publish(token, { zipPath, packId, title }, { onProgress } = {}) {
     repoUrl: repo.htmlUrl,
     releaseUrl: release.html_url,
     repoCreated: repo.created,
+    iconUrl: icon ? icon.url : null,
+    iconSha256: icon ? icon.sha256 : null,
   };
 }
 
 module.exports = {
-  PACK_REPO,
-  SCOPE,
-  MAX_ASSET_BYTES,
   configure,
   isConfigured,
   canSubmit,
   submitRecord,
-  alreadyExists,
-  notFound,
   // Shared so the moderation side can talk to GitHub through the same headers,
   // error translation and timeouts rather than growing a second client.
   request: api,
   startSignIn,
   waitForToken,
   whoAmI,
-  ensureRepo,
-  ensureRelease,
-  uploadAsset,
   publish,
 };

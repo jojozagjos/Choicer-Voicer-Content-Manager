@@ -284,6 +284,50 @@ console.log('\nThe author has to own the file');
     ownerOfDownload('https://github.com/') === null);
 }
 
+console.log('\nIcons, and the swap they are meant to stop');
+{
+  const iconUrl = 'https://github.com/jojozagjos/packs/releases/download/v1/p-icon.png';
+
+  check('a record with no icon is fine', validateRecord(good()).ok);
+  check('and reports the absence as null rather than leaving it out',
+    validateRecord(good()).record.iconUrl === null
+    && validateRecord(good()).record.iconSha256 === null);
+
+  check('an icon with its hash is accepted',
+    validateRecord(good({ iconUrl, iconSha256: 'b'.repeat(64) })).ok);
+
+  // The whole point. An address alone proves nothing, because the bytes behind
+  // a release asset can be replaced at any time without the address changing.
+  check('an icon without a hash is refused',
+    refused({ iconUrl }, 'iconSha256'),
+    'an unhashable icon can be swapped for anything after a pack is accepted');
+  check('an icon with a malformed hash is refused',
+    refused({ iconUrl, iconSha256: 'nope' }, 'iconSha256'));
+
+  check('an icon hosted somewhere packs cannot come from is refused',
+    refused({ iconUrl: 'https://evil.example/p.png', iconSha256: 'b'.repeat(64) }, 'iconUrl'));
+
+  check('an icon on somebody else\'s account is refused',
+    refused({
+      iconUrl: 'https://github.com/someoneelse/packs/releases/download/v1/p-icon.png',
+      iconSha256: 'b'.repeat(64),
+    }, 'iconUrl'));
+
+  check('the hash is stored lower case, like the pack\'s',
+    validateRecord(good({ iconUrl, iconSha256: 'B'.repeat(64) })).record.iconSha256
+      === 'b'.repeat(64));
+}
+
+console.log('\nUnlisting has to survive being validated');
+{
+  const hidden = validateIndex({ packs: [{ ...good(), listed: false }] });
+  check('a hidden pack stays hidden', hidden.packs[0].listed === false,
+    'this is what made unlisting do nothing at all');
+  check('an ordinary pack is listed', validateIndex({ packs: [good()] }).packs[0].listed === true);
+  check('a submission cannot arrive claiming to be hidden',
+    validateRecord(good({ listed: false })).record.listed === true);
+}
+
 console.log(`\n${checks - failures}/${checks} passed`);
 if (failures) {
   console.log(`${failures} FAILED`);

@@ -10,13 +10,14 @@
  * a settings file, no password, and nothing that can be granted by editing
  * something local.
  *
- * Deciding is deliberately thin: approving merges the pull request the
- * submission workflow already opened, rejecting closes the issue with a reason.
- * Both are ordinary GitHub actions taken as the person who pressed the button,
- * so every decision lands in the repository's history under their name.
+ * Deciding is deliberately thin: approving writes the record into index.json,
+ * rejecting closes the issue with a reason. Both are ordinary GitHub actions
+ * taken as the person who pressed the button, so every decision lands in the
+ * repository's history under their name.
  */
 
 const github = require('./github');
+const directory = require('./directory');
 
 /**
  * Whether this account may moderate, and what it is allowed to do.
@@ -70,8 +71,9 @@ async function queue(token, repo) {
 
   const items = [];
   for (const issue of issues) {
-    // Pull requests come back from the issues endpoint too, and they are the
-    // other half of a submission rather than a thing to review on their own.
+    // Pull requests come back from the issues endpoint too. Nothing here opens
+    // one, but somebody can, and one appearing in the moderation queue as if it
+    // were a pack waiting to be read would be nothing but confusing.
     if (issue.pull_request) continue;
 
     const labels = (issue.labels || []).map((l) => (typeof l === 'string' ? l : l.name));
@@ -96,74 +98,145 @@ async function queue(token, repo) {
 }
 
 /**
- * The pull request the submission workflow opened for an issue.
- *
- * Asked for in any state, because "there is no open one" and "there never was
- * one" are different problems and only the second is worth alarming anyone
- * about. A merged one means the pack is already listed; none at all means the
- * workflow did not get as far as opening it.
- */
-async function pullFor(token, repo, issueNumber, { state = 'open' } = {}) {
-  const branch = `submission/${issueNumber}`;
-  const owner = repo.split('/')[0];
-  const found = await github.request(
-    `/repos/${repo}/pulls?state=${state}&head=${encodeURIComponent(`${owner}:${branch}`)}`,
-    { token },
-  );
-  return found.length ? found[0] : null;
-}
-
-/**
- * Explains why there is nothing to merge.
- *
- * The bare version of this said "it may already be merged", which is one of
- * three possibilities and not the likely one. Almost always the submission
- * workflow failed before it opened anything, and saying so is the difference
- * between a dead end and a thing to go and look at.
- */
-async function whyNoChange(token, repo, issueNumber) {
-  const any = await pullFor(token, repo, issueNumber, { state: 'all' });
-  if (any && any.merged_at) {
-    return 'This pack has already been listed. Its change was merged '
-      + `on ${new Date(any.merged_at).toLocaleDateString()}.`;
-  }
-  if (any) {
-    return 'The change for this submission was closed without being merged. '
-      + 'Re-opening it on GitHub, or asking for the pack to be submitted again, will '
-      + 'produce a new one.';
-  }
-  // Deliberately no guess at why. An earlier version named one likely cause,
-  // and when the real failure turned out to be a different step that guess
-  // sent whoever read it looking in the wrong place.
-  return 'No change was ever opened for this submission, so there is nothing to merge. '
-    + 'The submission workflow did not get that far; its most recent run on GitHub says '
-    + 'which step stopped it.';
-}
-
-/**
- * Approves a submission: merge the change, then say so on the issue.
- *
- * The merge is what actually lists the pack. Closing the issue is left to
- * GitHub, which does it when the branch merges if the pull request says so, and
- * is not worth a second call if it does not.
+ * Approves a submission: write the record into the index, then say so.
  */
 async function approve(token, repo, issueNumber, note) {
-  const pull = await pullFor(token, repo, issueNumber);
-  if (!pull) {
-    throw new Error(await whyNoChange(token, repo, issueNumber));
+  // The record is read back from the issue rather than carried here from the
+  // interface, so what gets listed is what was actually submitted and not
+  // something the renderer had in memory.
+  const issue = await github.request(`/repos/${repo}/issues/${issueNumber}`, { token });
+  const raw = recordIn(issue.body);
+  if (!raw) {
+    throw new Error('This submission has no record in it, so there is nothing to list.');
   }
 
-  await github.request(`/repos/${repo}/pulls/${pull.number}/merge`, {
-    token,
-    method: 'PUT',
-    body: JSON.stringify({ merge_method: 'squash' }),
-  });
+  // Checked here as well as in the workflow. The workflow reads the issue when
+  // it is opened or edited; this reads it at the moment of listing, and the two
+  // are not the same moment. Validating again costs nothing and closes the gap.
+  const checked = directory.validateRecord(raw);
+  if (!checked.ok) {
+    throw new Error(`This record cannot be listed:\n\n${
+      checked.problems.map((p) => `${p.field}: ${p.message}`).join('\n')}`);
+  }
+  const record = checked.record;
+
+  // The pack has to be by whoever opened the submission. Without this a record
+  // edited after the fact could list a pack under somebody else's name.
+  const opener = String(issue.user && issue.user.login ? issue.user.login : '').toLowerCase();
+  if (opener && record.author.toLowerCase() !== opener) {
+    throw new Error(`This was submitted by ${issue.user.login}, but the record says the pack `
+      + `is by ${record.author}. A pack has to be submitted by the person it is credited to.`);
+  }
+
+  const listed = await addToIndex(token, repo, record, issueNumber);
 
   await comment(token, repo, issueNumber,
     note ? `Listed.\n\n${note}` : 'Listed. It will appear in the app shortly.');
   await close(token, repo, issueNumber);
 
-  return { ok: true, merged: pull.number };
+  return { ok: true, ...listed };
+}
+
+/**
+ * Writes a record into index.json, as the person approving it.
+ *
+ * Committed straight to the file rather than by merging a pull request.
+ *
+ * Pull requests were the original design and they cost more than they returned.
+ * Opening one from a workflow needs a repository setting that is off by
+ * default, so every first submission failed at that step and could never be
+ * listed. A moderator already has write access, which is the whole permission
+ * model, so the app can make the change directly with their own token and there
+ * is nothing extra to switch on.
+ *
+ * Read, change, write, with the file's own sha as the guard: if somebody else
+ * has written to the index since it was read, GitHub refuses the write rather
+ * than letting one decision quietly undo another.
+ */
+async function addToIndex(token, repo, record, issueNumber, attempt = 0) {
+  const file = await github.request(
+    `/repos/${repo}/contents/index.json`, { token },
+  );
+  // Over a megabyte, GitHub hands back the metadata without the file. That is a
+  // directory of several thousand packs, which is a good problem, but it is not
+  // one to discover as a JSON parse error.
+  if (!file.content) {
+    throw new Error('The directory index has grown too large to edit this way. '
+      + 'Listing has to move to a different method before any more packs can be added.');
+  }
+  const index = JSON.parse(Buffer.from(file.content, 'base64').toString('utf8'));
+  if (!Array.isArray(index.packs)) index.packs = [];
+
+  const room = directory.roomForAnother(index.packs, record.author, record.id);
+  if (!room.ok) {
+    throw new Error(`${record.author} already has ${room.held} packs listed, which is the most `
+      + `one account may hold (${room.limit}). Something of theirs has to come off the list `
+      + 'before another goes on.');
+  }
+
+  const at = index.packs.findIndex((p) => p.id === record.id);
+  if (at !== -1) {
+    // Updating a pack is normal. Replacing somebody else's is not.
+    if (index.packs[at].author.toLowerCase() !== record.author.toLowerCase()) {
+      throw new Error(`There is already a pack called ${record.id}, by somebody else. `
+        + 'This one cannot be listed under that name.');
+    }
+    // The same pack again is an update, and an update keeps what the listing
+    // has earned rather than starting over.
+    record.published = index.packs[at].published || record.published;
+    record.downloads = index.packs[at].downloads || 0;
+    // A pack that was taken down stays down. Publishing over it is the obvious
+    // way to undo a moderator's decision without anybody noticing, since a
+    // submitted record always claims to be listed. Putting it back is `/restore`
+    // and nothing else.
+    record.listed = index.packs[at].listed !== false;
+    index.packs[at] = record;
+  } else {
+    index.packs.push(record);
+  }
+
+  index.packs.sort((a, b) => a.id.localeCompare(b.id));
+  index.updated = new Date().toISOString();
+
+  // Checked as a whole before writing, the same way the workflow checks it.
+  // Listing one pack must not be able to take the directory down for everyone,
+  // and an index the app itself would refuse to read is exactly that.
+  const whole = directory.validateIndex(index);
+  if (!whole.ok) {
+    throw new Error(`Listing this would break the directory: ${whole.error}`);
+  }
+  if (whole.rejected.length) {
+    throw new Error(`Listing this would drop ${whole.rejected.length} `
+      + 'existing listing(s) from the directory, so nothing was changed.');
+  }
+
+  const body = `${JSON.stringify(index, null, 2)}\n`;
+  try {
+    await github.request(`/repos/${repo}/contents/index.json`, {
+      token,
+      method: 'PUT',
+      body: JSON.stringify({
+        message: `List ${record.id} (#${issueNumber})`,
+        content: Buffer.from(body, 'utf8').toString('base64'),
+        sha: file.sha,
+      }),
+    });
+  } catch (err) {
+    // 409 means the file moved under us: something else wrote to the index
+    // between the read and the write. Reading it again and reapplying is the
+    // whole fix, and it is worth doing here rather than showing somebody a
+    // conflict they did not cause and cannot act on.
+    if (err.status === 409 && attempt < 2) {
+      return addToIndex(token, repo, record, issueNumber, attempt + 1);
+    }
+    if (err.status === 409) {
+      throw new Error('The directory is being written to faster than this can keep up with. '
+        + 'Nothing was listed. Trying again in a moment should work.');
+    }
+    throw err;
+  }
+
+  return { listed: record.id, updated: at !== -1, total: index.packs.length };
 }
 
 /**
@@ -178,19 +251,10 @@ async function reject(token, repo, issueNumber, reason) {
     throw new Error('A reason is needed, so the author knows what to change.');
   }
 
-  const pull = await pullFor(token, repo, issueNumber);
-  if (pull) {
-    await github.request(`/repos/${repo}/pulls/${pull.number}`, {
-      token,
-      method: 'PATCH',
-      body: JSON.stringify({ state: 'closed' }),
-    });
-  }
-
   await comment(token, repo, issueNumber, `Not listed.\n\n${reason.trim()}`);
   await close(token, repo, issueNumber);
 
-  return { ok: true, closedPull: pull ? pull.number : null };
+  return { ok: true };
 }
 
 /**
@@ -206,16 +270,9 @@ async function sendBack(token, repo, issueNumber, reason) {
     throw new Error('A reason is needed, so the author knows what to change.');
   }
 
-  const pull = await pullFor(token, repo, issueNumber);
-  if (pull) {
-    await github.request(`/repos/${repo}/pulls/${pull.number}`, {
-      token, method: 'PATCH', body: JSON.stringify({ state: 'closed' }),
-    });
-  }
-
   await comment(token, repo, issueNumber,
     `Not listed yet.\n\n${reason.trim()}\n\nChange that and publish it again. `
-    + 'nothing is held against this account.');
+    + 'Nothing is held against this account.');
   await close(token, repo, issueNumber);
   return { ok: true };
 }
@@ -293,10 +350,15 @@ async function mySubmissions(token, repo, login) {
       state: issue.state,
       // Closed says nothing on its own: a listed pack and a refused one both
       // end closed. What was said is what tells them apart.
+      //
+      // Order matters. "Not listed yet" is the one that asks for a change and
+      // holds nothing against the author, and it has to be read before the
+      // plain refusal, which its wording otherwise matches.
       outcome: issue.state === 'open' ? 'waiting'
-        : /not listed/i.test(reason) ? 'refused'
-          : /listed|updated/i.test(reason) ? 'listed'
-            : 'closed',
+        : /not listed yet/i.test(reason) ? 'changes'
+          : /not listed/i.test(reason) ? 'refused'
+            : /listed|updated/i.test(reason) ? 'listed'
+              : 'closed',
       reason,
       openedAt: issue.created_at,
       closedAt: issue.closed_at,
@@ -379,9 +441,7 @@ module.exports = {
   setListed,
   sendBack,
   refuseAndBan,
-  recordIn,
   queue,
-  pullFor,
   approve,
   reject,
   comment,

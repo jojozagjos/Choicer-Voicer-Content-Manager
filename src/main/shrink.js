@@ -226,7 +226,6 @@ async function shrinkPack(packDir, outDir, { signal, onProgress } = {}) {
 
 module.exports = {
   VIDEO,
-  AUDIO_KBPS,
   VIDEO_BITRATE_FLOOR,
   WORTH_IT,
   targetName,

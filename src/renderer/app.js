@@ -193,6 +193,7 @@ const el = {
   modsSearch: $('#mods-search'),
   btnModsRefresh: $('#btn-mods-refresh'),
   btnModsBrowse: $('#btn-mods-browse'),
+  btnModsPublishers: $('#btn-mods-publishers'),
   btnModsInbox: $('#btn-mods-inbox'),
   tabAdmin: $('#tab-admin'),
   adminView: $('#admin-view'),
@@ -356,6 +357,47 @@ function toast(message, kind = 'info', timeout = 4200) {
     }, 220);
   }, timeout);
   return node;
+}
+
+/**
+ * Anything that went wrong and was not caught on the way, said out loud.
+ *
+ * Every button in this app is wired as `() => doSomething(x)`, and none of those
+ * handlers can await anything. So a promise that rejects anywhere inside one has
+ * nowhere to land: the browser notes it on a console nobody has open and the
+ * interface simply does nothing. Publishing died that way, and "nothing happens"
+ * is the least actionable thing an app can do.
+ *
+ * This is the backstop, not the plan. Anything that can fail in a way somebody
+ * can act on should still say so itself, in words about the pack rather than
+ * about the code. This catches what nobody thought to catch.
+ */
+function watchForUnhandled() {
+  // The same fault often fires repeatedly, and a stack of identical toasts
+  // buries the first one, which is the only one worth reading.
+  let last = '';
+  let lastAt = 0;
+
+  const shout = (what, error) => {
+    const message = (error && error.message) || String(error || 'something went wrong');
+    const now = Date.now();
+    if (message === last && now - lastAt < 4000) return;
+    last = message;
+    lastAt = now;
+
+    console.error(what, error);
+    toast(`Something went wrong: ${message}`, 'error', 9000);
+  };
+
+  window.addEventListener('unhandledrejection', (event) => {
+    shout('Unhandled rejection', event.reason);
+  });
+  window.addEventListener('error', (event) => {
+    // Media and image elements raise this too, and those already have their own
+    // handling where it matters. Only script faults have an Error on them.
+    if (!event.error) return;
+    shout('Uncaught error', event.error);
+  });
 }
 
 function friendlySessionName(session) {
@@ -1029,7 +1071,7 @@ async function showAdmin(which = 'submissions', { force = false } = {}) {
   el.adminSearch.placeholder = which === 'publishers' ? 'Search people…' : 'Search…';
 
   // Both of these read the directory, which is otherwise held for the session.
-  if (force && (which === 'publishers' || which === 'listed')) state.mods = null;
+  if (force && (which === 'publishers' || which === 'listed')) directoryChanged();
 
   if (which === 'publishers') await refreshAdminPublishers();
   else if (which === 'listed') await refreshAdminListed();
@@ -1188,13 +1230,13 @@ async function refreshAdminPublishers() {
       <span class="admin-item-title">@${escapeHtml(who.handle)}</span>
       <span class="muted small">${who.listed} pack${who.listed === 1 ? '' : 's'}
         · ${formatDownloads(who.downloads)}${who.hidden ? ` · ${who.hidden} hidden` : ''}</span>`;
-    button.addEventListener('click', () => showPublisher(who));
+    button.addEventListener('click', () => showAdminPublisher(who));
     el.adminList.append(button);
   }
 }
 
-/** Everything known about one publisher. */
-function showPublisher(who) {
+/** Everything known about one publisher, for a moderator. */
+function showAdminPublisher(who) {
   state.adminOpen = `@${who.handle}`;
   refreshAdminPublishers();
 
@@ -1273,8 +1315,21 @@ async function setPackListed(packId, listed) {
   toast(listed ? 'Listed again.' : 'Unlisted.', 'ok');
   // The directory changes when the workflow runs, which is not instant, so what
   // is held here is stale either way.
-  state.mods = null;
+  directoryChanged();
   await refreshAdminPublishers();
+}
+
+/**
+ * Says the directory has changed underneath what is held here.
+ *
+ * Dropping the cached copy is not enough on its own. The index is served
+ * through a CDN that holds it for minutes, so the refetch was being answered
+ * from before the change and the pack that had just been listed still was not
+ * there. This marks it as needing to be asked for past the cache.
+ */
+function directoryChanged() {
+  state.mods = null;
+  state.modsStale = true;
 }
 
 /** Everything waiting to be looked at. */
@@ -1545,6 +1600,10 @@ async function decideReview(item, decision, author) {
   }[decision], 'ok');
   state.adminOpen = null;
   el.adminMain.innerHTML = '';
+  // Listing a pack changes the directory, so the copy held for this session is
+  // stale. Dropped rather than refetched: nobody is looking at the Mods tab
+  // from in here, and it is read again the next time somebody opens it.
+  if (approving) directoryChanged();
 
   // Dropped from the list here rather than waiting for the refetch to notice.
   // GitHub does not always report an issue as closed the instant it is closed,
@@ -1574,10 +1633,44 @@ const MOD_TYPES = [
   { id: 'chatter', label: 'Chatter' },
 ];
 
+// A submission nobody has acted on is closed after this long. It matches the
+// cutoff in the directory's tidy workflow, and the two have to agree: telling
+// somebody they have a month when the workflow gives them two is worse than
+// saying nothing.
+const SUBMISSION_DAYS = 60;
+
+/**
+ * How long a waiting submission has left, in words.
+ *
+ * Only for ones still open, because it is the only state where a deadline
+ * means anything. Closing is not a refusal and the wording says so, but not
+ * knowing there is a clock at all is worse than knowing there is one.
+ */
+function waitNoteFor(item) {
+  if (item.outcome !== 'waiting') return '';
+
+  const opened = Date.parse(item.openedAt);
+  if (!opened) return '';
+
+  const left = SUBMISSION_DAYS - Math.floor((Date.now() - opened) / 86400000);
+  if (left > 14) return '';
+
+  const words = left <= 0
+    ? 'Closing shortly if nothing happens. Publishing again opens a fresh one.'
+    : `${left} day${left === 1 ? '' : 's'} left before this closes on its own. `
+      + 'That is not a refusal, and publishing again opens a fresh one.';
+
+  return `<span class="inbox-wait">${escapeHtml(words)}</span>`;
+}
+
 /** How each submission outcome is shown. */
 const INBOX_STATES = {
   waiting: { label: 'Waiting to be looked at', tone: 'muted' },
   listed: { label: 'Listed', tone: 'ok' },
+  // Deliberately not shown in the same colour as a refusal. Being asked to
+  // change something is not being turned down, and a page that paints the two
+  // the same teaches people to read both as rejection.
+  changes: { label: 'Needs a change', tone: 'warn' },
   refused: { label: 'Not listed', tone: 'bad' },
   closed: { label: 'Closed', tone: 'muted' },
 };
@@ -1585,13 +1678,191 @@ const INBOX_STATES = {
 /** Switches the Mods tab between browsing and your own submissions. */
 async function showMods(which = 'browse') {
   state.modsShow = which;
-  el.btnModsBrowse.classList.toggle('on', which === 'browse');
+  // A publisher's page is reached from Browse and belongs to it, so Browse
+  // stays lit while it is open rather than nothing being lit at all.
+  el.btnModsBrowse.classList.toggle('on', which === 'browse' || which === 'publisher');
+  el.btnModsPublishers.classList.toggle('on', which === 'publishers');
   el.btnModsInbox.classList.toggle('on', which === 'inbox');
-  // Searching the whole directory makes no sense while looking at your own few.
-  el.modsSearch.hidden = which !== 'browse';
+
+  el.modsSearch.hidden = which !== 'browse' && which !== 'publishers';
+  el.modsSearch.placeholder = which === 'publishers' ? 'Search publishers…' : 'Search packs…';
+  // The type rail is about packs, so it has no meaning on the other views.
+  if (which !== 'browse') el.modsTypes.hidden = true;
 
   if (which === 'inbox') await renderInbox();
+  else if (which === 'publishers') await showPublishers();
   else await refreshMods();
+}
+
+/**
+ * Everyone who has a pack listed, and how much they have put in.
+ *
+ * Built from the directory rather than asked of GitHub. A publisher is not a
+ * separate thing that has to be registered anywhere: it is simply somebody with
+ * packs listed, so the list of them falls straight out of the index and cannot
+ * drift from it.
+ */
+async function showPublishers() {
+  if (!state.mods) {
+    el.modsGrid.innerHTML = '<p class="muted small">Looking…</p>';
+    const result = await window.api.mods.index({ fresh: state.modsStale })
+      .catch((err) => ({ ok: false, error: err.message }));
+    if (state.modsShow !== 'publishers') return;
+    state.mods = result;
+    state.modsStale = false;
+  }
+
+  const data = state.mods;
+  el.modsTitle.textContent = 'Publishers';
+
+  if (!data || !data.ok || !data.configured) {
+    el.modsSubtitle.textContent = '';
+    el.modsGrid.innerHTML = `<div class="mods-empty"><h3>No publishers yet</h3>
+      <p class="muted">${escapeHtml((data && data.error)
+    || 'Nobody has had a pack listed yet.')}</p></div>`;
+    return;
+  }
+
+  const query = (el.modsSearch.value || '').trim().toLowerCase();
+  let people = publisherStats(data.packs);
+  if (query) people = people.filter((p) => p.author.toLowerCase().includes(query));
+
+  el.modsSubtitle.textContent = `${people.length} publisher${people.length === 1 ? '' : 's'}`;
+
+  if (!people.length) {
+    el.modsGrid.innerHTML = `<div class="mods-empty"><h3>Nobody found</h3>
+      <p class="muted">No publisher matches that.</p></div>`;
+    return;
+  }
+
+  el.modsGrid.innerHTML = people.map((p) => `
+    <article class="publisher-card" data-author="${escapeHtml(p.author)}">
+      <h3>${escapeHtml(p.author)}</h3>
+      <p class="muted small">${p.packs} pack${p.packs === 1 ? '' : 's'} ·
+        ${escapeHtml(formatDownloads(p.downloads))} · ${escapeHtml(formatBytes(p.bytes))}</p>
+      <p class="muted small">Latest ${escapeHtml(formatWhen(p.latest))}</p>
+    </article>`).join('');
+
+  for (const card of el.modsGrid.querySelectorAll('[data-author]')) {
+    card.addEventListener('click', () => showPublisher(card.dataset.author));
+  }
+}
+
+/**
+ * One publisher: what they have put out, and where it lives.
+ *
+ * The repository address is worked out from a pack's download address rather
+ * than stored, because it is already in there and a second copy of the same
+ * fact is a second thing that can be wrong.
+ */
+async function showPublisher(author) {
+  state.modsShow = 'publisher';
+  el.btnModsBrowse.classList.add('on');
+  el.btnModsPublishers.classList.remove('on');
+  el.btnModsInbox.classList.remove('on');
+  el.modsSearch.hidden = true;
+  el.modsTypes.hidden = true;
+
+  const data = state.mods;
+  if (!data || !data.ok) { await showMods('browse'); return; }
+
+  const theirs = data.packs.filter((p) => p.listed !== false
+    && String(p.author || '').toLowerCase() === String(author).toLowerCase());
+  const stats = publisherStats(data.packs)
+    .find((p) => p.author.toLowerCase() === String(author).toLowerCase());
+
+  el.modsTitle.textContent = author;
+  el.modsSubtitle.textContent = stats
+    ? `${stats.packs} pack${stats.packs === 1 ? '' : 's'} · ${formatDownloads(stats.downloads)}`
+    : 'Nothing listed';
+
+  const repo = repoOf(theirs[0]);
+
+  el.modsGrid.innerHTML = `
+    <div class="publisher-page">
+      <div class="publisher-bar">
+        <button type="button" class="btn btn-small" id="pub-back">← All packs</button>
+        ${repo ? `<button type="button" class="btn btn-small" id="pub-repo">
+          Open their repository</button>` : ''}
+      </div>
+
+      ${stats ? `<div class="publisher-stats">
+        <div><b>${stats.packs}</b><span class="muted small">listed</span></div>
+        <div><b>${escapeHtml(formatDownloads(stats.downloads))}</b>
+          <span class="muted small">downloads</span></div>
+        <div><b>${escapeHtml(formatBytes(stats.bytes))}</b><span class="muted small">total</span></div>
+        <div><b>${escapeHtml(formatWhen(stats.first))}</b>
+          <span class="muted small">first pack</span></div>
+        <div><b>${escapeHtml(formatWhen(stats.latest))}</b>
+          <span class="muted small">last update</span></div>
+      </div>` : ''}
+
+      <div class="publisher-packs" id="pub-packs"></div>
+    </div>`;
+
+  el.modsGrid.querySelector('#pub-back').addEventListener('click', () => showMods('browse'));
+  const openRepo = el.modsGrid.querySelector('#pub-repo');
+  if (openRepo) openRepo.addEventListener('click', () => openOutside(repo, 'their packs on GitHub'));
+
+  const holder = el.modsGrid.querySelector('#pub-packs');
+  if (!theirs.length) {
+    holder.innerHTML = '<p class="muted small">Nothing of theirs is listed at the moment.</p>';
+    return;
+  }
+  for (const pack of theirs) holder.append(modCard(pack));
+}
+
+/**
+ * The repository a pack was published from.
+ *
+ * A release address is `.../<owner>/<repo>/releases/download/...`, so the first
+ * two path parts are the repository. Anything that does not look like that
+ * gives nothing rather than a guess.
+ */
+function repoOf(pack) {
+  if (!pack || !pack.downloadUrl) return null;
+  try {
+    const url = new URL(pack.downloadUrl);
+    if (!/(^|\.)github\.com$/.test(url.hostname.toLowerCase())) return null;
+    const parts = url.pathname.split('/').filter(Boolean);
+    if (parts.length < 2) return null;
+    return `https://github.com/${parts[0]}/${parts[1]}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Totals per publisher, from listed packs only.
+ *
+ * Unlisted packs are left out of every number here. Counting a hidden pack
+ * towards somebody's total would say the directory holds something it will not
+ * show, which is worse than not mentioning it.
+ */
+function publisherStats(packs) {
+  const by = new Map();
+
+  for (const pack of packs) {
+    if (pack.listed === false) continue;
+    const key = String(pack.author || '').toLowerCase();
+    if (!by.has(key)) {
+      by.set(key, {
+        author: pack.author, packs: 0, downloads: 0, bytes: 0, latest: null, first: null,
+      });
+    }
+    const who = by.get(key);
+    who.packs++;
+    who.downloads += pack.downloads || 0;
+    who.bytes += pack.bytes || 0;
+    const when = pack.updated || pack.published;
+    if (!who.latest || Date.parse(when) > Date.parse(who.latest)) who.latest = when;
+    if (!who.first || Date.parse(pack.published) < Date.parse(who.first)) {
+      who.first = pack.published;
+    }
+  }
+
+  return [...by.values()].sort((a, b) => b.packs - a.packs
+    || a.author.localeCompare(b.author));
 }
 
 /**
@@ -1609,6 +1880,12 @@ async function renderInbox() {
   el.modsGrid.innerHTML = '<p class="muted small">Looking…</p>';
 
   const said = await window.api.mods.inbox().catch((e) => ({ ok: false, error: e.message }));
+
+  // Reading the submissions takes a moment, and in that moment somebody can
+  // press Browse. Without this the answer arrives afterwards and paints the
+  // submissions into the browse tab, which is the wrong list under the wrong
+  // heading with no way to tell it is wrong.
+  if (state.modsShow !== 'inbox') return;
 
   if (!said.ok) {
     el.modsGrid.innerHTML = `<div class="mods-empty"><h3>Could not be read</h3>
@@ -1652,19 +1929,44 @@ async function renderInbox() {
     const isNew = seen[item.number] !== undefined && seen[item.number] !== item.outcome;
     if (isNew) changed++;
 
-    return `<article class="inbox-item${isNew ? ' is-changed' : ''}">
-      <div class="inbox-head">
-        <b>${isNew ? '<i class="inbox-dot" title="This changed since you last looked"></i>' : ''}${
-          escapeHtml(item.title)}</b>
-        <span class="inbox-state is-${shown.tone}">${shown.label}</span>
-      </div>
-      ${item.reason ? `<p class="inbox-reason">${escapeHtml(item.reason)}</p>` : ''}
-      <div class="inbox-foot">
-        <span class="muted small">Sent ${formatWhen(item.openedAt)}</span>
-        <button class="btn btn-small" data-url="${escapeHtml(item.url)}">Open on GitHub</button>
+    // Opened one at a time. A submission carries a paragraph of explanation and
+    // a record, and showing all of that for every row turns a list of five into
+    // a wall nobody reads. Closed, a row is a title and an outcome; open, it is
+    // everything there is to know about that one.
+    return `<article class="inbox-item${isNew ? ' is-changed' : ''}" data-number="${item.number}">
+      <button type="button" class="inbox-open" aria-expanded="false">
+        <span class="inbox-head">
+          <b>${isNew ? '<i class="inbox-dot" title="This changed since you last looked"></i>' : ''}${
+      escapeHtml(item.title)}</b>
+          <span class="inbox-state is-${shown.tone}">${shown.label}</span>
+        </span>
+        <span class="inbox-when muted small">Sent ${escapeHtml(formatWhen(item.openedAt))}${
+      item.id ? ` · listed as ${escapeHtml(item.id)}` : ''}</span>
+        ${waitNoteFor(item)}
+        <span class="inbox-chevron" aria-hidden="true">▾</span>
+      </button>
+
+      <div class="inbox-body" hidden>
+        ${item.reason
+    ? `<p class="inbox-reason">${escapeHtml(item.reason)}</p>`
+    : '<p class="inbox-reason muted">Nothing has been said on it yet.</p>'}
+        <div class="inbox-foot">
+          <button class="btn btn-small" data-url="${escapeHtml(item.url)}">Open on GitHub</button>
+        </div>
       </div>
     </article>`;
   }).join('');
+
+  for (const row of el.modsGrid.querySelectorAll('.inbox-item')) {
+    const opener = row.querySelector('.inbox-open');
+    const body = row.querySelector('.inbox-body');
+    opener.addEventListener('click', () => {
+      const opening = body.hidden;
+      body.hidden = !opening;
+      opener.setAttribute('aria-expanded', String(opening));
+      row.classList.toggle('is-open', opening);
+    });
+  }
 
   // Written after drawing, so the marks survive until they have been seen.
   localStorage.setItem('inboxSeen', JSON.stringify(nowSeen));
@@ -1693,7 +1995,17 @@ async function refreshMods({ force = false } = {}) {
   }
 
   el.modsSubtitle.textContent = 'Looking…';
-  const result = await window.api.mods.index().catch((err) => ({ ok: false, error: err.message }));
+  // Past the cache when this app is the thing that changed the directory, or
+  // when somebody pressed refresh because they expect it to have changed.
+  const result = await window.api.mods.index({ fresh: force || state.modsStale })
+    .catch((err) => ({ ok: false, error: err.message }));
+  state.modsStale = false;
+
+  // Same reason as the submissions list: this can finish after somebody has
+  // moved to the other tab, and painting the directory over their submissions
+  // is as wrong in this direction as in the other.
+  if (state.modsShow === 'inbox') return;
+
   state.mods = result;
   renderModTypes();
   renderMods();
@@ -1779,7 +2091,14 @@ function renderMods() {
   el.modsTitle.textContent = chosen.label;
 
   const query = (el.modsSearch.value || '').trim().toLowerCase();
-  let packs = data.packs;
+
+  // Unlisted packs are dropped before anything else. A pack taken down stays in
+  // the index on purpose, so it can be put back and so its download count is
+  // not lost, but it must not appear to anybody browsing. Nothing filtered on
+  // this before, which meant hiding a pack changed the file and nothing else.
+  const showing = data.packs.filter((p) => p.listed !== false);
+
+  let packs = showing;
   if (chosen.id !== 'all') packs = packs.filter((p) => p.type === chosen.id);
   if (query) {
     packs = packs.filter((p) => `${p.title} ${p.author} ${(p.tags || []).join(' ')}`
@@ -1787,7 +2106,7 @@ function renderMods() {
   }
 
   el.modsSubtitle.textContent = query
-    ? `${packs.length} of ${data.packs.length} matching "${query}"`
+    ? `${packs.length} of ${showing.length} matching "${query}"`
     : `${packs.length} pack${packs.length === 1 ? '' : 's'}`;
 
   if (!packs.length) {
@@ -1831,17 +2150,30 @@ function formatWhen(iso) {
  *
  * Resolves with the details, or null if it was declined.
  */
-async function askListingDetails(pack) {
+async function askListingDetails(pack, already) {
   const said = await askForm({
     title: 'How should this pack be listed?',
-    detail: 'This is what people see when browsing. Only the summary is needed.',
+    detail: 'This is what people see when browsing. A name and one line about it are required.',
     mark: '↗',
     buttons: ['Continue', 'Cancel'],
     fields: [
+      // Asked rather than taken from the pack, because a pack with no name of
+      // its own is shown under its folder name, and folder names are things
+      // like "new voice pack 2". That is fine on your own machine and reads
+      // badly as the name of the thing in a public list.
+      {
+        key: 'title',
+        label: 'Name',
+        value: (already && already.title) || pack.title || '',
+        placeholder: 'What this pack is called',
+        max: 80,
+        min: 2,
+        required: true,
+      },
       {
         key: 'summary',
         label: 'One line about it',
-        value: pack.subtitle || '',
+        value: (already && already.summary) || pack.subtitle || '',
         placeholder: 'What is in it, in a few words',
         max: 140,
         required: true,
@@ -1849,7 +2181,7 @@ async function askListingDetails(pack) {
       {
         key: 'description',
         label: 'More, if you want',
-        value: '',
+        value: (already && already.description) || '',
         placeholder: 'Optional',
         multiline: true,
         max: 4000,
@@ -1857,29 +2189,23 @@ async function askListingDetails(pack) {
       {
         key: 'tags',
         label: 'Tags, separated by commas',
-        value: '',
+        value: ((already && already.tags) || []).join(', '),
         placeholder: 'funny, short, anime',
         max: 200,
       },
       {
         key: 'licence',
         label: 'Can other people reuse this?',
-        value: 'unstated',
-        options: [
-          ['unstated', 'Rather not say'],
-          ['cc0', 'Anyone may use it, no credit needed'],
-          ['cc-by', 'Anyone may use it, with credit'],
-          ['cc-by-sa', 'With credit, and shared the same way'],
-          ['cc-by-nc', 'With credit, nothing commercial'],
-          ['cc-by-nc-sa', 'With credit, nothing commercial, shared alike'],
-          ['all-rights-reserved', 'Ask me first'],
-        ],
+        value: (already && already.licence) || 'unstated',
+        options: ((state.info && state.info.licences) || [{ id: 'unstated', label: 'Rather not say' }])
+          .map((l) => [l.id, l.label]),
       },
     ],
   });
   if (said === null) return null;
 
   return {
+    title: said.title.trim(),
     summary: said.summary.trim(),
     description: said.description.trim(),
     // Lower case, dashes for spaces, deduplicated: the validator wants tags in
@@ -1924,7 +2250,8 @@ function modCard(pack) {
       <span class="mod-icon">${TYPE_ICONS[pack.type] || '📦'}</span>
       <div class="mod-card-name">
         <h3>${escapeHtml(pack.title)}</h3>
-        <p class="muted small">by ${escapeHtml(pack.author)}</p>
+        <p class="muted small"><button type="button" class="linklike"
+             data-author="${escapeHtml(pack.author)}">by ${escapeHtml(pack.author)}</button></p>
       </div>
     </div>
     <p class="mod-summary">${escapeHtml(pack.summary || '')}</p>
@@ -1933,18 +2260,45 @@ function modCard(pack) {
       <span class="muted small">${formatBytes(pack.bytes)} · ${formatDownloads(pack.downloads)}</span>
       <span class="mod-actions">
         <span class="mod-status muted small"></span>
-        <button class="btn btn-small ${installed ? '' : 'btn-primary'}">
+        <button class="btn btn-small mod-install ${installed ? '' : 'btn-primary'}">
           ${installed ? 'Installed' : 'Install'}
         </button>
       </span>
     </div>`;
 
-  const button = card.querySelector('button');
+  // Named rather than "the first button on the card". It was the first one
+  // until the author's name became a button too, and a card whose Install
+  // handler is quietly attached to something else is the kind of break that
+  // does not look like a break.
+  const button = card.querySelector('.mod-install');
   const status = card.querySelector('.mod-status');
   if (installed) button.disabled = true;
   else button.addEventListener('click', () => installMod(pack, button, status));
 
+  card.querySelector('[data-author]')
+    .addEventListener('click', () => showPublisher(pack.author));
+
+  fillModIcon(card.querySelector('.mod-icon'), pack);
   return card;
+}
+
+/**
+ * Puts the published icon on a card, once it has been checked.
+ *
+ * The type glyph stays until an image is verified, so a card is never empty and
+ * a pack whose icon fails its check simply keeps the glyph. Nothing announces
+ * that failure on the card: whoever is browsing did nothing wrong and cannot
+ * act on it, and a grid peppered with warnings about other people's packs is
+ * noise. It is refused in the main process, which is where it matters.
+ */
+async function fillModIcon(holder, pack) {
+  if (!holder || !pack.iconUrl || !pack.iconSha256) return;
+
+  const got = await window.api.mods.icon(pack.iconUrl, pack.iconSha256).catch(() => null);
+  if (!got || !got.ok || !holder.isConnected) return;
+
+  holder.innerHTML = `<img src="${escapeHtml(got.url)}" alt="" loading="lazy" />`;
+  holder.classList.add('has-image');
 }
 
 /**
@@ -1987,7 +2341,36 @@ async function installMod(pack, button, status) {
  * knows what it is — no second file to keep track of and nothing to fill in
  * before it can be handed over.
  */
+/**
+ * Refuses a pack with no picture, and says why.
+ *
+ * Checked before packaging rather than only before publishing. A pack with no
+ * picture is an empty square everywhere it is shown, including in the game once
+ * somebody installs it, and that is just as true of a zip handed over directly
+ * as of one that goes to the directory. Letting the zip through and stopping
+ * only at publishing meant the rule was discovered several minutes of
+ * re-encoding after it could have been useful.
+ *
+ * Returns true when the pack has one and the caller may carry on.
+ */
+async function requirePicture(pack) {
+  if (pack.iconPath || pack.iconUrl) return true;
+
+  await askConfirm({
+    title: 'This pack needs an icon first',
+    detail: `"${pack.title}" has no icon, so it would show as an empty square everywhere it `
+      + 'appears, including in the game once somebody installs it.\n\n'
+      + 'To set one: press "Edit this pack", then set the icon under Pack details on the '
+      + 'right. Come back and share it once it has one.',
+    buttons: ['Done'],
+    mark: '🖼',
+  });
+  return false;
+}
+
 async function sharePack(pack) {
+  if (!await requirePicture(pack)) return;
+
   const go = await askConfirm({
     title: `Share "${pack.title}"?`,
     detail: 'This makes one zip in your exports folder, ready to send to anyone.\n\n'
@@ -2076,7 +2459,7 @@ async function offerToShare(result, pack, saved, canPublish, already) {
   });
 
   if (canPublish && open === 0) {
-    await publishPack(result, pack, Boolean(already));
+    await publishPack(result, pack, already);
     return;
   }
   // With the publish button present, everything after it shifts by one.
@@ -2303,38 +2686,79 @@ async function alreadyPublished(pack, login) {
   const data = state.mods;
   if (!data || !data.ok || !data.configured) return null;
 
+  const mine = data.packs.filter((p) => (p.author || '').toLowerCase() === login.toLowerCase());
   const id = packIdFor(pack.title);
-  return data.packs.find((p) => p.id === id
-    && (p.author || '').toLowerCase() === login.toLowerCase()) || null;
+
+  // By id first, then by name. A pack listed under a name that was typed into
+  // the publish form rather than taken from the folder has an id this cannot
+  // guess, and missing it would turn every later update into a second listing.
+  return mine.find((p) => p.id === id)
+    || mine.find((p) => (p.title || '').toLowerCase() === String(pack.title).toLowerCase())
+    || null;
 }
 
-async function publishPack(packaged, pack, updating = false) {
-  // A listing with no picture is a grey box in a grid of pictures, and nobody
-  // installs it. Refused here rather than after the upload, so the work is not
-  // wasted on something that would look broken in the directory.
-  if (!pack.iconPath && !pack.iconUrl) {
-    await askConfirm({
-      title: 'This pack needs a picture first',
-      detail: 'Packs in the directory are shown as a grid of pictures, and one without a '
-        + 'picture is a blank space nobody clicks.\n\n'
-        + 'Add one by opening the pack and setting its picture, then publish it again. '
-        + 'Packaging it as a zip to send to somebody works without one.',
-      buttons: ['Done'],
-      mark: '🖼',
-    });
-    return;
-  }
+async function publishPack(packaged, pack, already = null) {
+  const updating = Boolean(already);
+
+  // Asked again here as well as before packaging. Publishing is reachable from
+  // more than one place, and this is the last point at which refusing costs
+  // nobody an upload.
+  if (!await requirePicture(pack)) return;
 
   const me = await ensureSignedIn();
   if (!me) return;
+
+  // Said before anything is made, not after.
+  //
+  // Publishing creates a public repository on the author's own account and puts
+  // the pack in a release on it. That is somebody's account being changed, and
+  // finding a repository you did not know about is a bad way to learn how this
+  // works. Asked once: after the repository exists there is nothing new to warn
+  // about, and every later pack goes into the same one.
+  if (!updating && !state.toldAboutRepo) {
+    const ok = await askConfirm({
+      title: 'This creates a repository on your GitHub',
+      detail: `Publishing puts "${pack.title}" on your own GitHub account, under `
+        + `github.com/${me.login}/choicer-voicer-packs.\n\n`
+        + 'If that repository does not exist yet it is created now, as a public one, and '
+        + 'every pack you publish afterwards goes into the same place rather than making '
+        + 'another. The pack itself is attached to a release on it.\n\n'
+        + 'It stays yours. You can delete it or take any pack down whenever you like, and '
+        + 'this app cannot see your other repositories.',
+      buttons: ['Create it and publish', 'Cancel'],
+      mark: '📦',
+      cancelIndex: 1,
+    });
+    if (ok !== 0) return;
+    state.toldAboutRepo = true;
+  }
 
   // How the pack will read in the directory.
   //
   // Asked rather than filled in, because the defaults produce listings nobody
   // can tell apart: every pack summarised as "A voice pack", no tags, and a
   // licence of "unstated". That is a directory people scroll past.
-  const details = await askListingDetails(pack);
+  const details = await askListingDetails(pack, already);
   if (details === null) return;
+
+  // An update keeps the id it was listed under. Deriving it from the name again
+  // would mean that renaming a pack silently posts a second listing beside the
+  // first rather than replacing it.
+  const id = already ? already.id : packIdFor(details.title);
+
+  // A name of nothing but punctuation or symbols leaves nothing to build an
+  // address from. Caught before the upload rather than after it, where the only
+  // way to say this would be a validation error about a field nobody typed.
+  if (!id) {
+    await askConfirm({
+      title: 'That name will not work',
+      detail: `"${details.title}" has no letters or numbers in it, and the address for a pack `
+        + 'is built out of its name.\n\nAdd at least one letter or number and publish again.',
+      buttons: ['Done'],
+      mark: '✎',
+    });
+    return;
+  }
 
   // Asked before the upload, because it belongs to the listing rather than to
   // the file, and because a question after several minutes of uploading is a
@@ -2345,7 +2769,11 @@ async function publishPack(packaged, pack, updating = false) {
       + 'installing. Nothing here stops a pack being listed.\n\n'
       + 'Leave them all clear if none apply.',
     options: (state.info && state.info.contentFlags) || [],
-    buttons: ['Publish it', 'Cancel'],
+    // An update starts from what the listing already says, so an author is not
+    // silently answering this again from blank and dropping a warning they
+    // meant to keep.
+    ticked: (already && already.content) || [],
+    buttons: [updating ? 'Update it' : 'Publish it', 'Cancel'],
     mark: '⚠',
   });
   if (flags === null) return;
@@ -2356,9 +2784,9 @@ async function publishPack(packaged, pack, updating = false) {
   let result;
   try {
     result = await window.api.mods.publish(packaged.zipPath, {
-      id: packIdFor(pack.title),
+      id,
       type: pack.type,
-      title: pack.title,
+      title: details.title,
       summary: details.summary,
       description: details.description,
       tags: details.tags,
@@ -2367,35 +2795,80 @@ async function publishPack(packaged, pack, updating = false) {
       content: flags,
       // So the main process can check this pack was not somebody else's.
       packDir: pack.dir,
-      licence: 'unstated',
+      // Checked against packDir on the other side before it is uploaded.
+      iconPath: pack.iconPath,
     });
+  } catch (err) {
+    // A publish that throws rather than answering used to disappear entirely:
+    // the bar came down and nothing was said, which reads as the button not
+    // working. Whatever went wrong, it gets said.
+    result = { ok: false, error: err.message || 'the upload stopped without saying why' };
   } finally {
     stop();
     showProgress(false);
     el.btnProgressCancel.hidden = false;
   }
 
-  if (!result.ok) {
-    toast(`Could not publish it: ${result.error}`, 'error', 10000);
+  // Said in the dialog rather than a toast that slides away after four seconds.
+  // Publishing takes minutes, it is usually left running, and "did that work"
+  // is not a question anybody should have to answer by going to look on GitHub.
+  if (!result || !result.ok) {
+    await askConfirm({
+      title: updating ? 'Not updated' : 'Not published',
+      detail: `"${details.title}" was not ${updating ? 'updated' : 'published'}.\n\n`
+        + `${(result && result.error) || 'The upload stopped without saying why.'}\n\n`
+        + 'Nothing was changed on your GitHub account and nothing was sent to the directory. '
+        + 'The zip is still in your exports folder, so nothing has been lost.',
+      buttons: ['Done'],
+      mark: '✕',
+    });
     return;
   }
 
   // The directory has changed, so the copy held for this session is stale.
-  state.mods = null;
+  directoryChanged();
 
-  const where = await askConfirm({
-    title: result.submitted ? (updating ? 'Update sent' : 'Published') : 'Uploaded',
-    detail: result.submitted
-      ? `"${pack.title}" is on your GitHub account and has been ${updating ? 'offered as an update' : 'offered to the directory'}.\n\n`
+  // Three different endings, and they are not interchangeable. Listed, uploaded
+  // with nowhere to list it, and uploaded but the listing did not go through are
+  // three different situations, and only the first one means somebody is done.
+  const uploadedTo = `"${details.title}" is on your GitHub account and anyone with the `
+    + 'address can install it.';
+
+  const ending = result.submitted
+    ? {
+      title: updating ? 'Update sent' : 'Published',
+      mark: '✓',
+      detail: `"${details.title}" is on your GitHub account and has been `
+        + `${updating ? 'offered as an update' : 'offered to the directory'}.\n\n`
         + (updating
           ? 'The listing keeps its place and its download count. Nothing else is needed from you.'
-          : 'It will appear in the Mods tab once it has been looked over. Nothing else is '
-            + 'needed from you.')
-      : `"${pack.title}" is on your GitHub account and anyone with the address can install `
-        + 'it.\n\nThere is no pack directory set up yet, so it has not been listed anywhere. '
-        + 'The address works regardless.',
-    buttons: [result.submitted ? 'See the submission' : 'See the release', 'Done'],
-    mark: '✓',
+          : 'It will appear in the Mods tab once it has been looked over. You can follow it in '
+            + 'Your submissions. Nothing else is needed from you.'),
+      go: 'See the submission',
+    }
+    : result.submitError
+      ? {
+        title: 'Uploaded, but not listed',
+        mark: '!',
+        detail: `${uploadedTo}\n\nOffering it to the directory did not go through:\n\n`
+          + `${result.submitError}\n\n`
+          + 'The upload is finished and does not need doing again. Publishing the pack a '
+          + 'second time will offer it without uploading anything new.',
+        go: 'See the release',
+      }
+      : {
+        title: 'Uploaded',
+        mark: '✓',
+        detail: `${uploadedTo}\n\nThere is no pack directory set up yet, so it has not been `
+          + 'listed anywhere. The address works regardless.',
+        go: 'See the release',
+      };
+
+  const where = await askConfirm({
+    title: ending.title,
+    detail: ending.detail,
+    buttons: [ending.go, 'Done'],
+    mark: ending.mark,
     cancelIndex: 1,
   });
 
@@ -2590,7 +3063,11 @@ function renderContentDetail(pack) {
       <button type="button" class="btn btn-primary" id="btn-detail-edit"
               ${converting ? 'disabled' : ''}>✎ Edit this pack</button>
       <button type="button" class="btn" id="btn-detail-share"
-              ${converting ? 'disabled' : ''}>↗ Share this pack</button>
+              ${converting ? 'disabled' : ''}
+              title="${pack.iconPath || pack.iconUrl
+    ? 'Package this pack to send or publish'
+    : 'Set an icon in Edit this pack, under Pack details'}">↗ Share this pack${
+  pack.iconPath || pack.iconUrl ? '' : '<span class="btn-blocked">needs an icon</span>'}</button>
       <button type="button" class="btn" id="btn-detail-open">📂 Open folder</button>
       <button type="button" class="btn btn-danger" id="btn-detail-delete"
               ${converting ? 'disabled' : ''}>✕ Delete</button>
@@ -3169,6 +3646,10 @@ function dismissSplash() {
 // Boot
 
 async function boot() {
+  // First, so that anything failing during start up is visible rather than
+  // leaving a half drawn window with no explanation.
+  watchForUnhandled();
+
   state.info = await window.api.appInfo();
   state.settings = await window.api.settings.get();
 
@@ -3759,6 +4240,31 @@ function showLoading(visible, text) {
  *
  * Resolves with the index of the button pressed, or -1 for a cancel.
  */
+/**
+ * Whether a `close` event belongs to a dialog that has already gone.
+ *
+ * Every one of these helpers shares a single `<dialog>`, and closing it is not
+ * as immediate as it looks: `close()` queues the `close` event as a task, while
+ * the promise it resolves continues on a microtask. Microtasks run first. So
+ * when one dialog leads straight into another, the order is:
+ *
+ *   1. button pressed, `close()` queues the close event, promise resolves
+ *   2. microtasks drain, the caller opens the next dialog, which registers its
+ *      own close listener
+ *   3. the close event from step 1 finally fires, and lands on that listener
+ *
+ * The second dialog then dismisses itself the instant it appears, answering
+ * with a decline nobody made. Publishing a pack with no picture did exactly
+ * this: the warning opened and vanished within the same frame, so pressing
+ * Publish looked like it did nothing at all.
+ *
+ * A stale event is easy to recognise. If the dialog is open right now, whatever
+ * closed is not the thing that is on screen, so the event is not ours.
+ */
+function staleClose() {
+  return el.confirmDialog.open;
+}
+
 function askConfirm({ title, detail, buttons, mark = '?', danger = false, cancelIndex = -1 }) {
   return new Promise((resolve) => {
     el.confirmMark.textContent = mark;
@@ -3777,7 +4283,7 @@ function askConfirm({ title, detail, buttons, mark = '?', danger = false, cancel
       resolve(index);
     };
     // Esc, or anything else that dismisses it, counts as declining.
-    const onClose = () => finish(cancelIndex);
+    const onClose = () => { if (!staleClose()) finish(cancelIndex); };
 
     buttons.forEach((label, index) => {
       const button = document.createElement('button');
@@ -3823,16 +4329,32 @@ function askText({ title, detail, placeholder = '', buttons, mark = '?', require
     field.style.marginTop = '10px';
     el.confirmDetail.after(field);
 
+    // Pressing the button with nothing typed used to move the caret back into
+    // the box and nothing else, which reads as the button being broken rather
+    // than as something being wanted.
+    const why = document.createElement('p');
+    why.className = 'askform-why';
+    why.hidden = true;
+    field.after(why);
+
     let settled = false;
     const finish = (value) => {
       if (settled) return;
       settled = true;
       el.confirmDialog.removeEventListener('close', onClose);
       field.remove();
+      why.remove();
       el.confirmDialog.close();
       resolve(value);
     };
-    const onClose = () => finish(null);
+    const onClose = () => { if (!staleClose()) finish(null); };
+
+    field.addEventListener('input', () => {
+      if (!why.hidden && field.value.trim()) {
+        why.hidden = true;
+        field.classList.remove('is-missing');
+      }
+    });
 
     const go = document.createElement('button');
     go.type = 'button';
@@ -3841,6 +4363,9 @@ function askText({ title, detail, placeholder = '', buttons, mark = '?', require
     go.addEventListener('click', () => {
       const said = field.value.trim();
       if (required && !said) {
+        why.textContent = 'A reason is needed, so the author knows what to change.';
+        why.hidden = false;
+        field.classList.add('is-missing');
         field.focus();
         return;
       }
@@ -3867,7 +4392,7 @@ function askText({ title, detail, placeholder = '', buttons, mark = '?', require
  * a real answer and comes back as an empty list, which is different from
  * backing out.
  */
-function askChecklist({ title, detail, options, mark = '?', buttons }) {
+function askChecklist({ title, detail, options, ticked = [], mark = '?', buttons }) {
   return new Promise((resolve) => {
     el.confirmMark.textContent = mark;
     el.confirmMark.classList.remove('danger');
@@ -3880,7 +4405,8 @@ function askChecklist({ title, detail, options, mark = '?', buttons }) {
     box.className = 'checklist';
     box.innerHTML = options.map((o) => `
       <label class="checklist-row">
-        <input type="checkbox" value="${escapeHtml(o.id)}" />
+        <input type="checkbox" value="${escapeHtml(o.id)}"${
+  ticked.includes(o.id) ? ' checked' : ''} />
         <span>${escapeHtml(o.label)}</span>
       </label>`).join('');
     el.confirmDetail.after(box);
@@ -3894,7 +4420,7 @@ function askChecklist({ title, detail, options, mark = '?', buttons }) {
       el.confirmDialog.close();
       resolve(value);
     };
-    const onClose = () => finish(null);
+    const onClose = () => { if (!staleClose()) finish(null); };
 
     const go = document.createElement('button');
     go.type = 'button';
@@ -3945,12 +4471,34 @@ function askForm({ title, detail, fields, buttons, mark = '?' }) {
                placeholder="${escapeHtml(f.placeholder || '')}">${escapeHtml(f.value || '')}</textarea>`
           : `<input id="${id}" class="input" type="text" maxlength="${f.max || 200}"
                placeholder="${escapeHtml(f.placeholder || '')}" value="${escapeHtml(f.value || '')}" />`;
-      return `<label class="askform-row"><span>${escapeHtml(f.label)}</span>${input}</label>`;
+      return `<label class="askform-row">
+        <span>${escapeHtml(f.label)}${
+  f.required ? '<b class="askform-need">Required</b>' : ''}</span>${input}</label>`;
     }).join('');
     el.confirmDetail.after(box);
 
+    // Why the way forward is closed, in words, right where the button is.
+    //
+    // Disabling the button on its own is silent: it looks like a dialog that
+    // has stopped working rather than one waiting for something, and there is
+    // nothing on screen saying which field it is waiting on.
+    const why = document.createElement('p');
+    why.className = 'askform-why';
+    why.hidden = true;
+    box.after(why);
+
     const read = () => Object.fromEntries(fields.map((f) =>
       [f.key, box.querySelector(`#askform-${f.key}`).value]));
+
+    // A field is only marked wrong once it has been left, so a form does not
+    // open covered in red for things nobody has had a chance to type yet.
+    const touched = new Set();
+    box.addEventListener('focusout', (event) => {
+      const id = event.target.id || '';
+      if (!id.startsWith('askform-')) return;
+      touched.add(id.slice('askform-'.length));
+      check();
+    });
 
     let settled = false;
     const finish = (value) => {
@@ -3958,10 +4506,11 @@ function askForm({ title, detail, fields, buttons, mark = '?' }) {
       settled = true;
       el.confirmDialog.removeEventListener('close', onClose);
       box.remove();
+      why.remove();
       el.confirmDialog.close();
       resolve(value);
     };
-    const onClose = () => finish(null);
+    const onClose = () => { if (!staleClose()) finish(null); };
 
     const go = document.createElement('button');
     go.type = 'button';
@@ -3969,12 +4518,36 @@ function askForm({ title, detail, fields, buttons, mark = '?' }) {
     go.textContent = buttons[0];
     go.addEventListener('click', () => finish(read()));
 
-    // Required fields disable the way forward rather than rejecting an attempt,
-    // which says what is wanted before somebody has committed to pressing it.
-    const check = () => {
+    // Required fields hold the primary button and say why they are holding it.
+    //
+    // `min` is here so a field the directory will refuse for being too short is
+    // refused now instead, while it can still be typed into. Finding that out
+    // after an upload has finished is a long way to travel for one character.
+    function check() {
       const values = read();
-      go.disabled = fields.some((f) => f.required && !String(values[f.key]).trim());
-    };
+
+      const problems = fields.map((f) => {
+        const value = String(values[f.key]).trim();
+        if (f.required && !value) return `${f.label} is required.`;
+        if (f.min && value.length > 0 && value.length < f.min) {
+          return `${f.label} needs at least ${f.min} characters.`;
+        }
+        return null;
+      });
+
+      fields.forEach((f, at) => {
+        const row = box.querySelector(`#askform-${f.key}`).closest('.askform-row');
+        row.classList.toggle('is-missing', Boolean(problems[at]) && touched.has(f.key));
+      });
+
+      // The first outstanding one, not all of them. A list of everything wrong
+      // with a four field form reads as a telling off, and fixing them one at a
+      // time is what happens anyway.
+      const first = problems.find(Boolean) || '';
+      go.disabled = Boolean(first);
+      why.textContent = first;
+      why.hidden = !first;
+    }
     box.addEventListener('input', check);
 
     const cancel = document.createElement('button');
@@ -5044,6 +5617,7 @@ function wireEvents() {
   });
   el.btnModsRefresh.addEventListener('click', () => (state.modsShow === 'inbox' ? renderInbox() : refreshMods({ force: true })));
   el.btnModsBrowse.addEventListener('click', () => showMods('browse'));
+  el.btnModsPublishers.addEventListener('click', () => showMods('publishers'));
   el.btnModsInbox.addEventListener('click', () => showMods('inbox'));
 
   el.btnBack.addEventListener('click', () => {

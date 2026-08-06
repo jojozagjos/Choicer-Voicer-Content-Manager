@@ -19,14 +19,20 @@ Sharing packs, and working with a pack that has been recorded several times over
 - Publishing a pack that is already listed offers to update it instead. The
   listing keeps its place, its first published date and its download count, and
   the button says so rather than offering to publish something twice.
-- Publishing asks whether the pack contains strong language, sexual content,
-  nudity, graphic violence, drug references or flashing images. Anything marked
-  is shown on the listing, so nobody installs something they did not expect.
+- Publishing asks how the pack should be listed: its name, one line about it, a
+  longer description if there is one, tags, and whether other people may reuse
+  it. Updating a listing starts from what that listing already says rather than
+  from blank.
+- Publishing asks whether the pack contains strong language, graphic violence,
+  drug or alcohol references, or flashing images. Anything marked is shown on the
+  listing, so nobody installs something they did not expect. The directory does
+  not list sexual content or nudity at all, so there is nothing to mark.
 - A pack that has not changed since it was last packaged is not re-encoded
   again, so packaging one a second time is instant rather than another few
   minutes.
-- Packaging shows how far along it is, and a pack cannot be published without a
-  picture — a listing without one is a blank space in a grid of pictures.
+- Packaging shows how far along it is.
+- A pack cannot be published without a name or without a picture. Both are asked
+  for before anything is uploaded rather than after.
 
 ### The Mods tab
 
@@ -34,9 +40,28 @@ Sharing packs, and working with a pack that has been recorded several times over
   Installing one checks it against the checksum it was published with, refuses
   anything malformed, and adds it to the library.
 - Browsing and installing never ask for an account.
+- Listings show the pack's own icon. The icon is checked against the checksum it
+  was published with before it is shown, so a pack cannot be accepted with one
+  image and quietly given another afterwards.
+- A Publishers view lists everyone with packs listed, searchable by name.
+  Selecting one, or selecting an author's name on any pack, opens their page:
+  how many packs they have, total downloads and size, when they started, when
+  they last updated something, everything of theirs, and a button to open their
+  repository on GitHub.
+- Packs that have been taken off the list no longer appear anywhere in browsing,
+  and no longer count towards a publisher's total.
 - A submissions list shows what happened to every pack offered to the directory,
   and why. A pack that was not listed carries the reason with it, rather than the
-  explanation sitting somewhere nobody looks.
+  explanation sitting somewhere nobody looks. Each one opens on its own, so a
+  list of several stays readable.
+- A submission waiting to be looked at says how long it has left before it
+  closes on its own, once that is near.
+- Sharing a pack requires it to have an icon, and the Share button says so
+  before it is pressed.
+- Publishing says which repository it will create on the author's account, and
+  asks, before creating anything.
+- Publishing always says how it ended: listed, uploaded with nowhere to list it,
+  uploaded but not offered, or not published at all with the reason.
 - A pack installed from the directory keeps its author. It can still be packaged
   and passed on, but not published under a different name.
 

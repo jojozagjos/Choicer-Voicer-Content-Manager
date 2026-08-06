@@ -204,9 +204,6 @@ function summarise(events) {
 module.exports = {
   STRIKES_TO_UNLIST,
   ARCHIVE_AFTER_MS,
-  WARN_AT_STRIKE,
-  VERDICTS,
-  VERDICT_FOR_STATE,
   verdictFor,
   freshHealth,
   applyCheck,

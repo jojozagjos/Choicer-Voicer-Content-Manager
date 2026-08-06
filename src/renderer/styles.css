@@ -2963,7 +2963,10 @@ input[type="range"]::-webkit-slider-thumb {
 .admin-view {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  /* 300 rather than 260. Four tabs share this rail, and at 260 they only fitted
+     by dropping to 10px and cutting labels off, which made the one control that
+     decides what you are looking at the hardest thing on the page to read. */
+  grid-template-columns: 300px minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -3139,71 +3142,6 @@ input[type="range"]::-webkit-slider-thumb {
   padding: 6px;
 }
 
-/* Your submissions
-   One column, because each entry can carry a paragraph of explanation and a
-   grid of cards would cut it off, which is the whole thing this is for.
-   Centred in the pane: at 720px in a 1500px window, left aligned left it
-   stranded against one edge with half the screen empty beside it. */
-
-.mods-view:has(#btn-mods-inbox.on) #mods-grid {
-  display: block;
-  max-width: 700px;
-  margin: 0 auto;
-  padding: 0 4px 24px;
-}
-
-.inbox-standing {
-  margin: 0 0 14px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: var(--panel);
-  font-size: 12.5px;
-  line-height: 1.5;
-}
-.inbox-standing.is-ok { border-color: var(--accent-dim); }
-
-.inbox-item {
-  padding: 13px 14px;
-  margin-bottom: 10px;
-  border: 1px solid var(--line);
-  /* A colour down the left edge for the outcome, so the list can be read at a
-     glance without reading every label. Set per state further down. */
-  border-left: 3px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel);
-}
-.inbox-item:hover { border-color: var(--line-strong, var(--line)); }
-.inbox-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 6px;
-}
-.inbox-head b { font-size: 13.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-
-.inbox-state {
-  flex: none;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-}
-.inbox-state.is-ok { color: var(--ok); }
-.inbox-state.is-warn { color: var(--warn, #d29922); }
-.inbox-state.is-bad { color: var(--danger, #e5534b); }
-
-/* The moderator's words, kept readable rather than truncated: being told why is
-   the point of this whole view. */
-.inbox-reason {
-  margin: 0 0 9px;
-  font-size: 12.5px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
 /* Admin: a publisher's packs, each with the one action that applies to it. */
 
 .admin-packs { display: grid; gap: 4px; }
@@ -3261,19 +3199,8 @@ input[type="range"]::-webkit-slider-thumb {
 /* Four tabs in a 260px rail, so they share the width evenly instead of the
    longest label pushing the others off the end. */
 .admin-tabs { flex: 1; min-width: 0; }
-.admin-tabs button {
-  flex: 1;
-  min-width: 0;
-  /* Smaller and tighter than a normal segmented control, because four labels
-     have to fit a 260px rail. Ellipsis is the fallback, not the plan — a tab
-     reading "Publi…" is no use for choosing between them. */
-  font-size: 10px;
-  letter-spacing: -0.01em;
-  padding: 4px 2px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* Superseded further down, now that there are three tabs in a 300px rail
+   rather than four in 260 and they no longer have to be squeezed. */
 
 /* A list of things to tick, inside the shared dialog. */
 .checklist {
@@ -3341,143 +3268,6 @@ input[type="range"]::-webkit-slider-thumb {
 .script-said { white-space: pre-wrap; word-break: break-word; }
 .script-said.is-empty { color: var(--muted); font-style: italic; }
 
-/* Your submissions: a card per pack, with the outcome carried by a coloured
-   edge as well as the words, so the state of the list reads at a glance. */
-.inbox-item {
-  border-left-width: 3px;
-  transition: border-color 0.15s ease;
-}
-.inbox-item:has(.inbox-state.is-ok) { border-left-color: var(--ok); }
-.inbox-item:has(.inbox-state.is-warn) { border-left-color: var(--warn, #d29922); }
-.inbox-item:has(.inbox-state.is-bad) { border-left-color: var(--danger, #e5534b); }
-
-/* Something decided since this was last opened. Marked rather than reordered:
-   moving a row under somebody as they read it is worse than a quiet dot. */
-.inbox-item.is-changed { border-color: var(--accent-dim); }
-.inbox-dot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  margin-right: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  vertical-align: middle;
-}
-
-/* When it was sent, and what it is listed as. Directly under the title rather
-   than in the footer, because it identifies the row and the footer is where the
-   one action lives. */
-.inbox-when { display: block; margin: 0; }
-
-.inbox-foot {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-  margin-top: 10px;
-}
-
-/* The whole closed row is the control that opens it, so it is a button rather
-   than a div with a listener: keyboard and screen readers get it for free. */
-.inbox-open {
-  display: block;
-  width: 100%;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.inbox-open .inbox-head { display: flex; }
-.inbox-chevron {
-  position: absolute;
-  top: 13px;
-  right: 12px;
-  color: var(--muted);
-  font-size: 11px;
-  transition: transform 0.15s ease;
-}
-.inbox-item { position: relative; }
-.inbox-item.is-open .inbox-chevron { transform: rotate(180deg); }
-
-.inbox-body {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
-}
-
-/* A deadline somebody can still act on. Warm rather than alarming: running out
-   of time here costs nothing that cannot be redone in one press. */
-.inbox-wait {
-  display: block;
-  margin-top: 6px;
-  font-size: 11.5px;
-  line-height: 1.45;
-  color: var(--warn, #d29922);
-}
-
-/* Publishers: a grid of who has put packs in, and one of their pages. */
-
-.publisher-card {
-  padding: 13px 14px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel);
-  cursor: pointer;
-  transition: border-color 0.15s ease;
-}
-.publisher-card:hover { border-color: var(--accent-dim); }
-.publisher-card h3 { margin: 0 0 5px; font-size: 14px; }
-.publisher-card p { margin: 0 0 2px; }
-
-.publisher-page { display: grid; gap: 16px; }
-.publisher-bar { display: flex; gap: 8px; flex-wrap: wrap; }
-
-/* The numbers, as a row of figures rather than a sentence. Somebody looking at
-   a publisher wants to compare them, and prose does not compare. */
-.publisher-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-  gap: 8px;
-}
-.publisher-stats > div {
-  display: grid;
-  gap: 2px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: var(--panel);
-}
-.publisher-stats b { font-size: 15px; }
-
-.publisher-packs {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 12px;
-}
-
-/* Publishers list and a publisher's page both sit in the pack grid, so they
-   need it to stop being a fixed grid of cards. */
-.mods-view:has(#btn-mods-publishers.on) #mods-grid {
-  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-}
-
-/* A name that behaves like a link without being one. */
-.linklike {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-  text-decoration: underline;
-  text-decoration-color: var(--line);
-  text-underline-offset: 2px;
-}
-.linklike:hover { color: var(--accent); text-decoration-color: var(--accent); }
-
 /* A listed pack's own picture, once it has been checked against the hash it was
    published with. Falls back to the type glyph, which is why this only styles
    the image case. */
@@ -3506,31 +3296,6 @@ input[type="range"]::-webkit-slider-thumb {
 .askform-row .input,
 .askform-row .select { width: 100%; }
 .askform-row textarea.input { resize: vertical; min-height: 58px; }
-
-/* Why a button will not do what it says yet. Carried on the button itself, so
-   the rule is visible before it is pressed rather than only after.
-   The button is laid out as a row so this sits beside the label instead of
-   wrapping underneath it and doubling the button's height. */
-.btn:has(.btn-blocked) {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-}
-.btn-blocked {
-  flex: none;
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--warn, #d29922) 18%, transparent);
-  color: var(--warn, #d29922);
-  /* Deliberately small. It is a footnote on the button, not a second label
-     competing with the one that says what the button does. */
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  line-height: 1.5;
-}
 
 /* Which fields have to be filled in, said on the field rather than only by a
    button that will not press. */
@@ -3561,4 +3326,368 @@ input[type="range"]::-webkit-slider-thumb {
   color: var(--text);
   font-size: 12px;
   line-height: 1.45;
+}
+
+/* ===========================================================================
+   Mods: browsing, publishers, and your own submissions
+   ===========================================================================
+
+   Three lists share one grid element, so the layout is driven by a data-show
+   attribute on the view rather than by which button is lit. Keying it off a
+   button's class meant any path that drew the grid without going through
+   showMods inherited whichever layout was set last, which is how opening the
+   tab from Your submissions left the packs in a narrow centred column. */
+
+/* Packs: a card grid that fills the pane. */
+.mods-view[data-show="browse"] #mods-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(258px, 1fr));
+  gap: 12px;
+  align-content: start;
+  max-width: none;
+  margin: 0;
+}
+
+/* Publishers: wider cards, fewer of them, same full width. */
+.mods-view[data-show="publishers"] #mods-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
+  gap: 12px;
+  align-content: start;
+  max-width: none;
+  margin: 0;
+}
+
+/* A publisher's page is one column of sections that each manage their own
+   width, so the grid steps out of the way entirely. */
+.mods-view[data-show="publisher"] #mods-grid {
+  display: block;
+  max-width: none;
+  margin: 0;
+}
+
+/* Your submissions: a single readable column. Each row can carry a paragraph of
+   somebody's explanation, and prose set across a 1400px window is unreadable
+   however much space there is. Capped and centred rather than stretched. */
+.mods-view[data-show="inbox"] #mods-grid {
+  display: block;
+  max-width: 860px;
+  margin: 0 auto;
+  padding-bottom: 24px;
+}
+.mods-view[data-show="inbox"] .mods-empty,
+.mods-view[data-show="publishers"] .mods-empty {
+  grid-column: 1 / -1;
+  margin: 36px auto;
+  text-align: center;
+}
+
+/* --- Your submissions ---------------------------------------------------- */
+
+/* Where you stand, and the shape of the list, above the list itself. */
+.inbox-standing {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: 11px;
+  background: var(--panel);
+}
+.inbox-standing b { font-size: 13.5px; }
+.inbox-standing p { margin: 3px 0 0; max-width: 46ch; line-height: 1.5; }
+.inbox-standing.is-ok { border-left-color: var(--ok); }
+.inbox-standing.is-bad { border-left-color: var(--danger, #e5534b); }
+
+/* How many are in each state. A count is the fastest answer to "is anything
+   waiting on me", which is why this sits above the list and not inside it. */
+.inbox-summary { display: flex; flex-wrap: wrap; gap: 6px; }
+.inbox-tally {
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.inbox-tally b { font-size: 12px; color: var(--text); }
+.inbox-tally.is-ok { border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+.inbox-tally.is-warn { border-color: color-mix(in srgb, var(--warn, #d29922) 45%, var(--line)); }
+.inbox-tally.is-bad { border-color: color-mix(in srgb, var(--danger, #e5534b) 45%, var(--line)); }
+
+.inbox-list { display: grid; gap: 8px; }
+
+.inbox-item {
+  position: relative;
+  border: 1px solid var(--line);
+  /* The outcome as a colour down the edge, so the list reads at a glance
+     without reading every label. */
+  border-left: 3px solid var(--line);
+  border-radius: 11px;
+  background: var(--panel);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.inbox-item:hover { border-color: var(--accent-dim); }
+.inbox-item:has(.inbox-state.is-ok) { border-left-color: var(--ok); }
+.inbox-item:has(.inbox-state.is-warn) { border-left-color: var(--warn, #d29922); }
+.inbox-item:has(.inbox-state.is-bad) { border-left-color: var(--danger, #e5534b); }
+.inbox-item.is-changed { border-color: var(--accent-dim); }
+
+/* The whole closed row is the control that opens it, so it is a button rather
+   than a div with a listener: keyboard and screen readers get it for free. */
+.inbox-open {
+  display: block;
+  width: 100%;
+  padding: 13px 15px;
+  border: 0;
+  border-radius: 11px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.inbox-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.inbox-title { display: grid; gap: 2px; min-width: 0; }
+.inbox-title b {
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inbox-when { display: block; }
+
+.inbox-right { display: flex; align-items: center; gap: 10px; flex: none; }
+.inbox-state {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.045em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.inbox-state.is-ok { color: var(--ok); }
+.inbox-state.is-warn { color: var(--warn, #d29922); }
+.inbox-state.is-bad { color: var(--danger, #e5534b); }
+
+.inbox-chevron { color: var(--muted); font-size: 10px; transition: transform 0.15s ease; }
+.inbox-item.is-open .inbox-chevron { transform: rotate(180deg); }
+
+/* Something decided since this was last opened. Marked rather than reordered:
+   moving a row under somebody as they read it is worse than a quiet dot. */
+.inbox-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+}
+
+/* A deadline somebody can still act on. Warm rather than alarming: running out
+   of time here costs nothing that cannot be redone in one press. */
+.inbox-wait {
+  display: block;
+  margin-top: 8px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--warn, #d29922);
+}
+
+.inbox-body { padding: 0 15px 13px; }
+.inbox-body::before {
+  content: "";
+  display: block;
+  margin-bottom: 11px;
+  border-top: 1px solid var(--line);
+}
+
+/* The moderator's words, kept readable rather than truncated: being told why is
+   the point of this whole view. */
+.inbox-reason {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.inbox-foot { display: flex; justify-content: flex-end; margin-top: 12px; }
+
+/* --- Publishers ---------------------------------------------------------- */
+
+.publisher-card {
+  display: grid;
+  gap: 4px;
+  padding: 15px 16px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--panel);
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.12s ease;
+}
+.publisher-card:hover { border-color: var(--accent-dim); transform: translateY(-1px); }
+.publisher-card h3 {
+  margin: 0;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.publisher-card p { margin: 0; }
+
+/* A publisher's own page. Laid out down the pane rather than in a narrow
+   column, because it is a dashboard rather than something to read. */
+.publisher-page { display: grid; gap: 18px; padding-bottom: 24px; }
+
+.publisher-hero {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--panel);
+}
+/* Their initial, standing in for an avatar this app has no way to fetch and
+   would not be allowed to load remotely anyway. */
+.publisher-avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent);
+  font-size: 22px;
+  font-weight: 600;
+}
+.publisher-who { flex: 1; min-width: 180px; }
+.publisher-who h2 { margin: 0; font-size: 19px; }
+.publisher-who p { margin: 3px 0 0; }
+.publisher-bar { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.publisher-kinds { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.publisher-kind {
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* The numbers as a row of figures rather than a sentence. Somebody looking at a
+   publisher wants to compare them, and prose does not compare. */
+.publisher-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+.publisher-stats > div {
+  display: grid;
+  gap: 3px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--panel);
+}
+.publisher-stats b { font-size: 19px; line-height: 1.1; }
+
+.publisher-heading {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.publisher-packs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(258px, 1fr));
+  gap: 12px;
+}
+
+/* A name that behaves like a link without being one. */
+.linklike {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 2px;
+}
+.linklike:hover { color: var(--accent); text-decoration-color: var(--accent); }
+
+/* A listed pack's own picture, once it has been checked against the hash it was
+   published with. Falls back to the type glyph, which is why this only styles
+   the image case. */
+.mod-icon.has-image {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 8px;
+}
+.mod-icon.has-image img { width: 100%; height: 100%; object-fit: cover; }
+
+/* --- Admin ---------------------------------------------------------------
+   Reports only. There is no approval queue, because packs are listed by the
+   directory once they pass their checks. */
+
+/* Nothing to deal with, which is the normal state and should read as calm
+   rather than as an error. */
+.admin-blank {
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  min-height: 60vh;
+  max-width: 42ch;
+  margin: 0 auto;
+  text-align: center;
+}
+.admin-blank h3 { margin: 0; font-size: 15px; }
+.admin-blank p { margin: 0; line-height: 1.55; }
+
+/* The pack a report is about, pulled out above the words so it is clear what
+   the buttons at the bottom would act on. */
+.admin-target {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warn, #d29922);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.admin-target-what { display: grid; gap: 2px; min-width: 0; }
+.admin-target-what b { font-size: 13.5px; }
+
+/* Four tabs became three, so they no longer have to be squeezed. */
+.admin-tabs { flex: 1; min-width: 0; }
+.admin-tabs button {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  padding: 5px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

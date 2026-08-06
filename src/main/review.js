@@ -1,8 +1,7 @@
 'use strict';
 
 /**
- * The moderator's side: the queue of things waiting to be looked at, and the
- * two decisions that can be made about them.
+ * The moderator's side: reports, and what can be done about them.
  *
  * Whether somebody is a moderator is not stored anywhere in this app. It is
  * asked of GitHub — do you have write access to the directory repository — and
@@ -10,14 +9,22 @@
  * a settings file, no password, and nothing that can be granted by editing
  * something local.
  *
- * Deciding is deliberately thin: approving writes the record into index.json,
- * rejecting closes the issue with a reason. Both are ordinary GitHub actions
- * taken as the person who pressed the button, so every decision lands in the
- * repository's history under their name.
+ * ## Nothing here approves uploads
+ *
+ * There used to be a queue of packs waiting to be read and passed. It is gone,
+ * along with every function that served it. Uploads are checked by rules rather
+ * than by judgement: the record has to validate, the author has to be the
+ * account hosting the file, the file has to pass a malware check, and the
+ * account must not be banned. Anything that clears all of that is listed by the
+ * directory itself, immediately, with nobody in the way.
+ *
+ * Reading and passing judgement on what other people upload is a different
+ * undertaking from running a list of links, and it is not one this project is
+ * set up to take on. What is left is after the fact and much smaller: somebody
+ * reports a pack, and it can be hidden or its author blocked.
  */
 
 const github = require('./github');
-const directory = require('./directory');
 
 /**
  * Whether this account may moderate, and what it is allowed to do.
@@ -58,32 +65,28 @@ function recordIn(body) {
 }
 
 /**
- * Everything waiting to be looked at.
+ * Reports waiting to be looked at, newest first.
  *
- * Submissions and reports come back together, newest first, because they are
- * one queue in practice — the question is always "what needs me next".
+ * Only reports. Submissions used to appear here too, waiting to be passed, and
+ * they no longer wait for anything: a pack that satisfies the rules is listed
+ * without a person, so there is nothing to show. A queue containing things
+ * nobody has to act on is a queue that stops being read.
  */
 async function queue(token, repo) {
   const issues = await github.request(
-    `/repos/${repo}/issues?state=open&labels=&per_page=50&sort=created&direction=desc`,
+    `/repos/${repo}/issues?state=open&labels=report&per_page=50&sort=created&direction=desc`,
     { token },
   );
 
   const items = [];
   for (const issue of issues) {
     // Pull requests come back from the issues endpoint too. Nothing here opens
-    // one, but somebody can, and one appearing in the moderation queue as if it
-    // were a pack waiting to be read would be nothing but confusing.
+    // one, but somebody can, and one appearing among reports would be nothing
+    // but confusing.
     if (issue.pull_request) continue;
 
-    const labels = (issue.labels || []).map((l) => (typeof l === 'string' ? l : l.name));
-    const kind = labels.includes('submission') ? 'submission'
-      : labels.includes('report') ? 'report'
-        : 'other';
-    if (kind === 'other') continue;
-
     items.push({
-      kind,
+      kind: 'report',
       number: issue.number,
       title: issue.title,
       body: issue.body || '',
@@ -91,210 +94,29 @@ async function queue(token, repo) {
       openedAt: issue.created_at,
       url: issue.html_url,
       comments: issue.comments,
-      record: kind === 'submission' ? recordIn(issue.body) : null,
+      record: null,
     });
   }
   return items;
 }
 
 /**
- * Approves a submission: write the record into the index, then say so.
+ * Blocks an account from publishing.
+ *
+ * The only thing a report can do to a person rather than to a pack. Applied the
+ * way a moderator would type it, so it goes through the same permission check
+ * and leaves the same trail rather than being a second private route to the
+ * same state.
  */
-async function approve(token, repo, issueNumber, note) {
-  // The record is read back from the issue rather than carried here from the
-  // interface, so what gets listed is what was actually submitted and not
-  // something the renderer had in memory.
-  const issue = await github.request(`/repos/${repo}/issues/${issueNumber}`, { token });
-  const raw = recordIn(issue.body);
-  if (!raw) {
-    throw new Error('This submission has no record in it, so there is nothing to list.');
-  }
-
-  // Checked here as well as in the workflow. The workflow reads the issue when
-  // it is opened or edited; this reads it at the moment of listing, and the two
-  // are not the same moment. Validating again costs nothing and closes the gap.
-  const checked = directory.validateRecord(raw);
-  if (!checked.ok) {
-    throw new Error(`This record cannot be listed:\n\n${
-      checked.problems.map((p) => `${p.field}: ${p.message}`).join('\n')}`);
-  }
-  const record = checked.record;
-
-  // The pack has to be by whoever opened the submission. Without this a record
-  // edited after the fact could list a pack under somebody else's name.
-  const opener = String(issue.user && issue.user.login ? issue.user.login : '').toLowerCase();
-  if (opener && record.author.toLowerCase() !== opener) {
-    throw new Error(`This was submitted by ${issue.user.login}, but the record says the pack `
-      + `is by ${record.author}. A pack has to be submitted by the person it is credited to.`);
-  }
-
-  const listed = await addToIndex(token, repo, record, issueNumber);
-
-  await comment(token, repo, issueNumber,
-    note ? `Listed.\n\n${note}` : 'Listed. It will appear in the app shortly.');
-  await close(token, repo, issueNumber);
-
-  return { ok: true, ...listed };
-}
-
-/**
- * Writes a record into index.json, as the person approving it.
- *
- * Committed straight to the file rather than by merging a pull request.
- *
- * Pull requests were the original design and they cost more than they returned.
- * Opening one from a workflow needs a repository setting that is off by
- * default, so every first submission failed at that step and could never be
- * listed. A moderator already has write access, which is the whole permission
- * model, so the app can make the change directly with their own token and there
- * is nothing extra to switch on.
- *
- * Read, change, write, with the file's own sha as the guard: if somebody else
- * has written to the index since it was read, GitHub refuses the write rather
- * than letting one decision quietly undo another.
- */
-async function addToIndex(token, repo, record, issueNumber, attempt = 0) {
-  const file = await github.request(
-    `/repos/${repo}/contents/index.json`, { token },
-  );
-  // Over a megabyte, GitHub hands back the metadata without the file. That is a
-  // directory of several thousand packs, which is a good problem, but it is not
-  // one to discover as a JSON parse error.
-  if (!file.content) {
-    throw new Error('The directory index has grown too large to edit this way. '
-      + 'Listing has to move to a different method before any more packs can be added.');
-  }
-  const index = JSON.parse(Buffer.from(file.content, 'base64').toString('utf8'));
-  if (!Array.isArray(index.packs)) index.packs = [];
-
-  const room = directory.roomForAnother(index.packs, record.author, record.id);
-  if (!room.ok) {
-    throw new Error(`${record.author} already has ${room.held} packs listed, which is the most `
-      + `one account may hold (${room.limit}). Something of theirs has to come off the list `
-      + 'before another goes on.');
-  }
-
-  const at = index.packs.findIndex((p) => p.id === record.id);
-  if (at !== -1) {
-    // Updating a pack is normal. Replacing somebody else's is not.
-    if (index.packs[at].author.toLowerCase() !== record.author.toLowerCase()) {
-      throw new Error(`There is already a pack called ${record.id}, by somebody else. `
-        + 'This one cannot be listed under that name.');
-    }
-    // The same pack again is an update, and an update keeps what the listing
-    // has earned rather than starting over.
-    record.published = index.packs[at].published || record.published;
-    record.downloads = index.packs[at].downloads || 0;
-    // A pack that was taken down stays down. Publishing over it is the obvious
-    // way to undo a moderator's decision without anybody noticing, since a
-    // submitted record always claims to be listed. Putting it back is `/restore`
-    // and nothing else.
-    record.listed = index.packs[at].listed !== false;
-    index.packs[at] = record;
-  } else {
-    index.packs.push(record);
-  }
-
-  index.packs.sort((a, b) => a.id.localeCompare(b.id));
-  index.updated = new Date().toISOString();
-
-  // Checked as a whole before writing, the same way the workflow checks it.
-  // Listing one pack must not be able to take the directory down for everyone,
-  // and an index the app itself would refuse to read is exactly that.
-  const whole = directory.validateIndex(index);
-  if (!whole.ok) {
-    throw new Error(`Listing this would break the directory: ${whole.error}`);
-  }
-  if (whole.rejected.length) {
-    throw new Error(`Listing this would drop ${whole.rejected.length} `
-      + 'existing listing(s) from the directory, so nothing was changed.');
-  }
-
-  const body = `${JSON.stringify(index, null, 2)}\n`;
-  try {
-    await github.request(`/repos/${repo}/contents/index.json`, {
-      token,
-      method: 'PUT',
-      body: JSON.stringify({
-        message: `List ${record.id} (#${issueNumber})`,
-        content: Buffer.from(body, 'utf8').toString('base64'),
-        sha: file.sha,
-      }),
-    });
-  } catch (err) {
-    // 409 means the file moved under us: something else wrote to the index
-    // between the read and the write. Reading it again and reapplying is the
-    // whole fix, and it is worth doing here rather than showing somebody a
-    // conflict they did not cause and cannot act on.
-    if (err.status === 409 && attempt < 2) {
-      return addToIndex(token, repo, record, issueNumber, attempt + 1);
-    }
-    if (err.status === 409) {
-      throw new Error('The directory is being written to faster than this can keep up with. '
-        + 'Nothing was listed. Trying again in a moment should work.');
-    }
-    throw err;
-  }
-
-  return { listed: record.id, updated: at !== -1, total: index.packs.length };
-}
-
-/**
- * Rejects a submission, with a reason.
- *
- * The reason is required by the caller rather than optional, because "closed
- * with no explanation" is the single most demoralising thing that can happen to
- * somebody who made something and offered it.
- */
-async function reject(token, repo, issueNumber, reason) {
-  if (!reason || !reason.trim()) {
-    throw new Error('A reason is needed, so the author knows what to change.');
-  }
-
-  await comment(token, repo, issueNumber, `Not listed.\n\n${reason.trim()}`);
-  await close(token, repo, issueNumber);
-
-  return { ok: true };
-}
-
-/**
- * Closes a submission without listing it and without holding it against
- * anybody, so the author can change something and publish again.
- *
- * Between yes and no on purpose. Refusing says the pack was unacceptable; a
- * pack that is nearly right needs a different message, and using the harsher
- * one for both teaches people that a refusal means nothing in particular.
- */
-async function sendBack(token, repo, issueNumber, reason) {
-  if (!reason || !reason.trim()) {
-    throw new Error('A reason is needed, so the author knows what to change.');
-  }
-
-  await comment(token, repo, issueNumber,
-    `Not listed yet.\n\n${reason.trim()}\n\nChange that and publish it again. `
-    + 'Nothing is held against this account.');
-  await close(token, repo, issueNumber);
-  return { ok: true };
-}
-
-/**
- * Refuses a pack and blocks the account that sent it.
- *
- * The ban is applied the same way a moderator would type it, so it goes through
- * the same permission check and leaves the same trail rather than being a
- * second private route to the same state.
- */
-async function refuseAndBan(token, repo, issueNumber, reason, author) {
-  if (!author) throw new Error('There is nobody named to ban on this submission.');
-
-  await reject(token, repo, issueNumber, reason);
+async function banAuthor(token, repo, author, reason) {
+  if (!author) throw new Error('There is nobody named to ban.');
 
   const issue = await github.request(`/repos/${repo}/issues`, {
     token,
     method: 'POST',
     body: JSON.stringify({
       title: `Ban: ${author}`,
-      body: `/ban ${author}`,
+      body: reason ? `/ban ${author}\n\n${reason}` : `/ban ${author}`,
       labels: ['moderation'],
     }),
   });
@@ -304,6 +126,7 @@ async function refuseAndBan(token, repo, issueNumber, reason, author) {
 
   return { ok: true, banned: author, issue: issue.number };
 }
+
 
 /**
  * What has happened to this person's own submissions.
@@ -391,30 +214,90 @@ async function standingOf(repo, login) {
 /**
  * Hides or restores a listed pack, from the app.
  *
- * Done as a moderation comment rather than by editing the index directly, so it
- * runs through exactly the same permission check and leaves exactly the same
- * trail as typing it on GitHub. There is one way to hide a pack, not two that
- * have to be kept in step.
+ * Writes the change itself, rather than asking a workflow to.
  *
- * It needs somewhere to say it, and an issue is the only place comments live —
- * so it opens one, says it, and lets the workflow close the loop.
+ * The first version opened an issue saying `/hide <pack>` and left a workflow to
+ * carry it out, so that hiding went through the same path as typing the command
+ * on GitHub. That reasoning was sound and the result did not work: the runs
+ * either evaluated their filter to false and skipped, or did not start at all,
+ * and either way the pack stayed listed with the app cheerfully reporting
+ * "Unlisted." Four issues were opened and nothing was ever hidden.
+ *
+ * The same lesson as pull requests. A moderator already has write access, which
+ * is the entire permission model, so the app can make the change with their own
+ * token and be certain it happened. Nothing has to fire, and the answer this
+ * returns is the state of the file rather than a hope about one.
+ *
+ * Both places are written: the flag on the record, which is what the app reads,
+ * and the hidden list in moderation.json, which is what survives the record
+ * being replaced by a later submission. Either alone leaves a pack that comes
+ * back the next time its author publishes.
  */
 async function setListed(token, repo, packId, listed) {
-  const verb = listed ? 'restore' : 'hide';
-  const issue = await github.request(`/repos/${repo}/issues`, {
+  const file = await github.request(`/repos/${repo}/contents/index.json`, { token });
+  if (!file.content) {
+    throw new Error('The directory index is too large to edit this way.');
+  }
+
+  const index = JSON.parse(Buffer.from(file.content, 'base64').toString('utf8'));
+  const pack = (index.packs || []).find((p) => p.id === packId);
+  if (!pack) throw new Error(`There is no pack called ${packId} in the directory.`);
+
+  if ((pack.listed !== false) === listed) {
+    return { ok: true, packId, listed, unchanged: true };
+  }
+  pack.listed = listed;
+  index.updated = new Date().toISOString();
+
+  await github.request(`/repos/${repo}/contents/index.json`, {
     token,
-    method: 'POST',
+    method: 'PUT',
     body: JSON.stringify({
-      title: `${listed ? 'Restore' : 'Hide'}: ${packId}`,
-      body: `/${verb} ${packId}`,
-      labels: ['moderation'],
+      message: `${listed ? 'Restore' : 'Hide'} ${packId}`,
+      content: Buffer.from(`${JSON.stringify(index, null, 2)}\n`, 'utf8').toString('base64'),
+      sha: file.sha,
     }),
   });
 
-  // The body of a new issue does not fire issue_comment, so the command is
-  // repeated as a comment, which does.
-  await comment(token, repo, issue.number, `/${verb} ${packId}`);
-  return { ok: true, issue: issue.number, url: issue.html_url };
+  await rememberHidden(token, repo, packId, !listed);
+  return { ok: true, packId, listed };
+}
+
+/**
+ * Keeps the hidden list in step with the flag on the record.
+ *
+ * Best effort on purpose. The pack is already hidden by the time this runs, and
+ * failing to also write the list is worth reporting rather than worth undoing a
+ * decision that has taken effect.
+ */
+async function rememberHidden(token, repo, packId, hidden) {
+  try {
+    const file = await github.request(`/repos/${repo}/contents/moderation.json`, { token });
+    const state = JSON.parse(Buffer.from(file.content, 'base64').toString('utf8'));
+    if (!Array.isArray(state.hidden)) state.hidden = [];
+
+    const id = String(packId).toLowerCase();
+    const at = state.hidden.findIndex((v) => String(v).toLowerCase() === id);
+    if (hidden && at !== -1) return;
+    if (!hidden && at === -1) return;
+
+    if (hidden) state.hidden.push(id);
+    else state.hidden.splice(at, 1);
+    state.hidden.sort();
+
+    await github.request(`/repos/${repo}/contents/moderation.json`, {
+      token,
+      method: 'PUT',
+      body: JSON.stringify({
+        message: `${hidden ? 'Hide' : 'Restore'} ${packId} in the moderation list`,
+        content: Buffer.from(`${JSON.stringify(state, null, 2)}\n`, 'utf8').toString('base64'),
+        sha: file.sha,
+      }),
+    });
+  } catch {
+    // Left alone. The listing itself is already changed, which is what was
+    // asked for, and the list is a backstop rather than the decision.
+  }
 }
 
 /** Replies on an issue without deciding anything. */
@@ -439,11 +322,8 @@ module.exports = {
   mySubmissions,
   standingOf,
   setListed,
-  sendBack,
-  refuseAndBan,
+  banAuthor,
   queue,
-  approve,
-  reject,
   comment,
   close,
 };

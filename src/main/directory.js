@@ -702,6 +702,10 @@ module.exports = {
   ALLOWED_HOSTS,
   LIMITS,
   isReservedHandle,
+  // Nothing in this app calls this, and it is not dead. The directory's own
+  // workflow fetches this file from here and uses it when a submission arrives,
+  // which is the only place the limit can be enforced now that listing happens
+  // without anybody in the app pressing anything.
   roomForAnother,
   validateRecord,
   validateIndex,

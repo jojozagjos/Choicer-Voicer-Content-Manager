@@ -3273,20 +3273,38 @@ function registerReviewIpc() {
     }
   });
 
-  ipcMain.handle('review:decide', async (_e, { number, decision, reason, author }) => {
+  /**
+   * Settles a report.
+   *
+   * Three outcomes, and none of them is about approving anything: hide the pack
+   * that was reported, block the account behind it, or close the report because
+   * there was nothing in it. Each says why on the issue before closing it, so
+   * whoever reported it can see it was read.
+   */
+  ipcMain.handle('review:decide', async (_e, { number, decision, reason, packId, author }) => {
     const token = tokenOrNull();
     if (!token) return { ok: false, error: 'Not signed in to GitHub.' };
+
     try {
-      const done = decision === 'approve'
-        ? await review.approve(token, DIRECTORY_REPO, number, reason)
-        : decision === 'setaside'
-          ? await review.sendBack(token, DIRECTORY_REPO, number, reason)
-          : decision === 'ban'
-            ? await review.refuseAndBan(token, DIRECTORY_REPO, number, reason, author)
-            : await review.reject(token, DIRECTORY_REPO, number, reason);
-      // The pack has been judged either way; nothing should linger on disk.
+      if (decision === 'hide') {
+        if (!packId) return { ok: false, error: 'That report does not name a pack.' };
+        await review.setListed(token, DIRECTORY_REPO, packId, false);
+        await review.comment(token, DIRECTORY_REPO, number,
+          `Taken down.\n\n${reason}`);
+      } else if (decision === 'ban') {
+        if (!author) return { ok: false, error: 'That report does not name an account.' };
+        if (packId) await review.setListed(token, DIRECTORY_REPO, packId, false).catch(() => {});
+        await review.banAuthor(token, DIRECTORY_REPO, author, reason);
+        await review.comment(token, DIRECTORY_REPO, number,
+          `Taken down, and the account blocked from publishing.\n\n${reason}`);
+      } else {
+        await review.comment(token, DIRECTORY_REPO, number,
+          `Closed with no action taken.\n\n${reason}`);
+      }
+
+      await review.close(token, DIRECTORY_REPO, number);
       clearReviewSandbox();
-      return done;
+      return { ok: true, decision };
     } catch (err) {
       return { ok: false, error: err.message };
     }

@@ -262,7 +262,7 @@ const state = {
   // what is allowed — GitHub refuses the actions themselves.
   moderator: false,
   adminItems: [],
-  adminShow: 'submissions',
+  adminShow: 'reports',
   // Issues decided in this session, so a slow refetch cannot resurrect one.
   adminDecided: new Set(),
   publishers: [],
@@ -844,9 +844,13 @@ async function switchTab(tab) {
     // The library is what says whether a listed pack is already installed, so
     // it has to be known before the grid is drawn.
     if (!state.content) await refreshContent();
-    await refreshMods();
+    // Through showMods rather than straight to the grid. Going straight to it
+    // drew packs while the view was still set up for whichever list was open
+    // last, so coming back from Your submissions left the packs in that view's
+    // narrow centred column.
+    await showMods(state.modsShow === 'publisher' ? 'browse' : (state.modsShow || 'browse'));
   }
-  if (tab === 'admin') await showAdmin(state.adminShow || 'submissions');
+  if (tab === 'admin') await showAdmin(state.adminShow || 'reports');
 }
 
 // Home
@@ -1061,7 +1065,7 @@ function matchingAdmin(rows, textOf) {
  * reporting what is already listed usually cannot. One combined queue buried
  * the second kind inside the first.
  */
-async function showAdmin(which = 'submissions', { force = false } = {}) {
+async function showAdmin(which = 'reports', { force = false } = {}) {
   state.adminShow = which;
   state.adminOpen = null;
   for (const button of el.adminTabs) {
@@ -1312,9 +1316,9 @@ async function setPackListed(packId, listed) {
     return;
   }
 
-  toast(listed ? 'Listed again.' : 'Unlisted.', 'ok');
-  // The directory changes when the workflow runs, which is not instant, so what
-  // is held here is stale either way.
+  toast(done.unchanged
+    ? (listed ? 'That pack was already listed.' : 'That pack was already unlisted.')
+    : (listed ? 'Listed again.' : 'Unlisted.'), 'ok');
   directoryChanged();
   await refreshAdminPublishers();
 }
@@ -1332,9 +1336,8 @@ function directoryChanged() {
   state.modsStale = true;
 }
 
-/** Everything waiting to be looked at. */
+/** Reports waiting to be looked at. */
 async function refreshAdminQueue() {
-  const wantReports = state.adminShow === 'reports';
   el.adminList.innerHTML = '<p class="muted small">Looking…</p>';
 
   const said = await window.api.review.queue().catch((e) => ({ ok: false, error: e.message }));
@@ -1347,20 +1350,18 @@ async function refreshAdminQueue() {
   // as open, which it does for a few seconds after closing.
   state.adminItems = said.items.filter((i) => !state.adminDecided.has(i.number));
 
-  // Uploads and reports are separate jobs. Kept in one fetch because they are
-  // one list on GitHub, but never shown together — a report about a pack that
-  // is already listed gets lost among packs waiting to be read.
-  const mine = state.adminItems.filter((i) => (i.kind === 'report') === wantReports);
-
-  if (!mine.length) {
-    const nothing = wantReports ? 'No reports.' : 'Nothing waiting to be looked at.';
-    el.adminList.innerHTML = `<p class="muted small">${nothing}</p>`;
-    el.adminMain.innerHTML = `<div class="mods-empty"><h3>All clear</h3>
-      <p class="muted">${nothing}</p></div>`;
+  if (!state.adminItems.length) {
+    el.adminList.innerHTML = '<p class="muted small">No reports.</p>';
+    el.adminMain.innerHTML = `<div class="admin-blank">
+      <h3>Nothing to deal with</h3>
+      <p class="muted">Packs are listed automatically once they pass their checks, so
+         nothing waits here to be approved. Reports people send about a listed pack
+         show up in this list.</p>
+    </div>`;
     return;
   }
 
-  drawAdminQueue(mine);
+  drawAdminQueue(state.adminItems);
 }
 
 /** Draws the queue rail from a list of items, narrowed by the search box. */
@@ -1379,11 +1380,10 @@ function drawAdminQueue(items) {
     // Every one of these fields came from a stranger. None of it is trusted as
     // markup.
     button.innerHTML = `
-      <span class="admin-kind ${item.kind === 'report' ? 'is-report' : ''}">
-        ${item.kind === 'report' ? 'Report' : 'Pack'}
-      </span>
-      <span class="admin-item-title">${escapeHtml(item.record ? item.record.title : item.title)}</span>
-      <span class="muted small">#${item.number} by ${escapeHtml(item.author || 'someone')}</span>`;
+      <span class="admin-kind is-report">Report</span>
+      <span class="admin-item-title">${escapeHtml(item.title)}</span>
+      <span class="muted small">#${item.number} from ${escapeHtml(item.author || 'someone')}
+        · ${escapeHtml(formatWhen(item.openedAt))}</span>`;
     button.addEventListener('click', () => openForReview(item));
     el.adminList.append(button);
   }
@@ -1395,219 +1395,162 @@ async function openForReview(item) {
   await window.api.review.close();
   refreshAdminQueue();
 
-  if (item.kind === 'report' || !item.record) {
-    // A report is words, not a pack. Shown as written, escaped.
-    el.adminMain.innerHTML = `
-      <header class="admin-head">
-        <div>
-          <h2>${escapeHtml(item.title)}</h2>
-          <p class="muted small">Report #${item.number} by ${escapeHtml(item.author || 'someone')}</p>
-        </div>
-        <a class="btn btn-small" id="admin-open-github">Open on GitHub</a>
-      </header>
-      <pre class="admin-body">${escapeHtml(item.body || '(nothing written)')}</pre>`;
-    el.adminMain.querySelector('#admin-open-github')
-      .addEventListener('click', () => window.api.shell.openExternal(item.url));
-    return;
-  }
-
-  const record = item.record;
-  el.adminMain.innerHTML = `<div class="mods-empty"><h3>Fetching the pack…</h3>
-    <p class="muted small" id="admin-progress"></p></div>`;
-  const progress = el.adminMain.querySelector('#admin-progress');
-
-  const stop = window.api.review.onProgress(({ stage, percent }) => {
-    if (!progress) return;
-    progress.textContent = stage ? `${stage}…`
-      : percent != null ? `downloading ${Math.round(percent)}%` : '';
-  });
-
-  let pack;
-  try {
-    pack = await window.api.review.open(record);
-  } finally {
-    stop();
-  }
-
-  if (!pack.ok) {
-    el.adminMain.innerHTML = `<div class="mods-empty"><h3>Could not open it</h3>
-      <p class="muted">${escapeHtml(pack.error)}</p></div>`;
-    return;
-  }
-
-  renderReview(item, record, pack);
-}
-
-/** The pack itself, laid out to be judged. */
-function renderReview(item, record, pack) {
-  // Whatever the check found, worst first. Nothing at all is the normal
-  // outcome and deliberately shows as nothing rather than as a green tick —
-  // a reassurance on every pack is a reassurance nobody reads.
-  const report = pack.report || { findings: [] };
-  const warn = report.findings.map((f) => `
-    <p class="admin-finding is-${f.level}">
-      <b>${escapeHtml(f.what)}</b>
-      <span>${escapeHtml(f.detail)}</span>
-    </p>`).join('');
+  // Every item in this queue is a report. Packs are listed by the directory
+  // once they pass their checks, so nothing arrives here waiting to be read
+  // and passed by somebody.
+  const named = packNamedIn(item.body);
 
   el.adminMain.innerHTML = `
     <header class="admin-head">
       <div>
-        <h2>${escapeHtml(record.title)}</h2>
-        <p class="muted small">
-          ${escapeHtml(record.type)} pack by ${escapeHtml(record.author)} ·
-          ${formatBytes(pack.totalBytes)} · ${pack.files.length} files ·
-          submission #${item.number}
-        </p>
+        <h2>${escapeHtml(item.title)}</h2>
+        <p class="muted small">Report #${item.number} from
+          ${escapeHtml(item.author || 'someone')} · ${escapeHtml(formatWhen(item.openedAt))}</p>
       </div>
       <button class="btn btn-small" id="admin-open-github">Open on GitHub</button>
     </header>
 
-    ${warn}
-    <p class="admin-summary">${escapeHtml(record.summary || '')}</p>
+    ${named ? `<div class="admin-target">
+      <div class="admin-target-what">
+        <b>${escapeHtml(named.title)}</b>
+        <span class="muted small">${escapeHtml(named.id)} · by ${escapeHtml(named.author)}${
+  named.listed === false ? ' · already taken down' : ''}</span>
+      </div>
+      <button class="btn btn-small" id="admin-see-pack">See their packs</button>
+    </div>` : `<p class="admin-finding is-note"><b>No listed pack named</b>
+      <span>This report does not mention a pack that is on the list, so it can be answered
+      but nothing can be taken down from here.</span></p>`}
 
-    ${pack.video ? (pack.video.playable === false
-      ? `<p class="admin-warn">The video could not be prepared for playing, so it cannot be
-         checked here: ${escapeHtml(pack.video.why || 'no reason given')}</p>`
-      : `<video class="admin-video" src="${pack.video.url}" controls preload="metadata"></video>`)
-      : '<p class="muted small">This pack has no video.</p>'}
-
-    ${pack.images.length ? `<h4 class="admin-h">Pictures</h4>
-      <div class="admin-images">
-        ${pack.images.map((i) => `<figure>
-          <img src="${i.url}" alt="${escapeHtml(i.name)}" loading="lazy"
-               onerror="this.closest('figure').classList.add('broken')" />
-          <span class="admin-broken">could not be shown</span>
-          <figcaption class="muted small">${escapeHtml(i.name)}</figcaption></figure>`).join('')}
-      </div>` : ''}
-
-    ${pack.audio.length ? `<h4 class="admin-h">Audio (${pack.audio.length})</h4>
-      <div class="admin-audio">
-        ${pack.audio.map((a) => `<div class="admin-clip">
-          <span class="muted small">${escapeHtml(a.name)}</span>
-          <audio src="${a.url}" controls preload="none"></audio></div>`).join('')}
-      </div>` : ''}
-
-    ${(pack.lines || []).length ? `<h4 class="admin-h">
-        Everything said in this pack (${pack.lines.length} lines)</h4>
-      <div class="admin-script">
-        ${pack.lines.map((l) => `<div class="script-line">
-          <span class="script-at">${formatClock(l.time)}</span>
-          <span class="script-who">${escapeHtml(l.character || 'nobody set')}</span>
-          <span class="script-said${l.caption ? '' : ' is-empty'}">${
-            l.caption ? escapeHtml(l.caption) : 'nothing written'}</span>
-        </div>`).join('')}
-      </div>` : '<p class="muted small">This pack has no spoken lines.</p>'}
-
-    <h4 class="admin-h">Everything in it</h4>
-    <div class="admin-files">
-      ${pack.files.map((f) => `<div><span>${escapeHtml(f.name)}</span>
-        <span class="muted small">${formatBytes(f.bytes)}</span></div>`).join('')}
-    </div>
+    <h4 class="admin-h">What was said</h4>
+    <pre class="admin-body">${escapeHtml(item.body || '(nothing written)')}</pre>
 
     <div class="admin-decide">
       <div class="admin-decide-what">
-        <b>${escapeHtml(record.title)}</b>
-        <span class="muted small">by ${escapeHtml(record.author)} ·
-          ${escapeHtml(record.licence || 'unstated')} licence ·
-          ${(record.tags || []).length ? escapeHtml((record.tags || []).join(', ')) : 'no tags'}</span>
+        <b>Settle this report</b>
+        <span class="muted small">Whatever you choose is said on the report, and it closes.</span>
       </div>
       <div class="admin-decide-buttons">
-        <button class="btn btn-primary" id="admin-approve">✓ List it</button>
-        <button class="btn" id="admin-setaside">↩ Send back</button>
-        <button class="btn btn-danger" id="admin-reject">✕ Refuse it</button>
-        <button class="btn btn-danger" id="admin-ban">⨂ Refuse and ban</button>
+        ${named ? '<button class="btn btn-danger" id="admin-hide">✕ Take it down</button>'
+    + '<button class="btn btn-danger" id="admin-ban">⨂ Take down and ban</button>' : ''}
+        <button class="btn" id="admin-dismiss">Close, nothing wrong</button>
       </div>
     </div>`;
 
   el.adminMain.querySelector('#admin-open-github')
     .addEventListener('click', () => window.api.shell.openExternal(item.url));
-  el.adminMain.querySelector('#admin-approve')
-    .addEventListener('click', () => decideReview(item, 'approve'));
-  el.adminMain.querySelector('#admin-reject')
-    .addEventListener('click', () => decideReview(item, 'reject'));
-  el.adminMain.querySelector('#admin-setaside')
-    .addEventListener('click', () => decideReview(item, 'setaside'));
-  el.adminMain.querySelector('#admin-ban')
-    .addEventListener('click', () => decideReview(item, 'ban', record.author));
+
+  const see = el.adminMain.querySelector('#admin-see-pack');
+  if (see) {
+    see.addEventListener('click', () => {
+      switchTab('mods');
+      showPublisher(named.author);
+    });
+  }
+
+  const hide = el.adminMain.querySelector('#admin-hide');
+  if (hide) hide.addEventListener('click', () => decideReview(item, 'hide', named));
+  const ban = el.adminMain.querySelector('#admin-ban');
+  if (ban) ban.addEventListener('click', () => decideReview(item, 'ban', named));
+
+  el.adminMain.querySelector('#admin-dismiss')
+    .addEventListener('click', () => decideReview(item, 'dismiss', null));
 }
 
-/** Approves or refuses, and says why. */
-async function decideReview(item, decision, author) {
-  const approving = decision === 'approve';
-  const banning = decision === 'ban';
-  const setting = decision === 'setaside';
+/**
+ * The listed pack a report is about, if it names one.
+ *
+ * Matched against the directory rather than parsed out of the text. A report is
+ * free prose written by whoever was upset, so there is no field to read; what
+ * there is, reliably, is the pack's id or title somewhere in it. Checking
+ * against what is actually listed means a match is always a real pack rather
+ * than a string that looked like one.
+ */
+function packNamedIn(body) {
+  const text = String(body || '').toLowerCase();
+  const packs = (state.mods && state.mods.ok && state.mods.packs) || [];
+  if (!text || !packs.length) return null;
 
+  // Longest id first, so "meat-grinder-two" is not answered with "meat-grinder".
+  return [...packs]
+    .sort((a, b) => b.id.length - a.id.length)
+    .find((pack) => text.includes(pack.id.toLowerCase())
+      || (pack.title && pack.title.length > 3 && text.includes(pack.title.toLowerCase())))
+    || null;
+}
+
+
+/**
+ * Settles a report, and says why.
+ *
+ * Three outcomes, none of which is about approving anything. A report is either
+ * right about a pack, right about the person behind it, or wrong, and each of
+ * those gets said on the report before it closes so whoever sent it can see it
+ * was actually read.
+ */
+async function decideReview(item, decision, pack) {
   const asked = {
-    approve: {
-      title: 'List this pack?',
-      detail: 'It will be listed in the Mods tab and the author told. Anything you write here '
-        + 'is added to that message.',
-      placeholder: 'Anything to add (optional)',
-      go: 'List it',
-    },
-    reject: {
-      title: 'Refuse this pack?',
-      detail: 'The author will be told it was not listed, along with what you write here. Say '
-        + 'what would need to change. Being refused with no explanation is the worst version '
-        + 'of this for somebody who made something.',
-      placeholder: 'Why it was not listed',
-      go: 'Refuse it',
-    },
-    // Neither yes nor no. For a pack that is nearly right, where the author only
-    // needs to change something and try again — refusing it says the pack was
-    // unacceptable, which is a different and harsher message.
-    setaside: {
-      title: 'Send this back?',
-      detail: 'The submission is closed without listing the pack, and the author is told what '
-        + 'to change so they can publish it again.\n\n'
-        + 'Nothing is held against them. This is for a pack that is nearly right.',
-      placeholder: 'What to change before trying again',
-      go: 'Send it back',
+    hide: {
+      title: pack ? `Take "${pack.title}" down?` : 'Take it down?',
+      detail: 'It stops appearing in the Mods tab straight away. The file stays on its '
+        + 'author\'s own account and anyone who already has the address keeps it; this is '
+        + 'the directory refusing to point at it, not a takedown.\n\n'
+        + 'It can be put back at any time from the Listed tab.',
+      placeholder: 'Why it was taken down',
+      go: 'Take it down',
+      mark: '✕',
     },
     ban: {
-      title: `Refuse this and ban ${author || 'this account'}?`,
-      detail: 'The pack is refused and the account is blocked from publishing anything else. '
-        + 'Anything already listed by them is hidden.\n\n'
-        + 'For packs that should never have been sent. It can be undone later with '
-        + '/unban, but the author is not told anything beyond the refusal.',
-      placeholder: 'Why (the author sees this)',
-      go: 'Refuse and ban',
+      title: pack ? `Take it down and ban ${pack.author}?` : 'Ban this account?',
+      detail: 'The pack comes off the list and the account is blocked from publishing '
+        + 'anything else. Anything already listed by them is hidden too.\n\n'
+        + 'For accounts that should not be here at all rather than one pack that went '
+        + 'wrong. It can be undone with /unban.',
+      placeholder: 'Why (this is on a public issue)',
+      go: 'Take down and ban',
+      mark: '⨂',
+    },
+    dismiss: {
+      title: 'Close this report?',
+      detail: 'Nothing is taken down and nothing is held against anybody. What you write '
+        + 'here is said on the report, so whoever sent it knows it was looked at rather '
+        + 'than ignored.',
+      placeholder: 'Why nothing was done',
+      go: 'Close it',
+      mark: '✓',
     },
   }[decision];
 
   const reason = await askText({
     ...asked,
     buttons: [asked.go, 'Cancel'],
-    // Only approving can go through without a word. Every other outcome leaves
-    // somebody wondering what happened to their pack.
-    required: !approving,
-    mark: banning ? '⨂' : setting ? '↩' : approving ? '✓' : '✕',
+    // Every one of these is somebody being told something. None of them should
+    // arrive with no explanation attached.
+    required: true,
   });
   if (reason === null) return;
 
-  const said = await window.api.review.decide(item.number, decision, reason, author);
+  const said = await window.api.review.decide(item.number, decision, reason, {
+    packId: pack ? pack.id : null,
+    author: pack ? pack.author : null,
+  });
   if (!said.ok) {
     toast(`Could not do that: ${said.error}`, 'error', 10000);
     return;
   }
 
   toast({
-    approve: 'Listed.',
-    reject: 'Refused, and the author told.',
-    setaside: 'Sent back. They can publish it again once it is changed.',
-    ban: `Refused, and ${author || 'that account'} is blocked from publishing.`,
+    hide: 'Taken down.',
+    ban: `Taken down, and ${pack ? pack.author : 'that account'} is blocked from publishing.`,
+    dismiss: 'Report closed.',
   }[decision], 'ok');
+
   state.adminOpen = null;
   el.adminMain.innerHTML = '';
-  // Listing a pack changes the directory, so the copy held for this session is
-  // stale. Dropped rather than refetched: nobody is looking at the Mods tab
-  // from in here, and it is read again the next time somebody opens it.
-  if (approving) directoryChanged();
+  if (decision !== 'dismiss') directoryChanged();
 
   // Dropped from the list here rather than waiting for the refetch to notice.
   // GitHub does not always report an issue as closed the instant it is closed,
-  // so refreshing alone left a decided pack sitting in the queue looking like
+  // so refreshing alone left a settled report sitting in the queue looking like
   // the decision had not taken.
   state.adminItems = state.adminItems.filter((i) => i.number !== item.number);
   state.adminDecided.add(item.number);
@@ -1678,14 +1621,20 @@ const INBOX_STATES = {
 /** Switches the Mods tab between browsing and your own submissions. */
 async function showMods(which = 'browse') {
   state.modsShow = which;
+  // The layout follows this rather than which button happens to be lit. Keying
+  // it off a button's class meant any path that drew the grid without going
+  // through here inherited the previous view's layout.
+  el.modsView.dataset.show = which;
   // A publisher's page is reached from Browse and belongs to it, so Browse
   // stays lit while it is open rather than nothing being lit at all.
   el.btnModsBrowse.classList.toggle('on', which === 'browse' || which === 'publisher');
   el.btnModsPublishers.classList.toggle('on', which === 'publishers');
   el.btnModsInbox.classList.toggle('on', which === 'inbox');
 
-  el.modsSearch.hidden = which !== 'browse' && which !== 'publishers';
-  el.modsSearch.placeholder = which === 'publishers' ? 'Search publishers…' : 'Search packs…';
+  el.modsSearch.hidden = which === 'publisher';
+  el.modsSearch.placeholder = which === 'publishers' ? 'Search publishers…'
+    : which === 'inbox' ? 'Search your submissions…'
+      : 'Search packs…';
   // The type rail is about packs, so it has no meaning on the other views.
   if (which !== 'browse') el.modsTypes.hidden = true;
 
@@ -1757,6 +1706,7 @@ async function showPublishers() {
  */
 async function showPublisher(author) {
   state.modsShow = 'publisher';
+  el.modsView.dataset.show = 'publisher';
   el.btnModsBrowse.classList.add('on');
   el.btnModsPublishers.classList.remove('on');
   el.btnModsInbox.classList.remove('on');
@@ -1778,25 +1728,43 @@ async function showPublisher(author) {
 
   const repo = repoOf(theirs[0]);
 
+  // The kinds of pack they make, which says more about a publisher than any of
+  // the numbers do.
+  const kinds = [...theirs.reduce((seen, p) => seen.set(p.type, (seen.get(p.type) || 0) + 1),
+    new Map())].sort((a, b) => b[1] - a[1]);
+
   el.modsGrid.innerHTML = `
     <div class="publisher-page">
-      <div class="publisher-bar">
-        <button type="button" class="btn btn-small" id="pub-back">← All packs</button>
-        ${repo ? `<button type="button" class="btn btn-small" id="pub-repo">
-          Open their repository</button>` : ''}
-      </div>
+      <header class="publisher-hero">
+        <div class="publisher-avatar" aria-hidden="true">${escapeHtml(
+    String(author).slice(0, 1).toUpperCase())}</div>
+        <div class="publisher-who">
+          <h2>${escapeHtml(author)}</h2>
+          <p class="muted small">${stats
+    ? `Publishing since ${escapeHtml(formatWhen(stats.first))}`
+    : 'Nothing listed at the moment'}</p>
+          <div class="publisher-kinds">${kinds.map(([type, n]) =>
+    `<span class="publisher-kind">${TYPE_ICONS[type] || '📦'} ${escapeHtml(
+      (MOD_TYPES.find((t) => t.id === type) || { label: type }).label)} · ${n}</span>`).join('')}</div>
+        </div>
+        <div class="publisher-bar">
+          <button type="button" class="btn btn-small" id="pub-back">← All packs</button>
+          ${repo ? `<button type="button" class="btn btn-small btn-primary" id="pub-repo">
+            Open their repository</button>` : ''}
+        </div>
+      </header>
 
       ${stats ? `<div class="publisher-stats">
-        <div><b>${stats.packs}</b><span class="muted small">listed</span></div>
+        <div><b>${stats.packs}</b><span class="muted small">packs listed</span></div>
         <div><b>${escapeHtml(formatDownloads(stats.downloads))}</b>
           <span class="muted small">downloads</span></div>
-        <div><b>${escapeHtml(formatBytes(stats.bytes))}</b><span class="muted small">total</span></div>
-        <div><b>${escapeHtml(formatWhen(stats.first))}</b>
-          <span class="muted small">first pack</span></div>
+        <div><b>${escapeHtml(formatBytes(stats.bytes))}</b>
+          <span class="muted small">total size</span></div>
         <div><b>${escapeHtml(formatWhen(stats.latest))}</b>
           <span class="muted small">last update</span></div>
       </div>` : ''}
 
+      <h3 class="publisher-heading">Their packs</h3>
       <div class="publisher-packs" id="pub-packs"></div>
     </div>`;
 
@@ -1876,7 +1844,7 @@ function publisherStats(packs) {
 async function renderInbox() {
   el.modsTypes.hidden = true;
   el.modsTitle.textContent = 'Your submissions';
-  el.modsSubtitle.textContent = '';
+  el.modsSubtitle.textContent = 'Looking…';
   el.modsGrid.innerHTML = '<p class="muted small">Looking…</p>';
 
   const said = await window.api.mods.inbox().catch((e) => ({ ok: false, error: e.message }));
@@ -1887,34 +1855,58 @@ async function renderInbox() {
   // heading with no way to tell it is wrong.
   if (state.modsShow !== 'inbox') return;
 
+  state.inbox = said;
+  drawInbox();
+}
+
+/**
+ * Draws what was fetched, filtered by whatever is in the search box.
+ *
+ * Separate from fetching so that typing filters the list instead of asking
+ * GitHub again on every keystroke.
+ */
+function drawInbox() {
+  const said = state.inbox;
+  if (!said) return;
+
   if (!said.ok) {
-    el.modsGrid.innerHTML = `<div class="mods-empty"><h3>Could not be read</h3>
-      <p class="muted">${escapeHtml(said.error)}</p></div>`;
+    el.modsSubtitle.textContent = '';
+    el.modsGrid.innerHTML = '<div class="mods-empty"><h3>Could not be read</h3>'
+      + '<p class="muted">' + escapeHtml(said.error) + '</p></div>';
     return;
   }
   if (!said.configured || !said.signedIn) {
-    el.modsGrid.innerHTML = `<div class="mods-empty"><h3>Not signed in</h3>
-      <p class="muted">Link a GitHub account in Settings to publish packs and to see what
-         happened to them.</p></div>`;
+    el.modsSubtitle.textContent = '';
+    el.modsGrid.innerHTML = '<div class="mods-empty"><h3>Not signed in</h3>'
+      + '<p class="muted">Link a GitHub account in Settings to publish packs and to see what '
+      + 'happened to them.</p></div>';
     return;
   }
 
   const standing = said.standing || {};
-  const note = standing.banned
-    ? '<p class="admin-warn">This account cannot publish to the directory.</p>'
-    : standing.trusted
-      ? '<p class="inbox-standing is-ok">Trusted. Your packs are listed without waiting.</p>'
-      : '<p class="inbox-standing">Your first pack is looked at by a person. After that they '
-        + 'are listed straight away.</p>';
+  const items = said.items || [];
 
-  el.modsSubtitle.textContent = `Signed in as ${said.login}`;
+  // How things stand with the directory, as a banner rather than a sentence
+  // buried in the list. It is the first question somebody opening this page has.
+  const stand = standing.banned
+    ? { tone: 'bad',
+      title: 'This account cannot publish',
+      note: 'Packs from this account are not accepted by the directory.' }
+    : { tone: 'ok',
+      title: 'Publishing is open',
+      note: 'Packs are listed as soon as they pass their checks. Nobody approves uploads, '
+        + 'so there is nothing to wait for.' };
 
-  if (!said.items.length) {
-    el.modsGrid.innerHTML = `${note}<div class="mods-empty"><h3>Nothing submitted yet</h3>
-      <p class="muted">Packs you publish from Content show up here, with what happened to
-         them.</p></div>`;
-    return;
-  }
+  const counts = { waiting: 0, listed: 0, changes: 0, refused: 0, closed: 0 };
+  for (const item of items) counts[item.outcome] = (counts[item.outcome] || 0) + 1;
+
+  el.modsSubtitle.textContent = 'Signed in as ' + said.login;
+
+  const query = (el.modsSearch.value || '').trim().toLowerCase();
+  const showing = query
+    ? items.filter((i) => (i.title + ' ' + (i.id || '') + ' ' + (i.reason || ''))
+      .toLowerCase().includes(query))
+    : items;
 
   // What was already known last time this was opened. Anything whose outcome
   // has moved since then is marked, so a decision made days ago is not just
@@ -1922,57 +1914,94 @@ async function renderInbox() {
   const seen = JSON.parse(localStorage.getItem('inboxSeen') || '{}');
   const nowSeen = {};
   let changed = 0;
-
-  el.modsGrid.innerHTML = note + said.items.map((item) => {
-    const shown = INBOX_STATES[item.outcome] || INBOX_STATES.closed;
+  for (const item of items) {
     nowSeen[item.number] = item.outcome;
+    if (seen[item.number] !== undefined && seen[item.number] !== item.outcome) changed++;
+  }
+
+  const summary = items.length
+    ? '<div class="inbox-summary">'
+      + Object.entries(counts).filter(([, n]) => n > 0).map(([key, n]) => {
+        const shown = INBOX_STATES[key] || INBOX_STATES.closed;
+        return '<span class="inbox-tally is-' + shown.tone + '"><b>' + n + '</b> '
+          + escapeHtml(shown.label.toLowerCase()) + '</span>';
+      }).join('')
+      + '</div>'
+    : '';
+
+  const header = '<header class="inbox-standing is-' + stand.tone + '">'
+    + '<div><b>' + escapeHtml(stand.title) + '</b>'
+    + '<p class="muted small">' + escapeHtml(stand.note) + '</p></div>'
+    + summary
+    + '</header>';
+
+  if (!items.length) {
+    el.modsGrid.innerHTML = header
+      + '<div class="mods-empty"><h3>Nothing submitted yet</h3>'
+      + '<p class="muted">Packs you publish from Content show up here, with what happened '
+      + 'to them and why.</p></div>';
+    return;
+  }
+
+  if (!showing.length) {
+    el.modsGrid.innerHTML = header
+      + '<div class="mods-empty"><h3>Nothing found</h3>'
+      + '<p class="muted">No submission matches that.</p></div>';
+    return;
+  }
+
+  el.modsGrid.innerHTML = header + '<div class="inbox-list">' + showing.map((item) => {
+    const shown = INBOX_STATES[item.outcome] || INBOX_STATES.closed;
     const isNew = seen[item.number] !== undefined && seen[item.number] !== item.outcome;
-    if (isNew) changed++;
 
     // Opened one at a time. A submission carries a paragraph of explanation and
     // a record, and showing all of that for every row turns a list of five into
     // a wall nobody reads. Closed, a row is a title and an outcome; open, it is
     // everything there is to know about that one.
-    return `<article class="inbox-item${isNew ? ' is-changed' : ''}" data-number="${item.number}">
-      <button type="button" class="inbox-open" aria-expanded="false">
-        <span class="inbox-head">
-          <b>${isNew ? '<i class="inbox-dot" title="This changed since you last looked"></i>' : ''}${
-      escapeHtml(item.title)}</b>
-          <span class="inbox-state is-${shown.tone}">${shown.label}</span>
-        </span>
-        <span class="inbox-when muted small">Sent ${escapeHtml(formatWhen(item.openedAt))}${
-      item.id ? ` · listed as ${escapeHtml(item.id)}` : ''}</span>
-        ${waitNoteFor(item)}
-        <span class="inbox-chevron" aria-hidden="true">▾</span>
-      </button>
-
-      <div class="inbox-body" hidden>
-        ${item.reason
-    ? `<p class="inbox-reason">${escapeHtml(item.reason)}</p>`
-    : '<p class="inbox-reason muted">Nothing has been said on it yet.</p>'}
-        <div class="inbox-foot">
-          <button class="btn btn-small" data-url="${escapeHtml(item.url)}">Open on GitHub</button>
-        </div>
-      </div>
-    </article>`;
-  }).join('');
+    return '<article class="inbox-item' + (isNew ? ' is-changed' : '') + '">'
+      + '<button type="button" class="inbox-open" aria-expanded="false">'
+      + '<span class="inbox-row">'
+      + '<span class="inbox-title">'
+      + (isNew ? '<i class="inbox-dot" title="This changed since you last looked"></i>' : '')
+      + '<b>' + escapeHtml(item.title) + '</b>'
+      + '<span class="inbox-when muted small">Sent ' + escapeHtml(formatWhen(item.openedAt))
+      + (item.id ? ' · ' + escapeHtml(item.id) : '') + '</span>'
+      + '</span>'
+      + '<span class="inbox-right">'
+      + '<span class="inbox-state is-' + shown.tone + '">' + escapeHtml(shown.label) + '</span>'
+      + '<span class="inbox-chevron" aria-hidden="true">▾</span>'
+      + '</span>'
+      + '</span>'
+      + waitNoteFor(item)
+      + '</button>'
+      + '<div class="inbox-body" hidden>'
+      + (item.reason
+        ? '<p class="inbox-reason">' + escapeHtml(item.reason) + '</p>'
+        : '<p class="inbox-reason muted">Nothing has been said on it yet.</p>')
+      + '<div class="inbox-foot">'
+      + '<button class="btn btn-small" data-url="' + escapeHtml(item.url) + '">'
+      + 'Open on GitHub</button>'
+      + '</div></div></article>';
+  }).join('') + '</div>';
 
   for (const row of el.modsGrid.querySelectorAll('.inbox-item')) {
     const opener = row.querySelector('.inbox-open');
-    const body = row.querySelector('.inbox-body');
+    const holder = row.querySelector('.inbox-body');
     opener.addEventListener('click', () => {
-      const opening = body.hidden;
-      body.hidden = !opening;
+      const opening = holder.hidden;
+      holder.hidden = !opening;
       opener.setAttribute('aria-expanded', String(opening));
       row.classList.toggle('is-open', opening);
     });
   }
 
   // Written after drawing, so the marks survive until they have been seen.
-  localStorage.setItem('inboxSeen', JSON.stringify(nowSeen));
+  // Only when nothing is filtered out, or a search would mark rows as seen that
+  // were never on screen.
+  if (!query) localStorage.setItem('inboxSeen', JSON.stringify(nowSeen));
   if (changed) {
-    el.modsSubtitle.textContent
-      = `Signed in as ${said.login} · ${changed} update${changed === 1 ? '' : 's'}`;
+    el.modsSubtitle.textContent = 'Signed in as ' + said.login + ' · '
+      + changed + ' update' + (changed === 1 ? '' : 's');
   }
 
   for (const button of el.modsGrid.querySelectorAll('[data-url]')) {
@@ -3066,8 +3095,8 @@ function renderContentDetail(pack) {
               ${converting ? 'disabled' : ''}
               title="${pack.iconPath || pack.iconUrl
     ? 'Package this pack to send or publish'
-    : 'Set an icon in Edit this pack, under Pack details'}">↗ Share this pack${
-  pack.iconPath || pack.iconUrl ? '' : '<span class="btn-blocked">needs an icon</span>'}</button>
+    : 'This pack needs an icon first. Set one in Edit this pack, under Pack details.'
+}">↗ Share this pack</button>
       <button type="button" class="btn" id="btn-detail-open">📂 Open folder</button>
       <button type="button" class="btn btn-danger" id="btn-detail-delete"
               ${converting ? 'disabled' : ''}>✕ Delete</button>
@@ -5609,11 +5638,18 @@ function wireEvents() {
     state.contentSearch = '';
     renderContentGrid();
   });
-  el.modsSearch.addEventListener('input', () => renderMods());
+  // One box, three lists. Which one it filters follows whichever view is open,
+  // so it does not need three boxes that are hidden most of the time.
+  const searchAgain = () => {
+    if (state.modsShow === 'publishers') showPublishers();
+    else if (state.modsShow === 'inbox') drawInbox();
+    else renderMods();
+  };
+  el.modsSearch.addEventListener('input', searchAgain);
   el.modsSearch.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
     el.modsSearch.value = '';
-    renderMods();
+    searchAgain();
   });
   el.btnModsRefresh.addEventListener('click', () => (state.modsShow === 'inbox' ? renderInbox() : refreshMods({ force: true })));
   el.btnModsBrowse.addEventListener('click', () => showMods('browse'));

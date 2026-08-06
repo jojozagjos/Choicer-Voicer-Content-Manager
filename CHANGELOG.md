@@ -50,12 +50,19 @@ Sharing packs, and working with a pack that has been recorded several times over
   repository on GitHub.
 - Packs that have been taken off the list no longer appear anywhere in browsing,
   and no longer count towards a publisher's total.
+- Packs are listed as soon as they pass their checks. Nobody approves uploads:
+  the record has to be valid, the author has to be the account hosting the file,
+  the file has to pass a malware check, and the account must not be blocked.
+  Anything failing one of those is refused with the reason.
+- A pack can be reported once it is listed, and a reported pack can be taken
+  down or its author blocked.
 - A submissions list shows what happened to every pack offered to the directory,
   and why. A pack that was not listed carries the reason with it, rather than the
   explanation sitting somewhere nobody looks. Each one opens on its own, so a
   list of several stays readable.
 - A submission waiting to be looked at says how long it has left before it
-  closes on its own, once that is near.
+  closes on its own, once that is near. The list can be searched, and each entry
+  opens to show what was said about it.
 - Sharing a pack requires it to have an icon, and the Share button says so
   before it is pressed.
 - Publishing says which repository it will create on the author's account, and

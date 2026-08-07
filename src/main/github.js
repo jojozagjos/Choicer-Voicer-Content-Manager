@@ -237,6 +237,18 @@ async function explain(response) {
   if (response.status === 403 && /rate limit/i.test(detail)) {
     return fail('GitHub is rate limiting this account. Waiting a few minutes should clear it.');
   }
+
+  // Being over quota, or flagged for using an account as file storage.
+  //
+  // Told apart from an ordinary refusal because the answer is completely
+  // different: nothing about this attempt will work on a retry, and what fixes
+  // it is deleting uploads that are no longer needed. GitHub says this in
+  // several wordings, so it is recognised by what they have in common.
+  if (response.status === 403 && /quota|storage|abuse|too large|exceeded/i.test(detail)) {
+    return fail('GitHub will not accept more uploads on this account at the moment: '
+      + `${detail}\n\nOld packs you no longer need can be deleted under Your submissions, `
+      + 'which frees the space they were using.');
+  }
   if (response.status === 403) {
     return fail(`GitHub refused that: ${detail || 'permission denied'}`);
   }

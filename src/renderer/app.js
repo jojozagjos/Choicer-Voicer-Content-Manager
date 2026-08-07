@@ -993,9 +993,17 @@ function renderHomeRecent() {
   for (const { pack, session } of recent) {
     const row = document.createElement('button');
     row.className = 'recent-row';
+    // The pack's own picture, so a list of five recordings can be told apart at
+    // a glance rather than by reading five names that often start the same way.
+    const art = pack.iconUrl
+      ? `<img class="recent-art" src="${escapeHtml(pack.iconUrl)}" alt="" loading="lazy" />`
+      : `<span class="recent-art recent-art-blank">${typeIcon(pack.type)}</span>`;
     row.innerHTML = `
-      <strong>${escapeHtml(pack.title)}</strong>
-      <span class="muted">${escapeHtml(friendlySessionName(session))}</span>`;
+      ${art}
+      <span class="recent-lines">
+        <strong>${escapeHtml(pack.title)}</strong>
+        <span class="muted">${escapeHtml(friendlySessionName(session))}</span>
+      </span>`;
     row.addEventListener('click', async () => {
       await switchTab('export');
       const target = state.model.packs.find((p) => p.id === pack.id);
@@ -2020,10 +2028,21 @@ function drawInbox() {
   const items = said.items || [];
   const files = (state.releases && state.releases.ok && state.releases.releases) || [];
 
+  // What all of it adds up to on their account.
+  //
+  // Worth showing because it is the only number here somebody can act on: the
+  // packs live on their GitHub, and if GitHub ever objects to how much is
+  // stored, deleting old uploads is the fix. A total nobody can see is a total
+  // nobody manages until something refuses.
+  const used = files.reduce((n, f) => n + (f.bytes || 0), 0);
   const banned = (said.standing || {}).banned;
+
   el.modsSubtitle.textContent = banned
     ? `${said.login} · blocked from publishing`
-    : `Signed in as ${said.login}`;
+    : files.length
+      ? `${said.login} · ${formatBytes(used)} across `
+        + `${files.length} upload${files.length === 1 ? '' : 's'}`
+      : `Signed in as ${said.login}`;
 
   // What changed since this was last opened, so a decision made days ago is not
   // just another row in a list that all looks the same.

@@ -284,6 +284,24 @@ function inspectVoice(dir, files, { parseIni, findAudioSibling }) {
     issues.push(issue(INFO, 'No pack icon. Add _icon, or _pack_filler_image which doubles as one'));
   }
 
+  // A line with words but nobody saying them.
+  //
+  // A warning rather than a note, because it is almost always a mistake rather
+  // than a choice: the caption is burned into an export with the speaker's name
+  // beside it, the timeline colours clips by character, and the per-character
+  // volumes have nothing to apply to. All three quietly fall back to blank, so
+  // the first sign is usually a finished video with a nameless line in it.
+  const spoken = clips.filter((c) => (c.caption || '').trim());
+  const unnamed = spoken.filter((c) => !(c.character || '').trim());
+  if (unnamed.length) {
+    issues.push(issue(WARN,
+      `${unnamed.length} line${unnamed.length > 1 ? 's have' : ' has'} a caption but no character `
+      + `(${unnamed.slice(0, 3).map((c) => c.base).join(', ')}`
+      + `${unnamed.length > 3 ? ', and more' : ''}). `
+      + 'Captions are shown with the speaker name, so these appear without one.',
+      'caption-no-character'));
+  }
+
   const withoutPicture = clips.filter((c) =>
     !c.image && !findFile(files, c.base, IMAGE_EXTS)).length;
   if (withoutPicture && !fillerImage) {

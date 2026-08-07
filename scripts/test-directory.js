@@ -318,6 +318,37 @@ console.log('\nIcons, and the swap they are meant to stop');
       === 'b'.repeat(64));
 }
 
+console.log('\nBans, and the ones that have run out');
+{
+  const { banStatus } = require('../src/main/directory');
+  const now = Date.parse('2026-08-10T00:00:00Z');
+  const mod = {
+    banned: [
+      'forever',
+      { who: 'temp', until: '2026-08-20T00:00:00Z' },
+      { who: 'lapsed', until: '2026-08-01T00:00:00Z' },
+      { who: 'nonsense', until: 'whenever' },
+    ],
+  };
+
+  check('a plain handle is a permanent ban',
+    banStatus(mod, 'forever', now).banned && banStatus(mod, 'forever', now).until === null,
+    'the old shape has to keep working, or every existing ban lifts on upgrade');
+  check('a dated ban holds until its date',
+    banStatus(mod, 'temp', now).banned === true);
+  check('and says when it ends', banStatus(mod, 'temp', now).until === '2026-08-20T00:00:00Z');
+  check('one that has run out is not a ban',
+    banStatus(mod, 'lapsed', now).banned === false,
+    'expiry is read here, so a ban lifts without anything having to run');
+  check('an unreadable date is treated as permanent',
+    banStatus(mod, 'nonsense', now).banned === true,
+    'erring the other way would let somebody publish who was told they could not');
+  check('anybody else is not banned', banStatus(mod, 'stranger', now).banned === false);
+  check('it is case insensitive, like every other handle here',
+    banStatus(mod, 'FOREVER', now).banned === true);
+  check('an empty list bans nobody', banStatus({}, 'anyone', now).banned === false);
+}
+
 console.log('\nUnlisting has to survive being validated');
 {
   const hidden = validateIndex({ packs: [{ ...good(), listed: false }] });

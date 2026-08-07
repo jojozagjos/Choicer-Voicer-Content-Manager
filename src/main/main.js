@@ -3179,6 +3179,44 @@ function registerReviewIpc() {
   });
 
   /**
+   * Blocks an account, with no report in front of it.
+   *
+   * Reports are the usual way this happens and not the only one. Something can
+   * be noticed directly, and requiring a report to exist first would mean
+   * inventing one to act on what you already know.
+   */
+  ipcMain.handle('review:ban', async (_e, { author, reason, forDuration }) => {
+    const token = tokenOrNull();
+    if (!token) return { ok: false, error: 'Not signed in to GitHub.' };
+    if (!author) return { ok: false, error: 'No account was named.' };
+    try {
+      await review.banAuthor(token, DIRECTORY_REPO, author, reason, { forDuration });
+      return { ok: true, banned: author };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  /**
+   * Lifts a ban.
+   *
+   * Its own handler rather than another branch of deciding a report, because
+   * unbanning is not a report outcome: it usually happens long afterwards, on
+   * an account whose report was settled and closed months ago.
+   */
+  ipcMain.handle('review:unban', async (_e, { author, reason }) => {
+    const token = tokenOrNull();
+    if (!token) return { ok: false, error: 'Not signed in to GitHub.' };
+    if (!author) return { ok: false, error: 'No account was named.' };
+    try {
+      await review.banAuthor(token, DIRECTORY_REPO, author, reason, { lift: true });
+      return { ok: true, lifted: author };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  /**
    * Settles a report.
    *
    * Three outcomes, and none of them is about approving anything: hide the pack
@@ -3186,7 +3224,7 @@ function registerReviewIpc() {
    * there was nothing in it. Each says why on the issue before closing it, so
    * whoever reported it can see it was read.
    */
-  ipcMain.handle('review:decide', async (_e, { number, decision, reason, packId, author }) => {
+  ipcMain.handle('review:decide', async (_e, { number, decision, reason, packId, author, forDuration }) => {
     const token = tokenOrNull();
     if (!token) return { ok: false, error: 'Not signed in to GitHub.' };
 
@@ -3199,9 +3237,12 @@ function registerReviewIpc() {
       } else if (decision === 'ban') {
         if (!author) return { ok: false, error: 'That report does not name an account.' };
         if (packId) await review.setListed(token, DIRECTORY_REPO, packId, false).catch(() => {});
-        await review.banAuthor(token, DIRECTORY_REPO, author, reason);
+        await review.banAuthor(token, DIRECTORY_REPO, author, reason, { forDuration });
+        const how = forDuration
+          ? `blocked from publishing for ${forDuration}`
+          : 'blocked from publishing';
         await review.comment(token, DIRECTORY_REPO, number,
-          `Taken down, and the account blocked from publishing.\n\n${reason}`);
+          `Taken down, and the account ${how}.\n\n${reason}`);
       } else {
         await review.comment(token, DIRECTORY_REPO, number,
           `Closed with no action taken.\n\n${reason}`);

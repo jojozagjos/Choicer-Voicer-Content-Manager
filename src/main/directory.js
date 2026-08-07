@@ -529,6 +529,43 @@ function validateRecord(input, { fromIndex = false } = {}) {
 }
 
 /**
+ * Whether an account is banned, and until when.
+ *
+ * A ban is either a plain handle, which means forever, or `{ who, until }`
+ * where `until` is an ISO date. Both shapes live in the same list so that the
+ * bans written before timed ones existed keep working without being migrated.
+ *
+ * Expiry is decided here, when the question is asked, rather than by something
+ * that runs and clears the list. A ban that only lifts when a scheduled job
+ * fires is a ban that outlives its own deadline whenever that job is late,
+ * broken or disabled, and this project has already been bitten twice by relying
+ * on a workflow firing. Reading the date is exact and needs nothing to happen.
+ *
+ * Returns `{ banned, until }`, where `until` is null for a permanent ban.
+ */
+function banStatus(moderation, handle, now = Date.now()) {
+  const list = (moderation && Array.isArray(moderation.banned)) ? moderation.banned : [];
+  const wanted = String(handle || '').toLowerCase();
+
+  for (const entry of list) {
+    const who = typeof entry === 'string' ? entry : (entry && entry.who);
+    if (String(who || '').toLowerCase() !== wanted) continue;
+
+    const until = typeof entry === 'string' ? null : (entry && entry.until) || null;
+    if (!until) return { banned: true, until: null };
+
+    const ends = Date.parse(until);
+    // An unreadable date is treated as permanent rather than as no ban at all.
+    // Getting this wrong in the lenient direction lets somebody publish who was
+    // told they could not, which is worse than the reverse and harder to spot.
+    if (!Number.isFinite(ends)) return { banned: true, until: null };
+    if (ends > now) return { banned: true, until };
+  }
+
+  return { banned: false, until: null };
+}
+
+/**
  * Whether an author may add one more listing.
  *
  * Replacing a pack they already have listed is always allowed: that is an
@@ -722,6 +759,7 @@ module.exports = {
   // workflow fetches this file from here and uses it when a submission arrives,
   // which is the only place the limit can be enforced now that listing happens
   // without anybody in the app pressing anything.
+  banStatus,
   roomForAnother,
   validateRecord,
   validateIndex,

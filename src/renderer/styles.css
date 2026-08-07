@@ -3859,3 +3859,6 @@ input[type="range"]::-webkit-slider-thumb {
   color: var(--muted);
 }
 .mod-report:hover:not(:disabled) { color: var(--warn, #d29922); border-color: var(--warn, #d29922); }
+
+/* Two actions beside Open on GitHub on a publisher page. */
+.admin-head-actions { display: flex; gap: 8px; flex: none; flex-wrap: wrap; }

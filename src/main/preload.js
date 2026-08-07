@@ -127,8 +127,12 @@ contextBridge.exposeInMainWorld('api', {
     status: () => ipcRenderer.invoke('review:status'),
     queue: () => ipcRenderer.invoke('review:queue'),
     setListed: (packId, listed) => ipcRenderer.invoke('review:setListed', { packId, listed }),
-    decide: (number, decision, reason, { packId, author } = {}) =>
-      ipcRenderer.invoke('review:decide', { number, decision, reason, packId, author }),
+    decide: (number, decision, reason, { packId, author, forDuration } = {}) =>
+      ipcRenderer.invoke('review:decide', { number, decision, reason, packId, author, forDuration }),
+    // Blocking and unblocking directly, with no report in front of it.
+    ban: (author, reason, forDuration) =>
+      ipcRenderer.invoke('review:ban', { author, reason, forDuration }),
+    unban: (author, reason) => ipcRenderer.invoke('review:unban', { author, reason }),
   },
 
   media: {

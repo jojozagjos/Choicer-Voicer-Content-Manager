@@ -1281,7 +1281,11 @@ function showAdminPublisher(who) {
           first published ${when(who.first)} · last ${when(who.latest)}
         </p>
       </div>
-      <button class="btn btn-small" id="admin-open-profile">Open on GitHub</button>
+      <div class="admin-head-actions">
+        <button class="btn btn-small" id="admin-open-profile">Open on GitHub</button>
+        <button class="btn btn-small btn-danger" id="admin-ban-author">Ban</button>
+        <button class="btn btn-small" id="admin-unban-author">Lift a ban</button>
+      </div>
     </header>
 
     ${who.hidden ? `<p class="admin-warn">${who.hidden} of their packs
@@ -1310,6 +1314,92 @@ function showAdminPublisher(who) {
 
   el.adminMain.querySelector('#admin-open-profile').addEventListener('click',
     () => window.api.shell.openExternal(`https://github.com/${who.handle}`));
+
+  el.adminMain.querySelector('#admin-ban-author')
+    .addEventListener('click', () => banFromAdmin(who.handle));
+  el.adminMain.querySelector('#admin-unban-author')
+    .addEventListener('click', () => unbanFromAdmin(who.handle));
+}
+
+/**
+ * Blocks an account from the publisher page, with no report in front of it.
+ *
+ * Reports are the usual way in, and not the only one. Something can be noticed
+ * without anybody having filed anything, and having to invent a report first in
+ * order to act on it is the sort of friction that ends with people editing the
+ * moderation file by hand.
+ */
+async function banFromAdmin(handle) {
+  const answers = await askForm({
+    title: `Ban @${handle}?`,
+    detail: 'They cannot publish anything while the ban lasts, and everything of theirs that '
+      + 'is listed comes off the list.\n\n'
+      + 'Their packs stay off the list after the ban lifts, so anything to be put back has to '
+      + 'be restored one at a time. That is deliberate: a ban ending is not the same as '
+      + 'agreeing the packs were fine.',
+    mark: '⨂',
+    buttons: ['Ban them', 'Cancel'],
+    fields: [
+      {
+        key: 'reason',
+        label: 'Why (this is on a public issue)',
+        value: '',
+        placeholder: 'What they did',
+        multiline: true,
+        max: 2000,
+        required: true,
+      },
+      {
+        key: 'howLong',
+        label: 'For how long',
+        value: '',
+        options: [
+          ['', 'Permanently'],
+          ['7d', 'A week'],
+          ['30d', 'A month'],
+          ['90d', 'Three months'],
+          ['1y', 'A year'],
+        ],
+      },
+    ],
+  });
+  if (answers === null) return;
+
+  const done = await window.api.review.ban(handle, answers.reason, answers.howLong)
+    .catch((err) => ({ ok: false, error: err.message }));
+
+  if (!done.ok) {
+    toast(`Could not do that: ${done.error}`, 'error', 9000);
+    return;
+  }
+  toast(`@${handle} is blocked${answers.howLong ? ` for ${answers.howLong}` : ' permanently'}.`,
+    'ok');
+  directoryChanged();
+  await refreshAdminPublishers();
+}
+
+/** Lifts a ban, which is a separate act from settling whatever caused it. */
+async function unbanFromAdmin(handle) {
+  const reason = await askText({
+    title: `Lift the ban on @${handle}?`,
+    detail: 'They can publish again from now on. Packs of theirs that were taken down stay '
+      + 'off the list until each one is restored.\n\n'
+      + 'What you write is said on a public issue, so it is worth saying why.',
+    placeholder: 'Why the ban is being lifted',
+    buttons: ['Lift it', 'Cancel'],
+    mark: '✓',
+    required: true,
+  });
+  if (reason === null) return;
+
+  const done = await window.api.review.unban(handle, reason);
+  if (!done.ok) {
+    toast(`Could not do that: ${done.error}`, 'error', 9000);
+    return;
+  }
+  toast(`@${handle} can publish again.`, 'ok');
+  directoryChanged();
+  await refreshAdminPublishers();
 }
 
 /**
@@ -1563,18 +1653,59 @@ async function decideReview(item, decision, pack) {
     },
   }[decision];
 
-  const reason = await askText({
-    ...asked,
-    buttons: [asked.go, 'Cancel'],
-    // Every one of these is somebody being told something. None of them should
-    // arrive with no explanation attached.
-    required: true,
-  });
-  if (reason === null) return;
+  // Banning asks for how long as well as why. Everything else is one field, so
+  // the plain text box is still the right shape for those.
+  let reason;
+  let forDuration = '';
+
+  if (decision === 'ban') {
+    const answers = await askForm({
+      title: asked.title,
+      detail: asked.detail,
+      mark: asked.mark,
+      buttons: [asked.go, 'Cancel'],
+      fields: [
+        {
+          key: 'reason',
+          label: 'Why (this is on a public issue)',
+          value: '',
+          placeholder: 'What they did',
+          multiline: true,
+          max: 2000,
+          required: true,
+        },
+        {
+          key: 'howLong',
+          label: 'For how long',
+          value: '',
+          options: [
+            ['', 'Permanently'],
+            ['7d', 'A week'],
+            ['30d', 'A month'],
+            ['90d', 'Three months'],
+            ['1y', 'A year'],
+          ],
+        },
+      ],
+    });
+    if (answers === null) return;
+    reason = answers.reason;
+    forDuration = answers.howLong;
+  } else {
+    reason = await askText({
+      ...asked,
+      buttons: [asked.go, 'Cancel'],
+      // Every one of these is somebody being told something. None of them
+      // should arrive with no explanation attached.
+      required: true,
+    });
+    if (reason === null) return;
+  }
 
   const said = await window.api.review.decide(item.number, decision, reason, {
     packId: pack ? pack.id : null,
     author: pack ? pack.author : null,
+    forDuration,
   });
   if (!said.ok) {
     toast(`Could not do that: ${said.error}`, 'error', 10000);
@@ -1583,7 +1714,8 @@ async function decideReview(item, decision, pack) {
 
   toast({
     hide: 'Taken down.',
-    ban: `Taken down, and ${pack ? pack.author : 'that account'} is blocked from publishing.`,
+    ban: `Taken down, and ${pack ? pack.author : 'that account'} is blocked`
+      + `${forDuration ? ` for ${forDuration}` : ' permanently'}.`,
     dismiss: 'Report closed.',
   }[decision], 'ok');
 

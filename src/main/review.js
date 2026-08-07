@@ -25,6 +25,7 @@
  */
 
 const github = require('./github');
+const directory = require('./directory');
 
 /**
  * Whether this account may moderate, and what it is allowed to do.
@@ -146,23 +147,32 @@ async function report(token, repo, { packId, packTitle, author, reason }) {
  * and leaves the same trail rather than being a second private route to the
  * same state.
  */
-async function banAuthor(token, repo, author, reason) {
+async function banAuthor(token, repo, author, reason, { forDuration = '', lift = false } = {}) {
   if (!author) throw new Error('There is nobody named to ban.');
+
+  // `/ban name 7d` is a week, `/ban name` is forever, `/unban name` lifts one.
+  // The command is what the directory actually acts on, so it is written the
+  // same way a moderator would type it on GitHub rather than through a second
+  // private route that would have to be kept in step.
+  const command = lift
+    ? `/unban ${author}`
+    : `/ban ${author}${forDuration ? ` ${forDuration}` : ''}`;
 
   const issue = await github.request(`/repos/${repo}/issues`, {
     token,
     method: 'POST',
     body: JSON.stringify({
-      title: `Ban: ${author}`,
-      body: reason ? `/ban ${author}\n\n${reason}` : `/ban ${author}`,
+      title: lift ? `Unban: ${author}` : `Ban: ${author}`,
+      body: reason ? `${command}\n\n${reason}` : command,
       labels: ['moderation'],
     }),
   });
   // A new issue's body does not fire issue_comment, so the command is repeated
   // as a comment, which does.
-  await comment(token, repo, issue.number, `/ban ${author}`);
+  await comment(token, repo, issue.number, command);
 
-  return { ok: true, banned: author, issue: issue.number };
+  return { ok: true, banned: lift ? null : author, lifted: lift ? author : null,
+    issue: issue.number };
 }
 
 
@@ -264,7 +274,18 @@ async function standingOf(repo, login) {
     const state = await response.json();
     const has = (key) => (Array.isArray(state[key]) ? state[key] : [])
       .some((v) => String(v).toLowerCase() === String(login).toLowerCase());
-    return { known: true, banned: has('banned'), trusted: has('trusted') };
+
+    // Through the shared rule, so a ban that has run out reads as no ban here
+    // as well as at the point of submitting. Two places deciding that
+    // separately is how somebody ends up told they are blocked by one screen
+    // and allowed to publish by another.
+    const ban = directory.banStatus(state, login);
+    return {
+      known: true,
+      banned: ban.banned,
+      bannedUntil: ban.until,
+      trusted: has('trusted'),
+    };
   } catch {
     return { known: false };
   }

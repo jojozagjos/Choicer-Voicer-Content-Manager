@@ -3544,21 +3544,7 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* ===========================================================================
    Mods
-   ===========================================================================
-
-   Which view is open leads the header bar. It used to sit on the right, past
-   the search box, which put the control that decides what the page is showing
-   after the controls that act on it. */
-
-.mods-head { flex-wrap: wrap; gap: 12px; }
-/* Sits with the title, not pinned to the edge, so the two read as one
-   thing. The title keeps only the width it needs rather than stretching and
-   pushing this away from it. */
-.mods-head .mods-nav { flex: none; }
-.mods-head-title { min-width: 0; flex: 0 1 auto; }
-.mods-head-title h2 { margin: 0 0 2px; }
-.mods-head-title p { margin: 0; }
-.mods-head .content-head-actions { margin-left: auto; }
+   =========================================================================== */
 
 /* The pictures. Sized here rather than by whatever the file happens to be, so
    a glyph swapped for a different drawing does not resize the thing holding

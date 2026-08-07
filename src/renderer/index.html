@@ -247,21 +247,17 @@
     <aside class="content-types" id="mods-types"></aside>
 
     <div class="content-main">
-      <header class="content-head mods-head">
-        <div class="mods-head-title">
+      <header class="content-head">
+        <div>
           <h2 id="mods-title">Mods</h2>
           <p class="muted small" id="mods-subtitle"></p>
         </div>
-        <!-- Beside the title rather than away at one edge. It says what the
-             title is describing, so the two read as one thing; the search box
-             and refresh act on whatever it has chosen and sit apart, at the
-             other end. -->
-        <div class="segmented mods-nav" role="group" aria-label="What to show">
-          <button type="button" id="btn-mods-browse" class="on">Browse</button>
-          <button type="button" id="btn-mods-publishers">Publishers</button>
-          <button type="button" id="btn-mods-inbox">Your submissions</button>
-        </div>
         <div class="content-head-actions">
+          <div class="segmented" role="group" aria-label="What to show">
+            <button type="button" id="btn-mods-browse" class="on">Browse</button>
+            <button type="button" id="btn-mods-publishers">Publishers</button>
+            <button type="button" id="btn-mods-inbox">Your submissions</button>
+          </div>
           <input id="mods-search" class="input content-search" type="search"
                  placeholder="Search packs…" autocomplete="off" />
           <button id="btn-mods-refresh" class="btn btn-small">Refresh</button>

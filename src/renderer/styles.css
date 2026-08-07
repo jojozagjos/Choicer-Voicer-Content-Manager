@@ -1353,7 +1353,11 @@ input[type="range"]::-webkit-slider-thumb {
 .help-tab:hover { color: var(--text); background: var(--hover); }
 .help-tab.on { background: var(--accent-dim); color: var(--accent-ink); }
 
-.help-panel { max-height: 46vh; overflow-y: auto; padding-right: 4px; }
+/* A fixed height, not a maximum. With a maximum the dialog took the height of
+   whichever panel was open, so moving between Help tabs resized the window
+   under the pointer and the tab strip moved away from where it had just been
+   clicked. Every panel now occupies the same box and scrolls inside it. */
+.help-panel { height: 46vh; overflow-y: auto; padding-right: 4px; }
 .help-panel p + p, .help-panel p + ul, .help-panel p + ol { margin-top: 10px; }
 
 .steps, .bullets { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 7px; }
@@ -2659,7 +2663,20 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* Working a pack is a real decision, so its buttons are not tiny. */
 .detail-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.detail-actions .btn { padding: 9px 16px; font-size: 13px; font-weight: 650; }
+
+/* Each button takes the width its own label needs.
+   An earlier rule stretches these to equal widths, which was survivable while
+   they were plain text and stopped being so once each gained a picture: the
+   share of the row left for the words got smaller than the words, and every
+   label broke across two lines at a different place. Wrapping now happens
+   between buttons, where it belongs, rather than inside them. */
+.detail-actions .btn {
+  flex: 0 1 auto;
+  padding: 9px 15px;
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+}
 
 /* Editing the timeline, spelled out rather than in one long sentence. */
 .editor-hint {
@@ -2888,19 +2905,47 @@ input[type="range"]::-webkit-slider-thumb {
    Shares the Content layout so the two tabs feel like the same app: same rail
    width, same grid, same cards. Only what differs is written here. */
 
+/* A bar of its own, then the rail and the pane under it. */
 .mods-view {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: 210px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
 }
+
+.mods-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-raised);
+}
+/* The two controls that act on the chosen view sit apart from the choosing. */
+.mods-bar .content-search { margin-left: auto; max-width: 260px; }
+
+.mods-body {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  min-height: 0;
+}
+.mods-body:has(> .content-types[hidden]) { grid-template-columns: minmax(0, 1fr); }
+
+/* Pictures only, so the rail is something to glance at rather than read. */
+.type-rail { padding: 10px 8px; }
+.type-rail .type-btn {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  padding: 10px 0;
+  gap: 0;
+}
+.type-rail .type-icon-wrap { width: 26px; height: 26px; }
 
 /* Before a directory exists there are no categories worth showing, and the rail
    is hidden. Without this the column stays reserved and the header sits jammed
    into the right-hand two thirds of an otherwise empty tab. */
-.mods-view:has(> .content-types[hidden]) {
-  grid-template-columns: minmax(0, 1fr);
-}
+/* Superseded: the rail is inside .mods-body now, which carries this rule. */
 
 .mods-empty {
   grid-column: 1 / -1;
@@ -3279,13 +3324,13 @@ input[type="range"]::-webkit-slider-thumb {
   margin: 0;
 }
 
-/* Your submissions: a single readable column. Each row can carry a paragraph of
-   somebody's explanation, and prose set across a 1400px window is unreadable
-   however much space there is. Capped and centred rather than stretched. */
+/* Your submissions: the full width, laid out like Browse. The list of things
+   goes down one side and whichever is open fills the middle, so it reads as
+   the same tab rather than as a separate page that happens to live here. */
 .mods-view[data-show="inbox"] #mods-grid {
   display: block;
-  max-width: 860px;
-  margin: 0 auto;
+  max-width: none;
+  margin: 0;
   padding-bottom: 24px;
 }
 .mods-view[data-show="inbox"] .mods-empty,
@@ -3578,8 +3623,8 @@ input[type="range"]::-webkit-slider-thumb {
 
 .inbox-split {
   display: grid;
-  grid-template-columns: minmax(230px, 300px) minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 18px;
   align-items: start;
   padding-bottom: 24px;
 }
@@ -3698,3 +3743,23 @@ input[type="range"]::-webkit-slider-thumb {
   align-items: center;
   gap: 8px;
 }
+
+/* A picture on a button that has a label. Sized to the text beside it and
+   inverted with the theme like the pack glyphs, since these are the same black
+   line art on transparent. */
+.btn-icon-glyph {
+  /* Matched to the cap height of the label beside it, so it reads as part of
+     the same line rather than as a picture the text is standing next to. */
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  flex: none;
+}
+.btn:has(.btn-icon-glyph) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+:root[data-theme="dark"] .btn-icon-glyph { filter: invert(1); }

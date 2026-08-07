@@ -815,6 +815,21 @@ function typeIcon(type, className = '') {
 /** Where the pictures the app ships live, relative to the page. */
 const ASSETS = '../../assets';
 
+/**
+ * The picture on an action button.
+ *
+ * Separate from `typeIcon` because these say what a button does rather than
+ * what a pack is, and because there is no falling back: a name with no drawing
+ * behind it should show nothing rather than a pack glyph that means something
+ * else entirely.
+ */
+const ACTION_GLYPHS = new Set(['edit', 'delete', 'folder', 'export']);
+
+function actionIcon(name) {
+  if (!ACTION_GLYPHS.has(name)) return '';
+  return `<img class="btn-icon-glyph" src="${ASSETS}/glyphs/${name}.png" alt="" />`;
+}
+
 // Types whose pack is a person on screen. When one of these has no picture,
 // the game stands a cardboard cutout in its place, so the app shows the same
 // thing rather than a generic box.
@@ -1989,7 +2004,17 @@ function drawInbox() {
       item,
     });
   }
+  // A pack that has a submission does not also get an upload row.
+  //
+  // They are the same pack: publishing puts the file on the account and opens
+  // the submission that points at it. Showing both listed it twice, once as
+  // "Listed" and once as "Uploaded", which reads as two things when it is one.
+  // The submission is the one kept, because it carries the outcome; the file is
+  // reachable from its detail.
+  const spokenFor = new Set(rows.map((r) => r.item && r.item.id).filter(Boolean));
+
   for (const file of files) {
+    if (file.packId && spokenFor.has(file.packId)) continue;
     if (!matches(`${file.title} ${file.tag}`)) continue;
     rows.push({
       key: `f${file.id}`,
@@ -2073,6 +2098,11 @@ function drawInboxDetail() {
 
   if (row.kind === 'submission') {
     const item = row.item;
+    // The upload this submission points at, folded in rather than listed on its
+    // own. Matched on the pack id, which is what the release is tagged with.
+    const mine = ((state.releases && state.releases.ok && state.releases.releases) || [])
+      .find((f) => f.packId && f.packId === item.id) || null;
+
     holder.innerHTML = `
       <header class="inbox-detail-head">
         <div>
@@ -2088,11 +2118,27 @@ function drawInboxDetail() {
       ${item.reason
     ? `<p class="inbox-reason">${escapeHtml(item.reason)}</p>`
     : '<p class="inbox-reason muted">Nothing has been said on it yet.</p>'}
+      ${mine ? `<h4 class="inbox-h">The file it points at</h4>
+      <div class="inbox-files">
+        ${mine.assets.map((a) => `<div><span>${escapeHtml(a.name)}</span>
+          <span class="muted small">${escapeHtml(formatBytes(a.bytes))}</span></div>`).join('')}
+      </div>` : ''}
+
       <div class="inbox-detail-foot">
+        ${mine ? '<button class="btn btn-small btn-danger" id="inbox-delete-file">'
+    + 'Delete the upload</button>' : ''}
         <button class="btn btn-small" id="inbox-open-github">Open on GitHub</button>
       </div>`;
     holder.querySelector('#inbox-open-github')
       .addEventListener('click', () => openOutside(item.url, 'this submission on GitHub'));
+
+    // The upload no longer has a row of its own, so the one thing that could
+    // only be done from it lives here instead.
+    const remove = holder.querySelector('#inbox-delete-file');
+    if (remove) {
+      remove.addEventListener('click', () => removeRelease(mine,
+        Boolean(state.inboxListed && state.inboxListed.has(item.id))));
+    }
     return;
   }
 
@@ -2165,23 +2211,27 @@ async function refreshMods({ force = false } = {}) {
   renderMods();
 }
 
+/**
+ * The kinds of pack, as a column of pictures.
+ *
+ * The name and the count are gone from the button. Seven rows each carrying a
+ * word and a number made a rail that had to be read down before anything could
+ * be picked, and the number was answering a question nobody asked: how many
+ * chatter packs exist is not what somebody choosing between them wants to know.
+ * The name is still there for anyone who needs it, as the tooltip and as the
+ * label a screen reader announces, and the heading says which one is open.
+ */
 function renderModTypes() {
   el.modsTypes.innerHTML = '';
-  const packs = (state.mods && state.mods.packs) || [];
 
   for (const type of MOD_TYPES) {
-    const count = type.id === 'all'
-      ? packs.length
-      : packs.filter((p) => p.type === type.id).length;
-
     const button = document.createElement('button');
     button.className = 'type-btn';
     button.dataset.type = type.id;
+    button.title = type.label;
+    button.setAttribute('aria-label', type.label);
     button.classList.toggle('on', type.id === (state.modsType || 'all'));
-    button.innerHTML = `
-      <span class="type-icon-wrap">${typeIcon(type.id)}</span>
-      <span>${escapeHtml(type.label)}</span>
-      <span class="count">${count}</span>`;
+    button.innerHTML = `<span class="type-icon-wrap">${typeIcon(type.id)}</span>`;
     button.addEventListener('click', () => {
       state.modsType = type.id;
       renderModTypes();
@@ -3215,16 +3265,16 @@ function renderContentDetail(pack) {
 
     <div class="detail-actions">
       <button type="button" class="btn btn-primary" id="btn-detail-edit"
-              ${converting ? 'disabled' : ''}>Edit this pack</button>
+              ${converting ? 'disabled' : ''}>${actionIcon('edit')}Edit this pack</button>
       <button type="button" class="btn" id="btn-detail-share"
               ${converting ? 'disabled' : ''}
               title="${pack.iconPath || pack.iconUrl
     ? 'Package this pack to send or publish'
     : 'This pack needs an icon first. Set one in Edit this pack, under Pack details.'
-}">Share this pack</button>
-      <button type="button" class="btn" id="btn-detail-open">Open folder</button>
+}">${actionIcon('export')}Share this pack</button>
+      <button type="button" class="btn" id="btn-detail-open">${actionIcon('folder')}Open folder</button>
       <button type="button" class="btn btn-danger" id="btn-detail-delete"
-              ${converting ? 'disabled' : ''}>Delete</button>
+              ${converting ? 'disabled' : ''}>${actionIcon('delete')}Delete</button>
     </div>`;
 
   el.contentDetail.querySelector('#btn-detail-edit')

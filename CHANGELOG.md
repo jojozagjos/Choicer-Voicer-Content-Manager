@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.3
+## 1.1.0
 
 Sharing packs, and working with a pack that has been recorded several times over.
 

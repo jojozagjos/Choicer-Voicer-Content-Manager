@@ -142,7 +142,7 @@
           </label>
           <button id="btn-session-delete" class="btn btn-small btn-danger"
                   title="Delete this recording session">✕</button>
-          <button id="btn-export" class="btn btn-primary">Export video…</button>
+          <button id="btn-export" class="btn btn-primary"><img class="btn-icon-glyph" src="../../assets/glyphs/export.png" alt="" />Export video…</button>
         </div>
       </div>
 
@@ -244,27 +244,34 @@
   <!-- Packs other people have shared. Browsing and installing never ask for an
        account; only publishing does. -->
   <section class="mods-view" id="mods-view" hidden>
-    <aside class="content-types" id="mods-types"></aside>
+    <!-- A bar of its own under the main tabs. Which view is open, and the two
+         controls that act on it, belong to the whole tab rather than to the
+         pane on the right, so they span the width instead of sharing a row
+         with a title that changes underneath them. -->
+    <header class="mods-bar">
+      <div class="segmented" role="group" aria-label="What to show">
+        <button type="button" id="btn-mods-browse" class="on">Browse</button>
+        <button type="button" id="btn-mods-publishers">Publishers</button>
+        <button type="button" id="btn-mods-inbox">Your submissions</button>
+      </div>
+      <input id="mods-search" class="input content-search" type="search"
+             placeholder="Search packs…" autocomplete="off" />
+      <button id="btn-mods-refresh" class="btn btn-small">Refresh</button>
+    </header>
 
-    <div class="content-main">
-      <header class="content-head">
-        <div>
-          <h2 id="mods-title">Mods</h2>
-          <p class="muted small" id="mods-subtitle"></p>
-        </div>
-        <div class="content-head-actions">
-          <div class="segmented" role="group" aria-label="What to show">
-            <button type="button" id="btn-mods-browse" class="on">Browse</button>
-            <button type="button" id="btn-mods-publishers">Publishers</button>
-            <button type="button" id="btn-mods-inbox">Your submissions</button>
+    <div class="mods-body">
+      <aside class="content-types type-rail" id="mods-types"></aside>
+
+      <div class="content-main">
+        <header class="content-head">
+          <div>
+            <h2 id="mods-title">Mods</h2>
+            <p class="muted small" id="mods-subtitle"></p>
           </div>
-          <input id="mods-search" class="input content-search" type="search"
-                 placeholder="Search packs…" autocomplete="off" />
-          <button id="btn-mods-refresh" class="btn btn-small">Refresh</button>
-        </div>
-      </header>
+        </header>
 
-      <div id="mods-grid" class="content-grid"></div>
+        <div id="mods-grid" class="content-grid"></div>
+      </div>
     </div>
   </section>
 

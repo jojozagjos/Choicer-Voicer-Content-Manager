@@ -44,11 +44,12 @@ const ignore = [
   /^\/\.claude($|\/)/,
   /^\/scripts($|\/)/,
   /^\/docs($|\/)/,
-  // assets/ ships: the app draws its own icon and the character placeholder
-  // from there. Only the inputs that made the .ico are left out, since the
-  // packager bakes that into the exe and nothing reads it at runtime.
-  /^\/assets\/icon-source\.png$/,
-  /^\/assets\/icon\.ico$/,
+  // assets/ ships: the app draws its own icon, the character placeholder and
+  // the pack type icons from there. Only the inputs that made the .ico are left
+  // out, since the packager bakes that into the exe and nothing reads it at
+  // runtime.
+  /^\/assets\/app\/icon-source\.png$/,
+  /^\/assets\/app\/icon\.ico$/,
   /^\/build($|\/)/,
   // docs/ is already excluded above, which covers the notices file living
   // there now; it is copied into licenses/ by copyLicenses instead.
@@ -220,7 +221,7 @@ async function main() {
       unpack: '**/node_modules/{ffmpeg-static,ffprobe-static}/**',
     },
     ignore,
-    icon: path.join(ROOT, 'assets', 'icon'),
+    icon: path.join(ROOT, 'assets', 'app', 'icon'),
     // Windows shows these in the file properties and in SmartScreen prompts,
     // which for an unsigned app is often the first thing anyone reads about
     // it. Saying plainly that it is a fan tool belongs there too.

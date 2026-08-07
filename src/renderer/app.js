@@ -791,10 +791,29 @@ const TAGLINES = {
   mods: 'Packs other people have shared, ready to install.',
 };
 
+/**
+ * The picture for each kind of pack.
+ *
+ * Drawn images rather than emoji. Emoji are rendered by whatever font the
+ * system happens to supply, so they arrive at different sizes and weights from
+ * each other, in colours nothing else in the app uses, and they change between
+ * machines. A set of matching images is the same everywhere and can be sized
+ * and tinted like anything else on the page.
+ */
 const TYPE_ICONS = {
-  voice: '🎬', player: '🧍', host: '🎤', judges: '⚖️',
-  studio: '🏛️', menu: '🖼️', chatter: '💬',
+  voice: 'video', player: 'players', host: 'host', judges: 'judge',
+  studio: 'studios', menu: 'menu', chatter: 'chatter',
 };
+
+/** One of those as an `<img>`, falling back to the neutral mark. */
+function typeIcon(type, className = '') {
+  const name = TYPE_ICONS[type] || 'star';
+  return `<img class="type-icon${className ? ` ${className}` : ''}" `
+    + `src="${ASSETS}/icons/${name}.png" alt="" />`;
+}
+
+/** Where the pictures the app ships live, relative to the page. */
+const ASSETS = '../../assets';
 
 // Types whose pack is a person on screen. When one of these has no picture,
 // the game stands a cardboard cutout in its place, so the app shows the same
@@ -826,7 +845,6 @@ async function switchTab(tab) {
   // you are somewhere else in the app.
   if (tab !== 'admin' && state.adminOpen !== null) {
     state.adminOpen = null;
-    window.api.review.close();
   }
 
   // The dub-recording nudge can already be up from an earlier rescan on
@@ -1392,7 +1410,6 @@ function drawAdminQueue(items) {
 /** Opens one queue item, downloading its pack into the sandbox. */
 async function openForReview(item) {
   state.adminOpen = item.number;
-  await window.api.review.close();
   refreshAdminQueue();
 
   // Every item in this queue is a report. Packs are listed by the directory
@@ -1430,7 +1447,7 @@ async function openForReview(item) {
         <span class="muted small">Whatever you choose is said on the report, and it closes.</span>
       </div>
       <div class="admin-decide-buttons">
-        ${named ? '<button class="btn btn-danger" id="admin-hide">✕ Take it down</button>'
+        ${named ? '<button class="btn btn-danger" id="admin-hide">Take it down</button>'
     + '<button class="btn btn-danger" id="admin-ban">⨂ Take down and ban</button>' : ''}
         <button class="btn" id="admin-dismiss">Close, nothing wrong</button>
       </div>
@@ -1744,7 +1761,7 @@ async function showPublisher(author) {
     ? `Publishing since ${escapeHtml(formatWhen(stats.first))}`
     : 'Nothing listed at the moment'}</p>
           <div class="publisher-kinds">${kinds.map(([type, n]) =>
-    `<span class="publisher-kind">${TYPE_ICONS[type] || '📦'} ${escapeHtml(
+    `<span class="publisher-kind">${typeIcon(type)} ${escapeHtml(
       (MOD_TYPES.find((t) => t.id === type) || { label: type }).label)} · ${n}</span>`).join('')}</div>
         </div>
         <div class="publisher-bar">
@@ -1857,13 +1874,75 @@ async function renderInbox() {
 
   state.inbox = said;
   drawInbox();
+
+  // Fetched after the list is already on screen. It is a second round trip to
+  // GitHub and the submissions are the thing somebody opened this for, so it
+  // fills in underneath rather than holding everything up.
+  if (said.ok && said.signedIn) {
+    const files = await window.api.mods.releases().catch((e) => ({ ok: false, error: e.message }));
+    if (state.modsShow !== 'inbox') return;
+    state.releases = files;
+    // Redrawn whole: the uploads are rows in the same list as the
+    // submissions, not a section underneath them.
+    drawInbox();
+  }
+}
+
+
+
+/**
+ * Deletes one uploaded file, after saying plainly what that costs.
+ *
+ * The only thing this app does that cannot be undone, so the warning is not a
+ * formality. A release that something in the directory still points at is the
+ * dangerous case: the listing survives the file and turns into a download that
+ * fails for everybody who tries it, which is worse than either keeping it or
+ * unlisting it properly.
+ */
+async function removeRelease(release, isListed) {
+  const sure = await askConfirm({
+    title: `Delete "${release.title}"?`,
+    detail: `This removes the upload and its tag from your GitHub account for good. `
+      + `${formatBytes(release.bytes)} across ${release.assets.length} `
+      + `file${release.assets.length === 1 ? '' : 's'}, downloaded `
+      + `${formatDownloads(release.downloads)}.\n\n`
+      + (isListed
+        ? 'This pack is listed in the directory right now, and the listing points at this '
+          + 'file. Deleting it leaves a listing that fails to install for everyone who tries. '
+          + 'Take the pack off the list first if that is what you want.\n\n'
+        : 'Nothing in the directory points at this, so nothing else breaks.\n\n')
+      + 'Anyone who already installed the pack keeps it. This cannot be undone.',
+    buttons: ['Delete it', 'Cancel'],
+    mark: '✕',
+    danger: true,
+    cancelIndex: 1,
+  });
+  if (sure !== 0) return;
+
+  const done = await window.api.mods.deleteRelease(release.id, release.tag);
+  if (!done.ok) {
+    toast(`Could not delete it: ${done.error}`, 'error', 9000);
+    return;
+  }
+
+  toast(`Deleted "${release.title}".`, 'ok');
+  state.releases.releases = state.releases.releases.filter((r) => r.id !== release.id);
+  // The row that was open has just been deleted, so the list picks the next one
+  // rather than leaving the detail showing something that is no longer there.
+  state.inboxOpen = null;
+  drawInbox();
 }
 
 /**
  * Draws what was fetched, filtered by whatever is in the search box.
  *
- * Separate from fetching so that typing filters the list instead of asking
- * GitHub again on every keystroke.
+ * A list on one side and one thing at a time on the other.
+ *
+ * It was a stack of expanding rows with the uploaded files tacked on the end,
+ * which meant two unrelated lists sharing a column and a banner of standing
+ * text above both. Submissions and uploads are two views of the same pack, so
+ * they belong in one list, and the detail belongs beside it rather than pushing
+ * everything below it down the page.
  */
 function drawInbox() {
   const said = state.inbox;
@@ -1872,7 +1951,7 @@ function drawInbox() {
   if (!said.ok) {
     el.modsSubtitle.textContent = '';
     el.modsGrid.innerHTML = '<div class="mods-empty"><h3>Could not be read</h3>'
-      + '<p class="muted">' + escapeHtml(said.error) + '</p></div>';
+      + `<p class="muted">${escapeHtml(said.error)}</p></div>`;
     return;
   }
   if (!said.configured || !said.signedIn) {
@@ -1883,130 +1962,176 @@ function drawInbox() {
     return;
   }
 
-  const standing = said.standing || {};
   const items = said.items || [];
+  const files = (state.releases && state.releases.ok && state.releases.releases) || [];
 
-  // How things stand with the directory, as a banner rather than a sentence
-  // buried in the list. It is the first question somebody opening this page has.
-  const stand = standing.banned
-    ? { tone: 'bad',
-      title: 'This account cannot publish',
-      note: 'Packs from this account are not accepted by the directory.' }
-    : { tone: 'ok',
-      title: 'Publishing is open',
-      note: 'Packs are listed as soon as they pass their checks. Nobody approves uploads, '
-        + 'so there is nothing to wait for.' };
+  const banned = (said.standing || {}).banned;
+  el.modsSubtitle.textContent = banned
+    ? `${said.login} · blocked from publishing`
+    : `Signed in as ${said.login}`;
 
-  const counts = { waiting: 0, listed: 0, changes: 0, refused: 0, closed: 0 };
-  for (const item of items) counts[item.outcome] = (counts[item.outcome] || 0) + 1;
-
-  el.modsSubtitle.textContent = 'Signed in as ' + said.login;
-
-  const query = (el.modsSearch.value || '').trim().toLowerCase();
-  const showing = query
-    ? items.filter((i) => (i.title + ' ' + (i.id || '') + ' ' + (i.reason || ''))
-      .toLowerCase().includes(query))
-    : items;
-
-  // What was already known last time this was opened. Anything whose outcome
-  // has moved since then is marked, so a decision made days ago is not just
-  // another row in a list that all looks the same.
+  // What changed since this was last opened, so a decision made days ago is not
+  // just another row in a list that all looks the same.
   const seen = JSON.parse(localStorage.getItem('inboxSeen') || '{}');
-  const nowSeen = {};
-  let changed = 0;
+  const query = (el.modsSearch.value || '').trim().toLowerCase();
+  const matches = (text) => !query || String(text).toLowerCase().includes(query);
+
+  const rows = [];
   for (const item of items) {
-    nowSeen[item.number] = item.outcome;
-    if (seen[item.number] !== undefined && seen[item.number] !== item.outcome) changed++;
+    if (!matches(`${item.title} ${item.id || ''} ${item.reason || ''}`)) continue;
+    rows.push({
+      key: `s${item.number}`,
+      kind: 'submission',
+      title: item.title,
+      state: INBOX_STATES[item.outcome] || INBOX_STATES.closed,
+      when: item.openedAt,
+      changed: seen[item.number] !== undefined && seen[item.number] !== item.outcome,
+      item,
+    });
   }
-
-  const summary = items.length
-    ? '<div class="inbox-summary">'
-      + Object.entries(counts).filter(([, n]) => n > 0).map(([key, n]) => {
-        const shown = INBOX_STATES[key] || INBOX_STATES.closed;
-        return '<span class="inbox-tally is-' + shown.tone + '"><b>' + n + '</b> '
-          + escapeHtml(shown.label.toLowerCase()) + '</span>';
-      }).join('')
-      + '</div>'
-    : '';
-
-  const header = '<header class="inbox-standing is-' + stand.tone + '">'
-    + '<div><b>' + escapeHtml(stand.title) + '</b>'
-    + '<p class="muted small">' + escapeHtml(stand.note) + '</p></div>'
-    + summary
-    + '</header>';
-
-  if (!items.length) {
-    el.modsGrid.innerHTML = header
-      + '<div class="mods-empty"><h3>Nothing submitted yet</h3>'
-      + '<p class="muted">Packs you publish from Content show up here, with what happened '
-      + 'to them and why.</p></div>';
-    return;
-  }
-
-  if (!showing.length) {
-    el.modsGrid.innerHTML = header
-      + '<div class="mods-empty"><h3>Nothing found</h3>'
-      + '<p class="muted">No submission matches that.</p></div>';
-    return;
-  }
-
-  el.modsGrid.innerHTML = header + '<div class="inbox-list">' + showing.map((item) => {
-    const shown = INBOX_STATES[item.outcome] || INBOX_STATES.closed;
-    const isNew = seen[item.number] !== undefined && seen[item.number] !== item.outcome;
-
-    // Opened one at a time. A submission carries a paragraph of explanation and
-    // a record, and showing all of that for every row turns a list of five into
-    // a wall nobody reads. Closed, a row is a title and an outcome; open, it is
-    // everything there is to know about that one.
-    return '<article class="inbox-item' + (isNew ? ' is-changed' : '') + '">'
-      + '<button type="button" class="inbox-open" aria-expanded="false">'
-      + '<span class="inbox-row">'
-      + '<span class="inbox-title">'
-      + (isNew ? '<i class="inbox-dot" title="This changed since you last looked"></i>' : '')
-      + '<b>' + escapeHtml(item.title) + '</b>'
-      + '<span class="inbox-when muted small">Sent ' + escapeHtml(formatWhen(item.openedAt))
-      + (item.id ? ' · ' + escapeHtml(item.id) : '') + '</span>'
-      + '</span>'
-      + '<span class="inbox-right">'
-      + '<span class="inbox-state is-' + shown.tone + '">' + escapeHtml(shown.label) + '</span>'
-      + '<span class="inbox-chevron" aria-hidden="true">▾</span>'
-      + '</span>'
-      + '</span>'
-      + waitNoteFor(item)
-      + '</button>'
-      + '<div class="inbox-body" hidden>'
-      + (item.reason
-        ? '<p class="inbox-reason">' + escapeHtml(item.reason) + '</p>'
-        : '<p class="inbox-reason muted">Nothing has been said on it yet.</p>')
-      + '<div class="inbox-foot">'
-      + '<button class="btn btn-small" data-url="' + escapeHtml(item.url) + '">'
-      + 'Open on GitHub</button>'
-      + '</div></div></article>';
-  }).join('') + '</div>';
-
-  for (const row of el.modsGrid.querySelectorAll('.inbox-item')) {
-    const opener = row.querySelector('.inbox-open');
-    const holder = row.querySelector('.inbox-body');
-    opener.addEventListener('click', () => {
-      const opening = holder.hidden;
-      holder.hidden = !opening;
-      opener.setAttribute('aria-expanded', String(opening));
-      row.classList.toggle('is-open', opening);
+  for (const file of files) {
+    if (!matches(`${file.title} ${file.tag}`)) continue;
+    rows.push({
+      key: `f${file.id}`,
+      kind: 'file',
+      title: file.title,
+      state: { label: 'Uploaded', tone: 'muted' },
+      when: file.published,
+      changed: false,
+      file,
     });
   }
 
-  // Written after drawing, so the marks survive until they have been seen.
-  // Only when nothing is filtered out, or a search would mark rows as seen that
-  // were never on screen.
-  if (!query) localStorage.setItem('inboxSeen', JSON.stringify(nowSeen));
-  if (changed) {
-    el.modsSubtitle.textContent = 'Signed in as ' + said.login + ' · '
-      + changed + ' update' + (changed === 1 ? '' : 's');
+  rows.sort((a, b) => (Date.parse(b.when) || 0) - (Date.parse(a.when) || 0));
+  state.inboxRows = rows;
+
+  if (!items.length && !files.length) {
+    el.modsGrid.innerHTML = '<div class="mods-empty"><h3>Nothing published yet</h3>'
+      + '<p class="muted">Packs you publish from Content show up here, along with the files '
+      + 'they leave on your GitHub account.</p></div>';
+    return;
   }
 
-  for (const button of el.modsGrid.querySelectorAll('[data-url]')) {
-    button.addEventListener('click', () => window.api.shell.openExternal(button.dataset.url));
+  const listed = new Set(((state.mods && state.mods.ok && state.mods.packs) || [])
+    .filter((p) => p.listed !== false).map((p) => p.id));
+  state.inboxListed = listed;
+
+  if (!state.inboxOpen || !rows.some((r) => r.key === state.inboxOpen)) {
+    state.inboxOpen = rows.length ? rows[0].key : null;
   }
+
+  el.modsGrid.innerHTML = `
+    <div class="inbox-split">
+      <div class="inbox-column">
+        ${rows.length
+    ? rows.map((row) => `
+          <button type="button" class="inbox-row${row.key === state.inboxOpen ? ' on' : ''}"
+                  data-key="${escapeHtml(row.key)}">
+            <span class="inbox-row-top">
+              <span class="inbox-row-title">${row.changed
+    ? '<i class="inbox-dot" title="This changed since you last looked"></i>' : ''}${
+  escapeHtml(row.title)}</span>
+              <span class="inbox-state is-${row.state.tone}">${escapeHtml(row.state.label)}</span>
+            </span>
+            <span class="muted small">${row.kind === 'file' ? 'File on GitHub' : 'Submission'}
+              · ${escapeHtml(formatWhen(row.when))}</span>
+          </button>`).join('')
+    : '<p class="muted small inbox-none">Nothing matches that.</p>'}
+      </div>
+      <div class="inbox-detail" id="inbox-detail"></div>
+    </div>`;
+
+  for (const button of el.modsGrid.querySelectorAll('[data-key]')) {
+    button.addEventListener('click', () => {
+      state.inboxOpen = button.dataset.key;
+      drawInbox();
+    });
+  }
+
+  drawInboxDetail();
+
+  // Written after drawing, so the marks survive until they have been seen. Only
+  // when nothing is filtered out, or a search would mark rows as seen that were
+  // never on screen.
+  if (!query) {
+    const now = {};
+    for (const item of items) now[item.number] = item.outcome;
+    localStorage.setItem('inboxSeen', JSON.stringify(now));
+  }
+}
+
+/** Whichever row is open, in full. */
+function drawInboxDetail() {
+  const holder = el.modsGrid.querySelector('#inbox-detail');
+  if (!holder) return;
+
+  const row = (state.inboxRows || []).find((r) => r.key === state.inboxOpen);
+  if (!row) {
+    holder.innerHTML = '<p class="muted small">Pick something on the left.</p>';
+    return;
+  }
+
+  if (row.kind === 'submission') {
+    const item = row.item;
+    holder.innerHTML = `
+      <header class="inbox-detail-head">
+        <div>
+          <h3>${escapeHtml(item.title)}</h3>
+          <p class="muted small">Submission #${item.number}
+            · sent ${escapeHtml(formatWhen(item.openedAt))}${
+  item.id ? ` · listed as ${escapeHtml(item.id)}` : ''}</p>
+        </div>
+        <span class="inbox-state is-${row.state.tone}">${escapeHtml(row.state.label)}</span>
+      </header>
+      ${waitNoteFor(item)}
+      <h4 class="inbox-h">What was said</h4>
+      ${item.reason
+    ? `<p class="inbox-reason">${escapeHtml(item.reason)}</p>`
+    : '<p class="inbox-reason muted">Nothing has been said on it yet.</p>'}
+      <div class="inbox-detail-foot">
+        <button class="btn btn-small" id="inbox-open-github">Open on GitHub</button>
+      </div>`;
+    holder.querySelector('#inbox-open-github')
+      .addEventListener('click', () => openOutside(item.url, 'this submission on GitHub'));
+    return;
+  }
+
+  const file = row.file;
+  const isListed = state.inboxListed && state.inboxListed.has(file.packId);
+  holder.innerHTML = `
+    <header class="inbox-detail-head">
+      <div>
+        <h3>${escapeHtml(file.title)}</h3>
+        <p class="muted small">${escapeHtml(file.tag)}
+          · uploaded ${escapeHtml(formatWhen(file.published))}</p>
+      </div>
+      ${isListed ? '<span class="release-live">listed</span>'
+    : '<span class="inbox-state is-muted">not listed</span>'}
+    </header>
+
+    <div class="inbox-figures">
+      <div><b>${escapeHtml(formatBytes(file.bytes))}</b><span class="muted small">size</span></div>
+      <div><b>${escapeHtml(formatDownloads(file.downloads))}</b>
+        <span class="muted small">downloads</span></div>
+      <div><b>${file.assets.length}</b>
+        <span class="muted small">file${file.assets.length === 1 ? '' : 's'}</span></div>
+    </div>
+
+    <h4 class="inbox-h">What is in it</h4>
+    <div class="inbox-files">
+      ${file.assets.map((a) => `<div><span>${escapeHtml(a.name)}</span>
+        <span class="muted small">${escapeHtml(formatBytes(a.bytes))}</span></div>`).join('')}
+    </div>
+
+    <div class="inbox-detail-foot">
+      <button class="btn btn-small" id="file-open">Open on GitHub</button>
+      <button class="btn btn-small btn-danger" id="file-delete">Delete this upload</button>
+    </div>`;
+
+  holder.querySelector('#file-open')
+    .addEventListener('click', () => openOutside(file.url, 'this release on GitHub'));
+  holder.querySelector('#file-delete')
+    .addEventListener('click', () => removeRelease(file, Boolean(isListed)));
 }
 
 /**
@@ -2054,7 +2179,7 @@ function renderModTypes() {
     button.dataset.type = type.id;
     button.classList.toggle('on', type.id === (state.modsType || 'all'));
     button.innerHTML = `
-      <span>${type.id === 'all' ? '✦' : TYPE_ICONS[type.id] || '📦'}</span>
+      <span class="type-icon-wrap">${type.id === 'all' ? '' : typeIcon(type.id)}</span>
       <span>${escapeHtml(type.label)}</span>
       <span class="count">${count}</span>`;
     button.addEventListener('click', () => {
@@ -2276,7 +2401,7 @@ function modCard(pack) {
   const installed = isModInstalled(pack);
   card.innerHTML = `
     <div class="mod-card-head">
-      <span class="mod-icon">${TYPE_ICONS[pack.type] || '📦'}</span>
+      <span class="mod-icon">${typeIcon(pack.type)}</span>
       <div class="mod-card-name">
         <h3>${escapeHtml(pack.title)}</h3>
         <p class="muted small"><button type="button" class="linklike"
@@ -2392,7 +2517,7 @@ async function requirePicture(pack) {
       + 'To set one: press "Edit this pack", then set the icon under Pack details on the '
       + 'right. Come back and share it once it has one.',
     buttons: ['Done'],
-    mark: '🖼',
+    mark: '!',
   });
   return false;
 }
@@ -2534,7 +2659,7 @@ async function ensureSignedIn({ force = false } = {}) {
       + 'The app can create one repository for your packs and add releases to it. It cannot '
       + 'read your other repositories.',
     buttons: ['Sign in', 'Cancel'],
-    mark: '🔑',
+    mark: '#',
   });
   if (go !== 0) return null;
 
@@ -2548,7 +2673,7 @@ async function ensureSignedIn({ force = false } = {}) {
         + `        ${userCode}\n\n`
         + 'Leave this open until it is done.',
       buttons: ['Done'],
-      mark: '🔑',
+      mark: '#',
     });
   });
 
@@ -2627,7 +2752,7 @@ async function unlinkGithub() {
       + 'where they are on your account. Nothing is taken down.\n\n'
       + 'You will be asked to sign in again the next time you publish.',
     buttons: ['Unlink', 'Cancel'],
-    mark: '🔑',
+    mark: '#',
   });
   if (sure !== 0) return;
 
@@ -2755,7 +2880,7 @@ async function publishPack(packaged, pack, already = null) {
         + 'It stays yours. You can delete it or take any pack down whenever you like, and '
         + 'this app cannot see your other repositories.',
       buttons: ['Create it and publish', 'Cancel'],
-      mark: '📦',
+      mark: '#',
       cancelIndex: 1,
     });
     if (ok !== 0) return;
@@ -2803,7 +2928,7 @@ async function publishPack(packaged, pack, already = null) {
     // meant to keep.
     ticked: (already && already.content) || [],
     buttons: [updating ? 'Update it' : 'Publish it', 'Cancel'],
-    mark: '⚠',
+    mark: '!',
   });
   if (flags === null) return;
 
@@ -2915,7 +3040,7 @@ function renderContentTypes() {
     button.dataset.type = type.id;
     button.classList.toggle('on', type.id === state.contentType);
     button.innerHTML = `
-      <span>${TYPE_ICONS[type.id] || '📦'}</span>
+      <span class="type-icon-wrap">${typeIcon(type.id)}</span>
       <span>${escapeHtml(type.label)}</span>
       <span class="count">${errors ? `<b class="badge badge-error">${errors}</b> ` : ''}${type.packs.length}</span>`;
     button.addEventListener('click', () => {
@@ -2997,8 +3122,8 @@ function renderContentGrid() {
     const icon = pack.iconUrl
       ? `<img class="tile-icon" src="${pack.iconUrl}" alt="" loading="lazy" />`
       : CHARACTER_TYPES.has(type.id)
-        ? '<img class="tile-icon" src="../../assets/placeholder.png" alt="No picture yet" />'
-        : `<div class="tile-icon tile-icon-blank">${TYPE_ICONS[type.id] || '📦'}</div>`;
+        ? '<img class="tile-icon" src="../../assets/app/placeholder.png" alt="No picture yet" />'
+        : `<div class="tile-icon tile-icon-blank">${typeIcon(type.id)}</div>`;
 
     const job = state.converting.get(pack.dir);
     const badge = job
@@ -3046,7 +3171,7 @@ function renderContentDetail(pack) {
   const icon = pack.iconUrl
     ? `<img src="${pack.iconUrl}" alt="" />`
     : CHARACTER_TYPES.has(pack.type)
-      ? '<img src="../../assets/placeholder.png" alt="No picture yet" />'
+      ? '<img src="../../assets/app/placeholder.png" alt="No picture yet" />'
       : '';
   const issues = (pack.issues || []).length
     ? `<div class="issue-list">${pack.issues.map((i) => `
@@ -3090,16 +3215,16 @@ function renderContentDetail(pack) {
 
     <div class="detail-actions">
       <button type="button" class="btn btn-primary" id="btn-detail-edit"
-              ${converting ? 'disabled' : ''}>✎ Edit this pack</button>
+              ${converting ? 'disabled' : ''}>Edit this pack</button>
       <button type="button" class="btn" id="btn-detail-share"
               ${converting ? 'disabled' : ''}
               title="${pack.iconPath || pack.iconUrl
     ? 'Package this pack to send or publish'
     : 'This pack needs an icon first. Set one in Edit this pack, under Pack details.'
-}">↗ Share this pack</button>
-      <button type="button" class="btn" id="btn-detail-open">📂 Open folder</button>
+}">Share this pack</button>
+      <button type="button" class="btn" id="btn-detail-open">Open folder</button>
       <button type="button" class="btn btn-danger" id="btn-detail-delete"
-              ${converting ? 'disabled' : ''}>✕ Delete</button>
+              ${converting ? 'disabled' : ''}>Delete</button>
     </div>`;
 
   el.contentDetail.querySelector('#btn-detail-edit')
@@ -3304,7 +3429,7 @@ async function removePack(pack) {
  */
 const CREATE_TYPES = [
   {
-    id: 'voice', icon: '🎬', label: 'Dub or voice pack',
+    id: 'voice', label: 'Dub or voice pack',
     blurb: 'Clips to dub over. Add a video and cut it up in the editor.',
     accepts: 'video',
     // Name and a video is all it takes; captions, clips and pictures are all
@@ -3314,7 +3439,7 @@ const CREATE_TYPES = [
     opensEditor: true,
   },
   {
-    id: 'player', icon: '🧍', label: 'Player',
+    id: 'player', label: 'Player',
     blurb: 'A character who plays the game, with reaction sounds.',
     accepts: 'all',
     dropHint: 'Drop a picture (becomes player.png) and any reaction sounds.',
@@ -3325,35 +3450,35 @@ const CREATE_TYPES = [
     ],
   },
   {
-    id: 'host', icon: '🎤', label: 'Host',
+    id: 'host', label: 'Host',
     blurb: 'Presents the show. Starts with a full script you can rewrite.',
     accepts: 'image',
     dropHint: 'Drop a picture for the host. It becomes host.png.',
     fields: [],
   },
   {
-    id: 'judges', icon: '⚖️', label: 'Judge panel',
+    id: 'judges', label: 'Judge panel',
     blurb: 'Five judges who score each round.',
     accepts: 'all',
     dropHint: 'Drop five pictures, plus voices and score blips if you have them.',
     fields: [],
   },
   {
-    id: 'studio', icon: '🏛️', label: 'Studio',
+    id: 'studio', label: 'Studio',
     blurb: 'The set the show is filmed on.',
     accepts: 'all',
     dropHint: 'Drop music, a screen video, or a .glb model.',
     fields: [],
   },
   {
-    id: 'menu', icon: '🖼️', label: 'Menu theme',
+    id: 'menu', label: 'Menu theme',
     blurb: 'Background, music and button sounds for the menus.',
     accepts: 'all',
     dropHint: 'Drop a background image, music, and button sounds.',
     fields: [],
   },
   {
-    id: 'chatter', icon: '💬', label: 'Chatter pack',
+    id: 'chatter', label: 'Chatter pack',
     blurb: 'Crowd sounds triggered by keywords in Twitch chat.',
     accepts: 'audio',
     dropHint: 'Drop sounds. They are converted to .ogg, which chatter packs need.',
@@ -3379,7 +3504,7 @@ function openCreateDialog(typeId) {
     button.type = 'button';
     button.className = 'create-type';
     button.innerHTML = `
-      <span>${type.icon}</span>
+      <span class="type-icon-wrap">${typeIcon(type.id)}</span>
       <span><b>${escapeHtml(type.label)}</b><em>${escapeHtml(type.blurb)}</em></span>`;
     button.addEventListener('click', () => chooseCreateType(type));
     el.createTypes.append(button);
@@ -3639,7 +3764,7 @@ async function maybeAskForDonation() {
 
   showAlert(
     'Glad this is useful. It is free and stays free, but donations help me keep building it.',
-    '♥ Donate',
+    'Donate',
     () => {
       window.api.shell.openExternalConfirmed(url, 'the donation page');
       hideAlert();
@@ -3855,7 +3980,7 @@ function renderPacks() {
 
     const icon = pack.iconUrl
       ? `<img class="pack-icon" src="${pack.iconUrl}" alt="" loading="lazy" />`
-      : '<div class="pack-icon pack-icon-blank">🎬</div>';
+      : `<div class="pack-icon pack-icon-blank">${typeIcon('voice')}</div>`;
 
     const takes = pack.sessions.length
       ? `<span class="chip chip-ok">${pack.sessions.length} session${pack.sessions.length > 1 ? 's' : ''}</span>`
@@ -5651,7 +5776,16 @@ function wireEvents() {
     el.modsSearch.value = '';
     searchAgain();
   });
-  el.btnModsRefresh.addEventListener('click', () => (state.modsShow === 'inbox' ? renderInbox() : refreshMods({ force: true })));
+  // Refresh reloads whichever view is open, through showMods so the view is set
+  // up before it is drawn. Calling refreshMods directly from here reloaded the
+  // packs whatever was on screen, and drawing them un-hid the pack type rail,
+  // so refreshing on Publishers or Your submissions grew a rail belonging to a
+  // list that was not being shown.
+  el.btnModsRefresh.addEventListener('click', () => {
+    if (state.modsShow === 'inbox') { renderInbox(); return; }
+    directoryChanged();
+    showMods(state.modsShow === 'publisher' ? 'browse' : (state.modsShow || 'browse'));
+  });
   el.btnModsBrowse.addEventListener('click', () => showMods('browse'));
   el.btnModsPublishers.addEventListener('click', () => showMods('publishers'));
   el.btnModsInbox.addEventListener('click', () => showMods('inbox'));

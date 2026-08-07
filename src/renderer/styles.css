@@ -2079,7 +2079,6 @@ input[type="range"]::-webkit-slider-thumb {
 .clip-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .clip-thumb.blank span { font-size: 9.5px; color: var(--muted); text-align: center; }
 
-
 .line-portrait {
   grid-area: portrait;
   width: 34px;
@@ -2680,7 +2679,6 @@ input[type="range"]::-webkit-slider-thumb {
 /* Picture buttons on a line, always visible and named. Hidden icons that
    appeared on hover were unreadable and gave no clue what they did. */
 
-
 .create-file {
   display: grid;
   grid-template-columns: 1fr auto auto auto;
@@ -3037,48 +3035,6 @@ input[type="range"]::-webkit-slider-thumb {
   line-height: 1.45;
 }
 
-/* Capped so a tall video cannot push the decision buttons off the page. */
-.admin-video { width: 100%; max-height: 46vh; background: #000; border-radius: 10px; }
-
-.admin-images { display: flex; flex-wrap: wrap; gap: 10px; }
-.admin-images figure { margin: 0; max-width: 160px; }
-.admin-images img {
-  max-width: 100%;
-  max-height: 220px;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-}
-
-.admin-audio { display: grid; gap: 6px; }
-.admin-clip { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 10px; align-items: center; }
-.admin-clip audio { width: 100%; height: 30px; }
-
-.admin-captions details { margin-bottom: 5px; }
-.admin-captions summary { cursor: pointer; font-size: 12.5px; }
-.admin-captions pre, .admin-body {
-  margin: 6px 0 0;
-  padding: 9px 11px;
-  background: var(--panel);
-  border-radius: 8px;
-  font-size: 12px;
-  line-height: 1.5;
-  /* Pack text is somebody else's and can be any width or length. */
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 320px;
-  overflow-y: auto;
-}
-
-.admin-files { display: grid; gap: 2px; font-size: 12px; }
-.admin-files > div {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 3px 0;
-  border-bottom: 1px solid var(--line);
-}
-.admin-files span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
 .admin-decide {
   display: flex;
   gap: 10px;
@@ -3124,23 +3080,6 @@ input[type="range"]::-webkit-slider-thumb {
 .admin-decide-what b { font-size: 13px; }
 .admin-decide-what span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .admin-decide-buttons { display: flex; gap: 9px; flex: none; }
-
-/* A picture that will not load says so, rather than leaving a silent gap that
-   reads as "this pack has no pictures". */
-.admin-broken { display: none; }
-.admin-images figure.broken img { display: none; }
-.admin-images figure.broken .admin-broken {
-  display: grid;
-  place-items: center;
-  width: 120px;
-  height: 90px;
-  border: 1px dashed var(--line);
-  border-radius: 8px;
-  font-size: 11px;
-  color: var(--muted);
-  text-align: center;
-  padding: 6px;
-}
 
 /* Admin: a publisher's packs, each with the one action that applies to it. */
 
@@ -3235,38 +3174,6 @@ input[type="range"]::-webkit-slider-thumb {
   color: var(--muted);
 }
 .mod-flag.is-adult { border-color: var(--danger, #e5534b); color: var(--danger, #e5534b); }
-
-/* The pack's script, laid out so it can be read straight down.
-   Fixed columns for the time and speaker, so the words line up and the eye
-   only has to travel down one edge. */
-.admin-script {
-  display: grid;
-  gap: 1px;
-  max-height: 420px;
-  overflow-y: auto;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px 10px;
-}
-.script-line {
-  display: grid;
-  grid-template-columns: 46px 110px minmax(0, 1fr);
-  gap: 10px;
-  align-items: baseline;
-  padding: 3px 0;
-  font-size: 12.5px;
-  line-height: 1.45;
-}
-.script-at { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11.5px; }
-.script-who {
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* Wrapped rather than cut: the words are the thing being judged. */
-.script-said { white-space: pre-wrap; word-break: break-word; }
-.script-said.is-empty { color: var(--muted); font-style: italic; }
 
 /* A listed pack's own picture, once it has been checked against the hash it was
    published with. Falls back to the type glyph, which is why this only styles
@@ -3382,61 +3289,6 @@ input[type="range"]::-webkit-slider-thumb {
   text-align: center;
 }
 
-/* --- Your submissions ---------------------------------------------------- */
-
-/* Where you stand, and the shape of the list, above the list itself. */
-.inbox-standing {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 14px;
-  margin: 0 0 16px;
-  padding: 14px 16px;
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--line);
-  border-radius: 11px;
-  background: var(--panel);
-}
-.inbox-standing b { font-size: 13.5px; }
-.inbox-standing p { margin: 3px 0 0; max-width: 46ch; line-height: 1.5; }
-.inbox-standing.is-ok { border-left-color: var(--ok); }
-.inbox-standing.is-bad { border-left-color: var(--danger, #e5534b); }
-
-/* How many are in each state. A count is the fastest answer to "is anything
-   waiting on me", which is why this sits above the list and not inside it. */
-.inbox-summary { display: flex; flex-wrap: wrap; gap: 6px; }
-.inbox-tally {
-  padding: 4px 9px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  font-size: 11px;
-  color: var(--muted);
-  white-space: nowrap;
-}
-.inbox-tally b { font-size: 12px; color: var(--text); }
-.inbox-tally.is-ok { border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
-.inbox-tally.is-warn { border-color: color-mix(in srgb, var(--warn, #d29922) 45%, var(--line)); }
-.inbox-tally.is-bad { border-color: color-mix(in srgb, var(--danger, #e5534b) 45%, var(--line)); }
-
-.inbox-list { display: grid; gap: 8px; }
-
-.inbox-item {
-  position: relative;
-  border: 1px solid var(--line);
-  /* The outcome as a colour down the edge, so the list reads at a glance
-     without reading every label. */
-  border-left: 3px solid var(--line);
-  border-radius: 11px;
-  background: var(--panel);
-  transition: border-color 0.15s ease, background 0.15s ease;
-}
-.inbox-item:hover { border-color: var(--accent-dim); }
-.inbox-item:has(.inbox-state.is-ok) { border-left-color: var(--ok); }
-.inbox-item:has(.inbox-state.is-warn) { border-left-color: var(--warn, #d29922); }
-.inbox-item:has(.inbox-state.is-bad) { border-left-color: var(--danger, #e5534b); }
-.inbox-item.is-changed { border-color: var(--accent-dim); }
-
 /* The whole closed row is the control that opens it, so it is a button rather
    than a div with a listener: keyboard and screen readers get it for free. */
 .inbox-open {
@@ -3457,16 +3309,6 @@ input[type="range"]::-webkit-slider-thumb {
   justify-content: space-between;
   gap: 14px;
 }
-.inbox-title { display: grid; gap: 2px; min-width: 0; }
-.inbox-title b {
-  font-size: 13.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.inbox-when { display: block; }
-
-.inbox-right { display: flex; align-items: center; gap: 10px; flex: none; }
 .inbox-state {
   font-size: 10.5px;
   font-weight: 600;
@@ -3478,9 +3320,6 @@ input[type="range"]::-webkit-slider-thumb {
 .inbox-state.is-ok { color: var(--ok); }
 .inbox-state.is-warn { color: var(--warn, #d29922); }
 .inbox-state.is-bad { color: var(--danger, #e5534b); }
-
-.inbox-chevron { color: var(--muted); font-size: 10px; transition: transform 0.15s ease; }
-.inbox-item.is-open .inbox-chevron { transform: rotate(180deg); }
 
 /* Something decided since this was last opened. Marked rather than reordered:
    moving a row under somebody as they read it is worse than a quiet dot. */
@@ -3504,14 +3343,6 @@ input[type="range"]::-webkit-slider-thumb {
   color: var(--warn, #d29922);
 }
 
-.inbox-body { padding: 0 15px 13px; }
-.inbox-body::before {
-  content: "";
-  display: block;
-  margin-bottom: 11px;
-  border-top: 1px solid var(--line);
-}
-
 /* The moderator's words, kept readable rather than truncated: being told why is
    the point of this whole view. */
 .inbox-reason {
@@ -3521,7 +3352,6 @@ input[type="range"]::-webkit-slider-thumb {
   white-space: pre-wrap;
   word-break: break-word;
 }
-.inbox-foot { display: flex; justify-content: flex-end; margin-top: 12px; }
 
 /* --- Publishers ---------------------------------------------------------- */
 
@@ -3690,4 +3520,176 @@ input[type="range"]::-webkit-slider-thumb {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Something the directory currently points at. Deleting one of these breaks a
+   listing, so it is marked before somebody reaches for the button rather than
+   explained afterwards. */
+.release-live {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ok) 18%, transparent);
+  color: var(--ok);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ===========================================================================
+   Mods
+   ===========================================================================
+
+   Which view is open leads the header bar. It used to sit on the right, past
+   the search box, which put the control that decides what the page is showing
+   after the controls that act on it. */
+
+.mods-head { flex-wrap: wrap; gap: 12px; }
+/* Sits with the title, not pinned to the edge, so the two read as one
+   thing. The title keeps only the width it needs rather than stretching and
+   pushing this away from it. */
+.mods-head .mods-nav { flex: none; }
+.mods-head-title { min-width: 0; flex: 0 1 auto; }
+.mods-head-title h2 { margin: 0 0 2px; }
+.mods-head-title p { margin: 0; }
+.mods-head .content-head-actions { margin-left: auto; }
+
+/* The pictures. Sized here rather than by whatever the file happens to be, so
+   a glyph swapped for a different drawing does not resize the thing holding
+   it. */
+.type-icon {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.type-icon-wrap {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+.home-card-icon { display: grid; place-items: center; width: 34px; height: 34px; }
+.empty-art { width: 64px; height: 64px; margin: 0 auto 14px; opacity: 0.7; }
+.mod-icon.has-image .type-icon { object-fit: cover; }
+.tile-icon-blank { display: grid; place-items: center; }
+.tile-icon-blank .type-icon { width: 38%; height: 38%; opacity: 0.55; }
+.pack-icon-blank { display: grid; place-items: center; }
+.pack-icon-blank .type-icon { width: 46%; height: 46%; opacity: 0.55; }
+.slot-glyph .type-icon { width: 26px; height: 26px; }
+.publisher-kind .type-icon { width: 13px; height: 13px; display: inline-block; }
+.publisher-kind { display: inline-flex; align-items: center; gap: 5px; }
+.create-type .type-icon-wrap { width: 26px; height: 26px; }
+
+/* --- Your submissions: a list, and one of them at a time ----------------- */
+
+.inbox-split {
+  display: grid;
+  grid-template-columns: minmax(230px, 300px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  padding-bottom: 24px;
+}
+.inbox-column { display: grid; gap: 4px; align-content: start; }
+.inbox-none { padding: 10px 2px; }
+
+.inbox-row {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.inbox-row:hover { background: var(--panel); }
+.inbox-row.on { background: var(--panel); border-color: var(--accent-dim); }
+.inbox-row-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.inbox-row-title {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-detail {
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.inbox-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.inbox-detail-head h3 { margin: 0 0 3px; font-size: 16px; }
+.inbox-detail-head p { margin: 0; }
+
+.inbox-h {
+  margin: 0 0 7px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.inbox-detail-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+/* The numbers about one upload, as figures rather than a sentence. */
+.inbox-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.inbox-figures > div {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.inbox-figures b { font-size: 16px; line-height: 1.1; }
+
+.inbox-files { display: grid; gap: 2px; font-size: 12px; }
+.inbox-files > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.inbox-files span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Narrow windows put the detail under the list rather than squeezing both. */
+@media (max-width: 1120px) {
+  .inbox-split { grid-template-columns: minmax(0, 1fr); }
 }

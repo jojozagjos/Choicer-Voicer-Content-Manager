@@ -10,7 +10,7 @@
 <body>
 
 <div id="splash" class="splash">
-  <img class="splash-mark" src="../../assets/icon.png" alt="" />
+  <img class="splash-mark" src="../../assets/app/icon.png" alt="" />
   <h1 class="splash-fade">Choicer Voicer Content Manager</h1>
   <p class="splash-by splash-fade">by <b>@jojozagjos</b></p>
   <p class="splash-note splash-fade">Turn your dubs into videos you can share</p>
@@ -72,21 +72,21 @@
 
       <div class="home-cards">
         <button class="home-card" id="card-export">
-          <span class="home-card-icon">🎬</span>
+          <span class="home-card-icon"><img class="type-icon" src="../../assets/glyphs/video.png" alt="" /></span>
           <span class="home-card-body">
             <strong>Export a dub</strong>
             <em id="home-export-note">Pick a recording and turn it into a video.</em>
           </span>
         </button>
         <button class="home-card" id="card-create">
-          <span class="home-card-icon">✨</span>
+          <span class="home-card-icon"><img class="type-icon" src="../../assets/glyphs/star.png" alt="" /></span>
           <span class="home-card-body">
             <strong>Make something new</strong>
             <em>Start a voice pack, player, host, judge panel and more.</em>
           </span>
         </button>
         <button class="home-card" id="card-manage">
-          <span class="home-card-icon">📦</span>
+          <span class="home-card-icon"><img class="type-icon" src="../../assets/glyphs/studios.png" alt="" /></span>
           <span class="home-card-body">
             <strong>Manage your content</strong>
             <em id="home-manage-note">See everything installed and what needs fixing.</em>
@@ -119,7 +119,7 @@
   <section class="stage">
 
     <div id="empty-state" class="empty-state">
-      <div class="empty-art">🎙️</div>
+      <div class="empty-art"><img class="type-icon" src="../../assets/glyphs/video.png" alt="" /></div>
       <h2>Pick a pack to get started</h2>
       <p>This app finds the dubs you recorded in <b>The Choicer Voicer</b>, plays them back over the
          original video, and exports the result as a video file you can upload or share.</p>
@@ -230,7 +230,7 @@
       <!-- Recordings whose pack is gone. They sit outside the pack folders, so
            nothing else in the app would ever mention them. -->
       <div id="orphan-note" class="orphan-note" hidden>
-        <span class="orphan-mark">🎙</span>
+        <span class="orphan-mark">!</span>
         <span id="orphan-text"></span>
         <button type="button" class="btn btn-small" id="btn-orphan-open">Open folder</button>
       </div>
@@ -247,17 +247,21 @@
     <aside class="content-types" id="mods-types"></aside>
 
     <div class="content-main">
-      <header class="content-head">
-        <div>
+      <header class="content-head mods-head">
+        <div class="mods-head-title">
           <h2 id="mods-title">Mods</h2>
           <p class="muted small" id="mods-subtitle"></p>
         </div>
+        <!-- Beside the title rather than away at one edge. It says what the
+             title is describing, so the two read as one thing; the search box
+             and refresh act on whatever it has chosen and sit apart, at the
+             other end. -->
+        <div class="segmented mods-nav" role="group" aria-label="What to show">
+          <button type="button" id="btn-mods-browse" class="on">Browse</button>
+          <button type="button" id="btn-mods-publishers">Publishers</button>
+          <button type="button" id="btn-mods-inbox">Your submissions</button>
+        </div>
         <div class="content-head-actions">
-          <div class="segmented" role="group" aria-label="What to show">
-            <button type="button" id="btn-mods-browse" class="on">Browse</button>
-            <button type="button" id="btn-mods-publishers">Publishers</button>
-            <button type="button" id="btn-mods-inbox">Your submissions</button>
-          </div>
           <input id="mods-search" class="input content-search" type="search"
                  placeholder="Search packs…" autocomplete="off" />
           <button id="btn-mods-refresh" class="btn btn-small">Refresh</button>
@@ -692,7 +696,7 @@
 <dialog id="setup-dialog" class="dialog">
   <div class="dialog-body">
     <div class="about-head">
-      <span class="brand-mark">📂</span>
+      
       <div class="about-lines">
         <h2>Find your game files</h2>
         <span class="muted small">This is the only thing the app needs before it can do anything.</span>
@@ -734,7 +738,7 @@
 <dialog id="about-dialog" class="dialog dialog-wide">
   <form method="dialog" class="dialog-body dialog-body-tabbed">
     <div class="about-head">
-      <img class="brand-mark brand-mark-img" src="../../assets/icon.png" alt="" />
+      <img class="brand-mark brand-mark-img" src="../../assets/app/icon.png" alt="" />
       <div class="about-lines">
         <h2>Choicer Voicer Content Manager</h2>
         <span class="muted small">
@@ -916,22 +920,22 @@
            is missing. It is here for anyone who wants to know what the files mean.</p>
         <p>The game reads seven kinds of pack, each from its own folder.</p>
         <dl class="help-defs">
-          <div><dt>🎬 Voice and dub packs</dt>
+          <div><dt>Voice and dub packs</dt>
                <dd><code>packs_voice</code>. A video plus the lines to dub over it. With a video it
                    is a dub pack; without one it is a plain voice pack. This is the type with the
                    full editor.</dd></div>
-          <div><dt>🧍 Players</dt>
+          <div><dt>Players</dt>
                <dd><code>packs_player</code>. A picture, a colour pair, and up to nine reaction
                    sounds. You can record those straight into the app.</dd></div>
-          <div><dt>🎤 Hosts</dt>
+          <div><dt>Hosts</dt>
                <dd><code>packs_host</code>. The presenter's voice lines and portrait.</dd></div>
-          <div><dt>⚖️ Judges</dt>
+          <div><dt>Judges</dt>
                <dd><code>packs_judges</code>. The judging panel's pictures and lines.</dd></div>
-          <div><dt>🏛️ Studios</dt>
+          <div><dt>Studios</dt>
                <dd><code>packs_studio</code>. The 3D set, as a <code>.glb</code> model.</dd></div>
-          <div><dt>🖼️ Menus</dt>
+          <div><dt>Menus</dt>
                <dd><code>packs_menu</code>. Backgrounds, music and styling for the game's menus.</dd></div>
-          <div><dt>💬 Chatter</dt>
+          <div><dt>Chatter</dt>
                <dd><code>packs_chatter</code>. Crowd lines that play between rounds.</dd></div>
         </dl>
         <p class="muted small">Every pack you open is checked against what the game actually
@@ -1030,7 +1034,7 @@
     </div>
 
     <menu class="dialog-actions dialog-foot">
-      <button type="button" id="btn-about-donate" class="btn btn-ghost" hidden>♥ Donate</button>
+      <button type="button" id="btn-about-donate" class="btn btn-ghost" hidden>Donate</button>
       <button type="button" id="btn-about-discord" class="btn btn-ghost">jojozagjos Discord</button>
       <button type="button" id="btn-about-repo" class="btn btn-ghost">GitHub updates</button>
       <button type="button" id="btn-about-page" class="btn btn-ghost">The game</button>

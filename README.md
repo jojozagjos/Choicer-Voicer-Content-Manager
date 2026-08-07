@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/icon.png" width="128" alt="" />
+<img src="assets/app/icon.png" width="128" alt="" />
 
 # Choicer Voicer Content Manager
 

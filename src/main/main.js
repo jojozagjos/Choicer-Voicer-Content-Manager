@@ -544,21 +544,8 @@ function isOpenableFolder(target) {
  * and never the game folder: a pack being judged must not be able to end up
  * installed, and one that is refused must leave nothing behind.
  */
-let reviewSandbox = null;
 
-/** Whether a path is inside the pack currently open for review. */
-function inReviewSandbox(filePath) {
-  if (!reviewSandbox) return false;
-  const rel = path.relative(reviewSandbox, path.resolve(filePath));
-  return Boolean(rel) && !rel.startsWith('..') && !path.isAbsolute(rel);
-}
 
-/** Throws away the sandbox, whatever is in it. */
-function clearReviewSandbox() {
-  if (!reviewSandbox) return;
-  try { fs.rmSync(reviewSandbox, { recursive: true, force: true }); } catch { /* temp */ }
-  reviewSandbox = null;
-}
 
 /**
  * What lets the renderer `fetch()` from this scheme rather than only play from
@@ -589,7 +576,7 @@ function registerMediaProtocol() {
     // may play media from, and only while a pack is actually open for review.
     // It is a single exact folder, set when a review starts and cleared when it
     // ends, rather than a standing exception.
-    if (!isAllowed(filePath) && !inReviewSandbox(filePath)) {
+    if (!isAllowed(filePath)) {
       return new Response('Forbidden', { status: 403 });
     }
 
@@ -736,7 +723,7 @@ const SHOTS = process.env.CVE_SHOTS === '1';
 function createWindow() {
   // The packager bakes the icon into the exe, so a packaged build already has
   // it. Running from source has no exe to carry one, hence this.
-  const devIcon = path.join(__dirname, '..', '..', 'assets', 'icon.png');
+  const devIcon = path.join(__dirname, '..', '..', 'assets', 'app', 'icon.png');
 
   mainWindow = new BrowserWindow({
     width: 1500,
@@ -2815,6 +2802,38 @@ function registerIconIpc() {
 
 /** Publishing: sign in, upload, submit. */
 function registerPublishIpc() {
+  /** The files this app has put on the signed-in account. */
+  ipcMain.handle('mods:releases', async () => {
+    const token = loadToken();
+    if (!token) return { ok: false, error: 'Not signed in to GitHub.' };
+    try {
+      return { ok: true, ...(await github.myReleases(token)) };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  /**
+   * Deletes one of them.
+   *
+   * The only irreversible thing this app can do to somebody's GitHub account,
+   * so it does exactly what it was asked and nothing around it. In particular
+   * it does not touch the directory: a listing pointing at a file that has gone
+   * is a decision the person should make knowingly, and the interface says so
+   * before this is ever called.
+   */
+  ipcMain.handle('mods:deleteRelease', async (_event, { id, tag }) => {
+    const token = loadToken();
+    if (!token) return { ok: false, error: 'Not signed in to GitHub.' };
+    if (!id) return { ok: false, error: 'No release was named.' };
+    try {
+      await github.deleteRelease(token, id, tag);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
   /** Who is signed in, if anyone, and whether publishing is possible at all. */
   ipcMain.handle('mods:whoAmI', async () => {
     if (!github.isConfigured()) return { ok: true, configured: false };
@@ -3033,97 +3052,6 @@ function registerPublishIpc() {
   });
 }
 
-/**
- * Describes an unpacked pack well enough to judge it.
- *
- * Everything is handed back as a cvmedia:// address so the renderer can play
- * and show it without ever being given a filesystem path.
- */
-function describeForReview(dir) {
-  const files = [];
-  const walk = (at, base) => {
-    for (const entry of fs.readdirSync(at, { withFileTypes: true })) {
-      const full = path.join(at, entry.name);
-      if (entry.isDirectory()) walk(full, base);
-      else if (entry.isFile()) files.push({ rel: path.relative(base, full), full });
-    }
-  };
-  walk(dir, dir);
-
-  const ext = (f) => path.extname(f.rel).toLowerCase();
-  const url = (f) => mediaUrl(f.full);
-
-  const video = files.find((f) => ext(f) === '.ogv' || ext(f) === '.mp4');
-  const images = files.filter((f) => ['.png', '.jpg', '.jpeg', '.webp'].includes(ext(f)));
-  const audio = files.filter((f) => ['.wav', '.ogg', '.mp3', '.opus'].includes(ext(f)));
-
-  // Everything said in the pack, in the order it is said.
-  //
-  // Read as a script rather than dumped as config files. What a reviewer needs
-  // to judge is the words and who says them, and that was buried in `.ini`
-  // syntax across dozens of files — which meant nobody read it, which defeats
-  // the point of reviewing at all.
-  // Keyed off the audio, not the metadata. A line is a sound somebody recorded;
-  // what describes it varies. Some packs carry a `.ini` per clip, others only a
-  // `.txt` with the words in it, and one real pack has thirty captions and a
-  // single `.ini` for the pack itself — building this from `.ini` files showed
-  // one line out of thirty.
-  const byBase = new Map();
-  const noExt = (rel) => rel.slice(0, rel.length - path.extname(rel).length);
-
-  for (const f of audio) {
-    byBase.set(noExt(f.rel), { base: path.basename(noExt(f.rel)), time: 0, character: '', caption: '' });
-  }
-
-  /** Pulls whatever a parsed clip config has to say into a line. */
-  const takeFrom = (line, data) => {
-    if (!data) return;
-    const times = Array.isArray(data.dub_timestamps) ? data.dub_timestamps : [];
-    if (times.length) {
-      line.time = typeof times[0] === 'number' ? times[0] : parseFloat(times[0]) || 0;
-    }
-    if (Array.isArray(data.dub_characters)) {
-      line.character = String(data.dub_characters[0] || '').trim();
-    }
-    if (typeof data.caption === 'string' && data.caption.trim()) {
-      // Captions are written quoted in the config, and the quotes are syntax
-      // rather than something anybody said.
-      line.caption = data.caption.trim().replace(/^"(.*)"$/s, '$1').trim();
-    }
-  };
-
-  for (const f of files) {
-    const line = byBase.get(noExt(f.rel));
-    if (!line) continue;
-    if (!['.ini', '.txt'].includes(ext(f))) continue;
-
-    // The extension does not say which of the two forms a file is in. Some
-    // packs keep clip settings in `.ini`, others in a `.txt` written in the
-    // same syntax, and a `.txt` can equally just be the words. Deciding by
-    // what is inside covers all three; deciding by extension covered one.
-    let raw = '';
-    try { raw = fs.readFileSync(f.full, 'utf8'); } catch { continue; }
-
-    const looksLikeConfig = /^\s*\[[^\]]+\]/m.test(raw) || /^\s*\w+\s*=/m.test(raw);
-    if (looksLikeConfig) {
-      try { takeFrom(line, gamedata.parseIni(f.full)); } catch { /* unreadable */ }
-    } else if (raw.trim()) {
-      line.caption = raw.trim();
-    }
-  }
-
-  const lines = [...byBase.values()].sort((a, b) => a.time - b.time
-    || String(a.base).localeCompare(String(b.base), undefined, { numeric: true }));
-
-  return {
-    files: files.map((f) => ({ name: f.rel, bytes: fs.statSync(f.full).size })),
-    totalBytes: files.reduce((n, f) => n + fs.statSync(f.full).size, 0),
-    video: video ? { name: video.rel, url: url(video) } : null,
-    images: images.map((f) => ({ name: f.rel, url: url(f) })),
-    audio: audio.map((f) => ({ name: f.rel, url: url(f) })),
-    lines,
-  };
-}
 
 /** Moderation: the queue, the sandbox, and the two decisions. */
 function registerReviewIpc() {
@@ -3153,112 +3081,8 @@ function registerReviewIpc() {
     }
   });
 
-  /**
-   * Downloads a submitted pack into the sandbox so it can be looked at.
-   *
-   * Every check that guards installing runs here too — checksum, archive shape,
-   * safe entry paths — because a pack being reviewed is the least trusted file
-   * the app ever opens, not the most.
-   */
-  ipcMain.handle('review:open', async (event, { record }) => {
-    const checked = validateRecord(record);
-    if (!checked.ok) {
-      return { ok: false, error: `That record is not valid: ${checked.problems[0].message}` };
-    }
-
-    clearReviewSandbox();
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cvreview-'));
-    const zipPath = path.join(dir, 'pack.zip');
-    const unpacked = path.join(dir, 'pack');
-
-    const say = (stage) => {
-      if (!event.sender.isDestroyed()) event.sender.send('review:progress', { stage });
-    };
-
-    try {
-      say('downloading');
-      await download(checked.record.downloadUrl, zipPath, {
-        expectedBytes: checked.record.bytes,
-        onProgress: ({ percent }) => {
-          if (!event.sender.isDestroyed()) event.sender.send('review:progress', { percent });
-        },
-      });
-
-      say('checking');
-      const got = await checksum(zipPath);
-      if (got !== checked.record.sha256) {
-        throw new Error('The file does not match the checksum in the record. It has changed '
-          + 'since it was submitted, so it has not been opened.');
-      }
-
-      say('inspecting');
-      const shape = checkArchiveShape(await listEntries(zipPath));
-      if (!shape.ok) throw new Error(`This pack looks wrong: ${shape.problems.join('; ')}`);
-
-      say('unpacking');
-      fs.mkdirSync(unpacked, { recursive: true });
-      await extractInto(zipPath, unpacked);
-
-      let root = unpacked;
-      const top = fs.readdirSync(unpacked);
-      if (top.length === 1 && fs.statSync(path.join(unpacked, top[0])).isDirectory()) {
-        root = path.join(unpacked, top[0]);
-      }
-
-      // Opened only once everything above has passed, so a pack that failed a
-      // check is never reachable by the renderer.
-      reviewSandbox = path.resolve(dir);
-
-      const actualType = identifyPack(root);
-      const described = describeForReview(root);
-
-      // Pack video is Ogg Theora, which Chromium cannot decode — it plays as a
-      // black rectangle. The rest of the app already works around this with an
-      // MP4 proxy, and review needs the same or the one thing a reviewer most
-      // needs to see is the one thing they cannot.
-      //
-      // Built inside the sandbox so it is thrown away with everything else.
-      if (described.video) {
-        try {
-          say('converting');
-          const proxy = await ensureProxy(
-            path.join(root, described.video.name),
-            path.join(dir, 'proxy'),
-          );
-          described.video = { ...described.video, url: mediaUrl(proxy.path), playable: true };
-        } catch (err) {
-          // Said rather than left as a black rectangle nobody can explain.
-          described.video = { ...described.video, playable: false, why: err.message };
-        }
-      }
-
-      return {
-        ok: true,
-        type: actualType,
-        typeMatches: actualType === checked.record.type,
-        ...described,
-        // Advisory only. Everything genuinely dangerous was refused before
-        // extraction; this is the softer question of whether the pack is right.
-        report: scanPack({
-          files: described.files,
-          type: actualType,
-          claimedType: checked.record.type,
-          captions: described.lines.map((l) => ({ name: l.base, text: l.caption })),
-        }),
-      };
-    } catch (err) {
-      fs.rmSync(dir, { recursive: true, force: true });
-      reviewSandbox = null;
-      return { ok: false, error: err.message };
-    }
-  });
 
   /** Ends a review, taking the sandbox with it. */
-  ipcMain.handle('review:close', () => {
-    clearReviewSandbox();
-    return { ok: true };
-  });
-
   /** Hides or restores a listed pack. */
   ipcMain.handle('review:setListed', async (_e, { packId, listed }) => {
     const token = tokenOrNull();
@@ -3303,7 +3127,6 @@ function registerReviewIpc() {
       }
 
       await review.close(token, DIRECTORY_REPO, number);
-      clearReviewSandbox();
       return { ok: true, decision };
     } catch (err) {
       return { ok: false, error: err.message };
@@ -3338,7 +3161,7 @@ function registerMediaBytesIpc() {
       }
     }
 
-    if (!isAllowed(filePath) && !inReviewSandbox(filePath)) {
+    if (!isAllowed(filePath)) {
       return { ok: false, error: 'that file is outside the game folder' };
     }
     try {
@@ -4284,7 +4107,6 @@ if (!app.requestSingleInstanceLock()) {
     // A pack left open for review must not outlive the app. Closing the window
     // is the one exit path that always happens, whether a review was finished,
     // abandoned, or interrupted.
-    clearReviewSandbox();
     if (process.platform !== 'darwin') app.quit();
   });
 }

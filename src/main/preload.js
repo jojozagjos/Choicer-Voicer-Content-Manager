@@ -33,7 +33,6 @@ const on = makeEmitter([
   'mods:progress',
   'mods:deviceCode',
   'mods:publishProgress',
-  'review:progress',
 ]);
 
 contextBridge.exposeInMainWorld('api', {
@@ -109,6 +108,9 @@ contextBridge.exposeInMainWorld('api', {
     whoAmI: () => ipcRenderer.invoke('mods:whoAmI'),
     // Your own submissions, and whether you are trusted or blocked.
     inbox: () => ipcRenderer.invoke('mods:inbox'),
+    // The files this app has put on your account, and removing one.
+    releases: () => ipcRenderer.invoke('mods:releases'),
+    deleteRelease: (id, tag) => ipcRenderer.invoke('mods:deleteRelease', { id, tag }),
     signIn: () => ipcRenderer.invoke('mods:signIn'),
     signOut: () => ipcRenderer.invoke('mods:signOut'),
     publish: (zipPath, details) => ipcRenderer.invoke('mods:publish', { zipPath, details }),
@@ -121,12 +123,9 @@ contextBridge.exposeInMainWorld('api', {
   review: {
     status: () => ipcRenderer.invoke('review:status'),
     queue: () => ipcRenderer.invoke('review:queue'),
-    open: (record) => ipcRenderer.invoke('review:open', { record }),
-    close: () => ipcRenderer.invoke('review:close'),
     setListed: (packId, listed) => ipcRenderer.invoke('review:setListed', { packId, listed }),
     decide: (number, decision, reason, { packId, author } = {}) =>
       ipcRenderer.invoke('review:decide', { number, decision, reason, packId, author }),
-    onProgress: (fn) => on('review:progress', fn),
   },
 
   media: {

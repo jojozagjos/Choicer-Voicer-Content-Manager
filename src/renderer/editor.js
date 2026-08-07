@@ -50,10 +50,23 @@ function tidyName(value) {
 // each other.
 // Clip pictures are cut to this by ffmpeg in the main process.
 
-const TYPE_GLYPH = {
-  voice: '🎙️', player: '🧍', host: '🎤', judges: '⭐',
-  studio: '🏛️', menu: '🖼️', chatter: '💬',
+/**
+ * The picture for each kind of pack, matching the one the rest of the app uses.
+ *
+ * Images rather than emoji: emoji come from whatever font the system supplies,
+ * so they arrive at different sizes and weights in colours nothing else here
+ * uses, and they are not the same on two machines.
+ */
+const TYPE_ICONS = {
+  voice: 'video', player: 'players', host: 'host', judges: 'judge',
+  studio: 'studios', menu: 'menu', chatter: 'chatter',
 };
+
+/** One of those as an image, falling back to the neutral mark. */
+function typeIcon(type) {
+  const name = TYPE_ICONS[type] || 'star';
+  return `<img class="type-icon" src="../../assets/glyphs/${name}.png" alt="" />`;
+}
 
 const escapeHtml = (text) => {
   const div = document.createElement('div');
@@ -553,7 +566,7 @@ export class PackEditor {
         <span class="time" data-role="time">0:00.00</span>
 
         <label class="slider-field" title="How loud the video plays here. This does not change the pack.">
-          <span class="slider-icon" data-role="vol-icon">🔊</span>
+          <span class="slider-icon" data-role="vol-icon">Vol</span>
           <input type="range" data-role="volume" min="0" max="1" step="0.01" value="1" />
           <b class="slider-read" data-role="vol-read">100%</b>
         </label>
@@ -695,7 +708,7 @@ export class PackEditor {
       const value = Number(volume.value);
       video.volume = value;
       q('vol-read').textContent = `${Math.round(value * 100)}%`;
-      q('vol-icon').textContent = value === 0 ? '🔇' : value < 0.5 ? '🔉' : '🔊';
+      q('vol-icon').textContent = value === 0 ? 'Mute' : 'Vol';
     };
     volume.addEventListener('input', applyVolume);
     applyVolume();
@@ -2147,7 +2160,7 @@ export class PackEditor {
           + 'leaves them where they are, which is what you want if you still intend to export '
           + 'that take.\n\nEither way this can be undone.',
         buttons: ['Delete both', 'Keep the recordings', 'Cancel'],
-        mark: '🗑',
+        mark: 'x',
         danger: true,
       });
       if (answer === 2 || answer == null) return;
@@ -2477,9 +2490,9 @@ export class PackEditor {
     const pack = this.pack;
     if (pack.iconUrl) return `<img src="${escapeHtml(pack.iconUrl)}" alt="" />`;
     if (CHARACTER_PACKS.has(pack.type)) {
-      return '<img src="../../assets/placeholder.png" alt="No picture yet" class="placeholder-art" />';
+      return '<img src="../../assets/app/placeholder.png" alt="No picture yet" class="placeholder-art" />';
     }
-    return `<span class="slot-glyph">${TYPE_GLYPH[pack.type] || '📦'}</span>`;
+    return `<span class="slot-glyph">${typeIcon(pack.type)}</span>`;
   }
 
   buildEditorHeader(blurb) {
@@ -2675,9 +2688,9 @@ export class PackEditor {
     const preview = slot.kind === 'image' && url
       ? `<img src="${url}" alt="" />`
       : isCharacter
-        ? '<img src="../../assets/placeholder.png" alt="No picture yet" class="placeholder-art" />'
+        ? '<img src="../../assets/app/placeholder.png" alt="No picture yet" class="placeholder-art" />'
         : `<span class="slot-glyph">${
-          slot.kind === 'audio' ? '♪' : slot.kind === 'video' ? '▶' : slot.kind === 'model' ? '◈' : '🖼'
+          slot.kind === 'audio' ? '♪' : slot.kind === 'video' ? '▶' : slot.kind === 'model' ? '◈' : '▣'
         }</span>`;
 
     card.innerHTML = `

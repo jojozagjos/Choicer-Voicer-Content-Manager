@@ -188,7 +188,28 @@ async function mySubmissions(token, repo, login) {
       url: issue.html_url,
     });
   }
-  return mine;
+
+  // One row per pack, not per submission.
+  //
+  // Publishing the same pack again opens a fresh issue every time, so a pack
+  // that has been updated twice had three rows in somebody's list, each with
+  // its own outcome. The counts above the list then said things like "one
+  // waiting, one listed" about a single pack, which is not wrong about the
+  // issues and is nonsense about the pack.
+  //
+  // The newest wins, and the request already asked for them newest first, so
+  // the first of each id is the one to keep. Submissions with no record in them
+  // have nothing to group by and are left alone.
+  const newest = [];
+  const seenIds = new Set();
+  for (const item of mine) {
+    if (item.id) {
+      if (seenIds.has(item.id)) continue;
+      seenIds.add(item.id);
+    }
+    newest.push(item);
+  }
+  return newest;
 }
 
 /**

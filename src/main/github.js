@@ -749,11 +749,76 @@ async function publish(token, { zipPath, packId, title, iconPath }, { onProgress
   };
 }
 
+/**
+ * Everything this app has published to the signed-in account.
+ *
+ * Read from the releases on their pack repository, which is the only place it
+ * puts anything. A missing repository is not a problem to report: it means
+ * nothing has been published yet, which is most people.
+ */
+async function myReleases(token) {
+  const me = await whoAmI(token);
+  const fullName = `${me.login}/${PACK_REPO}`;
+
+  let releases;
+  try {
+    releases = await api(`/repos/${fullName}/releases?per_page=100`, { token });
+  } catch (err) {
+    if (notFound(err)) return { login: me.login, repo: null, releases: [] };
+    throw err;
+  }
+
+  return {
+    login: me.login,
+    repo: `https://github.com/${fullName}`,
+    releases: releases.map((r) => ({
+      id: r.id,
+      tag: r.tag_name,
+      title: r.name || r.tag_name,
+      // The pack id this was published under, when the tag follows the shape
+      // publishing gives it. That is what ties a file here to a listing.
+      packId: /^pack-/.test(r.tag_name || '') ? r.tag_name.slice(5) : null,
+      url: r.html_url,
+      draft: r.draft,
+      published: r.published_at || r.created_at,
+      bytes: (r.assets || []).reduce((n, a) => n + (a.size || 0), 0),
+      downloads: (r.assets || []).reduce((n, a) => n + (a.download_count || 0), 0),
+      assets: (r.assets || []).map((a) => ({ name: a.name, bytes: a.size })),
+    })),
+  };
+}
+
+/**
+ * Removes a release and the tag holding it.
+ *
+ * Both, because deleting only the release leaves the tag behind and the next
+ * publish under that id reuses it, quietly attaching a new pack to an old tag.
+ * The tag is deleted second and its failure is swallowed: the release is the
+ * thing that served the file, and a leftover tag pointing at nothing is untidy
+ * rather than harmful.
+ */
+async function deleteRelease(token, releaseId, tag) {
+  const me = await whoAmI(token);
+  const fullName = `${me.login}/${PACK_REPO}`;
+
+  await api(`/repos/${fullName}/releases/${releaseId}`, { token, method: 'DELETE', raw: true });
+
+  if (tag) {
+    try {
+      await api(`/repos/${fullName}/git/refs/tags/${encodeURIComponent(tag)}`,
+        { token, method: 'DELETE', raw: true });
+    } catch { /* the release is gone, which is what was asked for */ }
+  }
+  return { ok: true };
+}
+
 module.exports = {
   configure,
   isConfigured,
   canSubmit,
   submitRecord,
+  myReleases,
+  deleteRelease,
   // Shared so the moderation side can talk to GitHub through the same headers,
   // error translation and timeouts rather than growing a second client.
   request: api,

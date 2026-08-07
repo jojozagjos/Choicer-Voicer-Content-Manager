@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Turns assets/icon-source.png into assets/icon.ico and assets/icon.png.
+ * Turns assets/app/icon-source.png into assets/app/icon.ico and assets/app/icon.png.
  *
  *   npm run icon
  *
@@ -27,9 +27,9 @@ const path = require('path');
 const { app, BrowserWindow } = require('electron');
 
 const ROOT = path.join(__dirname, '..');
-const SOURCE = path.join(ROOT, 'assets', 'icon-source.png');
-const ICO = path.join(ROOT, 'assets', 'icon.ico');
-const PNG = path.join(ROOT, 'assets', 'icon.png');
+const SOURCE = path.join(ROOT, 'assets', 'app', 'icon-source.png');
+const ICO = path.join(ROOT, 'assets', 'app', 'icon.ico');
+const PNG = path.join(ROOT, 'assets', 'app', 'icon.png');
 
 // What Windows actually reaches for, smallest first.
 const SIZES = [16, 24, 32, 48, 64, 128, 256];

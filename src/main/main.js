@@ -2736,6 +2736,64 @@ function iconInside(packDir, iconPath) {
  * be given a different one afterwards. The hash recorded at publish time is
  * what makes that swap fail rather than succeed silently.
  */
+/**
+ * Somebody's GitHub picture, fetched and kept.
+ *
+ * Same reasoning as the pack icons: the page may not load anything remote, both
+ * because its content security policy says so and because an `<img>` pointed at
+ * an address from a directory record reports every viewer's IP to whoever wrote
+ * it. Avatars are different from pack icons in one way that matters, though:
+ * there is no hash to check them against, because GitHub serves whatever the
+ * account currently has.
+ *
+ * That is acceptable here and would not be for a pack icon. This only ever
+ * loads `avatars.githubusercontent.com`, which is GitHub's own host and not an
+ * address anybody in the directory chooses, so the worst a publisher can do is
+ * change their own profile picture.
+ */
+function registerAvatarIpc() {
+  const cacheDir = path.join(app.getPath('userData'), 'avatars');
+  fs.mkdirSync(cacheDir, { recursive: true });
+  allowedRoots.add(path.resolve(cacheDir));
+
+  // Kept for a day. A profile picture changing is not urgent, and asking GitHub
+  // for every face on every visit to the tab is rude to them and slow here.
+  const KEEP_MS = 24 * 60 * 60 * 1000;
+
+  ipcMain.handle('mods:avatar', async (_event, { login }) => {
+    const name = String(login || '').toLowerCase();
+    if (!/^[a-z0-9](?:-?[a-z0-9]){0,38}$/.test(name)) {
+      return { ok: false, error: 'that is not a username' };
+    }
+
+    const cached = path.join(cacheDir, `${name}.img`);
+    try {
+      const age = Date.now() - fs.statSync(cached).mtimeMs;
+      if (age < KEEP_MS) return { ok: true, url: mediaUrl(cached) };
+    } catch { /* not fetched yet */ }
+
+    try {
+      // The size is asked for, so a 460px face is not downloaded to be drawn
+      // at 40. Addressed by username rather than by a URL from a record, so
+      // nothing in the directory can point this anywhere.
+      const response = await fetch(
+        `https://avatars.githubusercontent.com/${encodeURIComponent(name)}?s=160`,
+        { signal: AbortSignal.timeout(15000), headers: { accept: 'image/*' } },
+      );
+      if (!response.ok) return { ok: false, error: `GitHub answered ${response.status}` };
+
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (bytes.length > MAX_ICON_BYTES) return { ok: false, error: 'that picture is too large' };
+
+      fs.writeFileSync(cached, bytes);
+      bumpMedia(cacheDir);
+      return { ok: true, url: mediaUrl(cached) };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+}
+
 function registerIconIpc() {
   const cacheDir = path.join(app.getPath('userData'), 'mod-icons');
   // Served through the media protocol like everything else the renderer shows,
@@ -3178,6 +3236,7 @@ function registerMediaBytesIpc() {
 function registerModsIpc() {
   registerMediaBytesIpc();
   registerIconIpc();
+  registerAvatarIpc();
   registerPublishIpc();
   registerReviewIpc();
 

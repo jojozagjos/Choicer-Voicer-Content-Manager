@@ -192,6 +192,8 @@ const el = {
   modsGrid: $('#mods-grid'),
   modsSearch: $('#mods-search'),
   btnModsRefresh: $('#btn-mods-refresh'),
+  modsSort: $('#mods-sort'),
+  modsSortWrap: $('#mods-sort-wrap'),
   btnModsBrowse: $('#btn-mods-browse'),
   btnModsPublishers: $('#btn-mods-publishers'),
   btnModsInbox: $('#btn-mods-inbox'),
@@ -257,6 +259,7 @@ const state = {
   // does not re-fetch it; Refresh is what forces that.
   mods: null,
   modsType: 'all',
+  modsSort: 'downloads',
   modsShow: 'browse',
   // Whether GitHub says this account can moderate. Decides what is drawn, never
   // what is allowed — GitHub refuses the actions themselves.
@@ -1604,6 +1607,59 @@ async function decideReview(item, decision, pack) {
 // Browsing and installing never ask for an account. The directory is public and
 // the app reads it anonymously; only publishing needs anyone to sign in.
 
+/**
+ * The orders packs can be browsed in.
+ *
+ * Most downloaded leads, because it is the closest thing to a recommendation
+ * this directory can offer honestly: nothing here is curated, nobody approves
+ * uploads, and the only signal about a pack is how many people kept it. Newest
+ * is second, which is what stops that becoming self reinforcing and burying
+ * anything published today.
+ */
+const MOD_SORTS = [
+  { id: 'downloads', label: 'Most downloaded' },
+  { id: 'newest', label: 'Newest' },
+  { id: 'updated', label: 'Recently updated' },
+  { id: 'name', label: 'Name' },
+  { id: 'smallest', label: 'Smallest' },
+];
+
+/**
+ * Fills in the profile pictures on whatever was just drawn.
+ *
+ * The initial is rendered first and the picture replaces it, so a face that
+ * cannot be fetched simply stays as a letter rather than leaving a hole. Run
+ * after drawing rather than during it, because each one is a separate request
+ * and the list should not wait on any of them.
+ */
+function fillFaces(root = el.modsGrid) {
+  for (const holder of root.querySelectorAll('[data-face]')) {
+    const login = holder.dataset.face;
+    if (!login || holder.dataset.faceDone) continue;
+    holder.dataset.faceDone = '1';
+
+    window.api.mods.avatar(login).then((got) => {
+      if (!got || !got.ok || !holder.isConnected) return;
+      holder.innerHTML = `<img src="${escapeHtml(got.url)}" alt="" loading="lazy" />`;
+      holder.classList.add('has-face');
+    }).catch(() => { /* the initial is a fine answer */ });
+  }
+}
+
+/** Orders a list of packs, leaving the caller's array alone. */
+function sortPacks(packs, how) {
+  const at = (value) => Date.parse(value) || 0;
+  const by = {
+    downloads: (a, b) => (b.downloads || 0) - (a.downloads || 0)
+      || at(b.published) - at(a.published),
+    newest: (a, b) => at(b.published) - at(a.published),
+    updated: (a, b) => at(b.updated || b.published) - at(a.updated || a.published),
+    name: (a, b) => String(a.title).localeCompare(String(b.title), undefined, { numeric: true }),
+    smallest: (a, b) => (a.bytes || 0) - (b.bytes || 0),
+  };
+  return [...packs].sort(by[how] || by.downloads);
+}
+
 /** The rail down the side. "Everything" first, then one per pack type. */
 const MOD_TYPES = [
   { id: 'all', label: 'Everything' },
@@ -1718,6 +1774,9 @@ async function showMods(which = 'browse') {
   el.btnModsInbox.classList.toggle('on', which === 'inbox');
 
   el.modsSearch.hidden = which === 'publisher';
+  // Ordering is about packs, so it goes with them rather than following the
+  // reader onto a list of people or their own submissions.
+  el.modsSortWrap.hidden = which !== 'browse';
   el.modsSearch.placeholder = which === 'publishers' ? 'Search publishers…'
     : which === 'inbox' ? 'Search your submissions…'
       : 'Search packs…';
@@ -1768,6 +1827,8 @@ async function showPublishers() {
 
   el.modsGrid.innerHTML = people.map((p) => `
     <article class="publisher-card" data-author="${escapeHtml(p.author)}">
+      <span class="publisher-face" data-face="${escapeHtml(p.author)}">${
+  escapeHtml(p.author.slice(0, 1).toUpperCase())}</span>
       <h3>${escapeHtml(p.author)}</h3>
       <p class="muted small">${p.packs} pack${p.packs === 1 ? '' : 's'} ·
         ${escapeHtml(formatDownloads(p.downloads))} · ${escapeHtml(formatBytes(p.bytes))}</p>
@@ -1777,6 +1838,7 @@ async function showPublishers() {
   for (const card of el.modsGrid.querySelectorAll('[data-author]')) {
     card.addEventListener('click', () => showPublisher(card.dataset.author));
   }
+  fillFaces();
 }
 
 /**
@@ -1818,8 +1880,8 @@ async function showPublisher(author) {
   el.modsGrid.innerHTML = `
     <div class="publisher-page">
       <header class="publisher-hero">
-        <div class="publisher-avatar" aria-hidden="true">${escapeHtml(
-    String(author).slice(0, 1).toUpperCase())}</div>
+        <div class="publisher-avatar publisher-face" data-face="${escapeHtml(author)}"
+             aria-hidden="true">${escapeHtml(String(author).slice(0, 1).toUpperCase())}</div>
         <div class="publisher-who">
           <h2>${escapeHtml(author)}</h2>
           <p class="muted small">${stats
@@ -1858,6 +1920,7 @@ async function showPublisher(author) {
     return;
   }
   for (const pack of theirs) holder.append(modCard(pack));
+  fillFaces();
 }
 
 /**
@@ -2370,6 +2433,8 @@ function renderMods() {
     packs = packs.filter((p) => `${p.title} ${p.author} ${(p.tags || []).join(' ')}`
       .toLowerCase().includes(query));
   }
+
+  packs = sortPacks(packs, state.modsSort);
 
   el.modsSubtitle.textContent = query
     ? `${packs.length} of ${showing.length} matching "${query}"`
@@ -5908,6 +5973,14 @@ function wireEvents() {
   el.btnModsBrowse.addEventListener('click', () => showMods('browse'));
   el.btnModsPublishers.addEventListener('click', () => showMods('publishers'));
   el.btnModsInbox.addEventListener('click', () => showMods('inbox'));
+
+  el.modsSort.innerHTML = MOD_SORTS
+    .map((s) => `<option value="${s.id}">${escapeHtml(s.label)}</option>`).join('');
+  el.modsSort.value = state.modsSort;
+  el.modsSort.addEventListener('change', () => {
+    state.modsSort = el.modsSort.value;
+    renderMods();
+  });
 
   el.btnBack.addEventListener('click', () => {
     if (!state.loading) player.seek(el.video.currentTime - 5);

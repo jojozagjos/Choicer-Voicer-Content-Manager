@@ -100,6 +100,7 @@ contextBridge.exposeInMainWorld('api', {
   mods: {
     index: (options) => ipcRenderer.invoke('mods:index', options || {}),
     icon: (url, sha256) => ipcRenderer.invoke('mods:icon', { url, sha256 }),
+    avatar: (login) => ipcRenderer.invoke('mods:avatar', { login }),
     install: (record) => ipcRenderer.invoke('mods:install', { record }),
     share: (packDir, details) => ipcRenderer.invoke('mods:share', { packDir, details }),
     onProgress: (fn) => on('mods:progress', fn),

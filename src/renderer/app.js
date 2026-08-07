@@ -809,7 +809,7 @@ const TYPE_ICONS = {
 function typeIcon(type, className = '') {
   const name = TYPE_ICONS[type] || 'star';
   return `<img class="type-icon${className ? ` ${className}` : ''}" `
-    + `src="${ASSETS}/icons/${name}.png" alt="" />`;
+    + `src="${ASSETS}/glyphs/${name}.png" alt="" />`;
 }
 
 /** Where the pictures the app ships live, relative to the page. */
@@ -2179,7 +2179,7 @@ function renderModTypes() {
     button.dataset.type = type.id;
     button.classList.toggle('on', type.id === (state.modsType || 'all'));
     button.innerHTML = `
-      <span class="type-icon-wrap">${type.id === 'all' ? '' : typeIcon(type.id)}</span>
+      <span class="type-icon-wrap">${typeIcon(type.id)}</span>
       <span>${escapeHtml(type.label)}</span>
       <span class="count">${count}</span>`;
     button.addEventListener('click', () => {

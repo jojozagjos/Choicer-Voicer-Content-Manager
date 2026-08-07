@@ -1,26 +1,30 @@
 /* app.js resolves "system" and always stamps a concrete theme on <html>,
    so these two blocks are the only palettes that need to exist. */
+/* Neutral greys rather than the navy this used to be. The blue tint put a
+   colour behind every surface, which left the accent competing with its own
+   background and made pack artwork sit on a wash that was not the neutral it
+   was drawn against. The accent stays; everything under it steps back. */
 :root,
 :root[data-theme="dark"] {
-  --bg: #0c1520;
-  --bg-raised: #121e2c;
-  --bg-sunken: #08111a;
-  --panel: #172636;
-  --line: #263a4f;
-  --text: #e6f2fb;
-  --muted: #8ea9c0;
+  --bg: #0d0e10;
+  --bg-raised: #141619;
+  --bg-sunken: #08090b;
+  --panel: #17191d;
+  --line: #292d33;
+  --text: #e9ebee;
+  --muted: #9aa1aa;
   --accent: #5ecdf5;
   --accent-dim: #1d84bd;
   --accent-ink: #04222f;
   --ok: #4ade80;
   --warn: #fbbf24;
   --bad: #f87171;
-  --scroll-thumb: #263a4f;
-  --scroll-thumb-hover: #375574;
-  --hover: #1c3145;
-  --hover-line: #375574;
-  --glow: rgba(94, 205, 245, 0.16);
-  --shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --scroll-thumb: #292d33;
+  --scroll-thumb-hover: #3c424a;
+  --hover: #1d2025;
+  --hover-line: #3c424a;
+  --glow: rgba(94, 205, 245, 0.14);
+  --shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
 }
 
 /* Tuned to the game's own pale blue branding. */
@@ -3692,4 +3696,17 @@ input[type="range"]::-webkit-slider-thumb {
 /* Narrow windows put the detail under the list rather than squeezing both. */
 @media (max-width: 1120px) {
   .inbox-split { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* The glyphs are black line art on transparent, so they follow the theme by
+   being inverted rather than by shipping a second set of files. Only these:
+   the app's own icon and anything a pack supplies are pictures in their own
+   right and must not be touched. */
+:root[data-theme="dark"] .type-icon { filter: invert(1); }
+
+/* The pack types in Help, each beside its glyph. */
+.help-defs dt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }

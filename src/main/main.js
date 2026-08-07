@@ -704,7 +704,10 @@ function decorate(model) {
 function startupBackground() {
   const dark = settings.theme === 'dark'
     || (settings.theme !== 'light' && nativeTheme.shouldUseDarkColors);
-  return dark ? '#0c1520' : '#d9edfb';
+  // Kept in step with --bg in styles.css. They are two copies of one colour and
+  // the only symptom of them drifting is a flash of the wrong shade at startup,
+  // which is easy to miss and irritating once seen.
+  return dark ? '#0d0e10' : '#d9edfb';
 }
 
 // The fewest config controls each type's editor should render. A floor rather

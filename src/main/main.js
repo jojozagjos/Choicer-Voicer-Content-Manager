@@ -707,7 +707,7 @@ function startupBackground() {
   // Kept in step with --bg in styles.css. They are two copies of one colour and
   // the only symptom of them drifting is a flash of the wrong shade at startup,
   // which is easy to miss and irritating once seen.
-  return dark ? '#0d0e10' : '#d9edfb';
+  return dark ? '#070d15' : '#d9edfb';
 }
 
 // The fewest config controls each type's editor should render. A floor rather

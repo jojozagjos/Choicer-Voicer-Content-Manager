@@ -1,29 +1,31 @@
 /* app.js resolves "system" and always stamps a concrete theme on <html>,
    so these two blocks are the only palettes that need to exist. */
-/* Neutral greys rather than the navy this used to be. The blue tint put a
-   colour behind every surface, which left the accent competing with its own
-   background and made pack artwork sit on a wash that was not the neutral it
-   was drawn against. The accent stays; everything under it steps back. */
+/* Blue, and darker than it was.
+   The tint is the app's own, matching the game's branding, so it stays. What
+   changed is how far down it starts: every surface has dropped several steps,
+   which gives the panels room to separate from the background without needing
+   a lighter blue to do it, and stops the accent competing with a background
+   made of the same hue. */
 :root,
 :root[data-theme="dark"] {
-  --bg: #0d0e10;
-  --bg-raised: #141619;
-  --bg-sunken: #08090b;
-  --panel: #17191d;
-  --line: #292d33;
-  --text: #e9ebee;
-  --muted: #9aa1aa;
+  --bg: #070d15;
+  --bg-raised: #0c1420;
+  --bg-sunken: #040910;
+  --panel: #101b28;
+  --line: #1f3145;
+  --text: #e6f2fb;
+  --muted: #8ba6bf;
   --accent: #5ecdf5;
   --accent-dim: #1d84bd;
   --accent-ink: #04222f;
   --ok: #4ade80;
   --warn: #fbbf24;
   --bad: #f87171;
-  --scroll-thumb: #292d33;
-  --scroll-thumb-hover: #3c424a;
-  --hover: #1d2025;
-  --hover-line: #3c424a;
-  --glow: rgba(94, 205, 245, 0.14);
+  --scroll-thumb: #1f3145;
+  --scroll-thumb-hover: #2e4a66;
+  --hover: #162536;
+  --hover-line: #2e4a66;
+  --glow: rgba(94, 205, 245, 0.15);
   --shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
 }
 

@@ -1340,7 +1340,7 @@ export class PackEditor {
     const css = getComputedStyle(document.documentElement);
     const colour = (name, fallback) => (css.getPropertyValue(name) || fallback).trim();
 
-    ctx.fillStyle = colour('--bg-sunken', '#08090b');
+    ctx.fillStyle = colour('--bg-sunken', '#040910');
     ctx.fillRect(0, 0, rect.width, rect.height);
 
     const peaks = this.backingPeaks;
@@ -1368,7 +1368,7 @@ export class PackEditor {
       }
       ctx.globalAlpha = 1;
     } else {
-      ctx.fillStyle = colour('--muted', '#9aa1aa');
+      ctx.fillStyle = colour('--muted', '#8ba6bf');
       ctx.font = '11px system-ui, sans-serif';
       ctx.fillText('Reading the backing track…', 8, rect.height / 2 + 4);
     }

@@ -407,33 +407,14 @@ function friendlySessionName(session) {
     ? date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
     : session.name;
   const kind = session.isFreestyle ? 'freestyle' : `${session.takeCount} takes`;
-  // Recording in the game and then not knowing which of six sessions was the new
-  // one is the whole reason for this mark.
-  const fresh = sessionIsNew(session) ? '• NEW  ' : '';
-  return `${fresh}${label} (${kind})`;
+  // No mark for a session nothing has played yet. The list is newest first and
+  // every entry carries the time it was made, which already answers "which one
+  // did I just record" without a label that then has to be cleared, remembered
+  // per session, and explained.
+  return `${label} (${kind})`;
 }
 
-/**
- * Whether a session has never been played here.
- *
- * The game does not record this, so the app keeps its own list of the sessions
- * it has played. Anything not in that list is new, which after a run of
- * recording is the only way to tell which one was just made.
- */
-function sessionIsNew(session) {
-  if (!session || !session.id) return false;
-  const heard = state.settings.playedSessions || {};
-  return !heard[session.id];
-}
 
-/** Remembers that a session has been played, so it stops being marked new. */
-async function markSessionPlayed(session) {
-  if (!session || !session.id || !sessionIsNew(session)) return;
-  state.settings = await window.api.settings.set({
-    playedSessions: { ...(state.settings.playedSessions || {}), [session.id]: Date.now() },
-  });
-  renderSessionOptions();
-}
 
 /**
  * Deletes the recording session currently chosen.
@@ -1121,8 +1102,7 @@ async function showAdmin(which = 'reports', { force = false } = {}) {
  */
 async function refreshAdminListed() {
   el.adminList.innerHTML = '<p class="muted small">Reading the directory…</p>';
-  if (!state.mods) state.mods = await window.api.mods.index().catch(() => null);
-  const data = state.mods;
+  const data = await loadDirectory();
 
   if (!data || !data.ok || !data.configured) {
     el.adminList.innerHTML = '<p class="muted small">No directory to read yet.</p>';
@@ -1234,8 +1214,7 @@ async function refreshAdminPublishers() {
 
   // The Mods tab may never have been opened, so the index is fetched rather
   // than assumed.
-  if (!state.mods) state.mods = await window.api.mods.index().catch(() => null);
-  const data = state.mods;
+  const data = await loadDirectory();
 
   if (!data || !data.ok || !data.configured) {
     el.adminList.innerHTML = '<p class="muted small">No directory to read yet.</p>';
@@ -1367,6 +1346,27 @@ async function setPackListed(packId, listed) {
 function directoryChanged() {
   state.mods = null;
   state.modsStale = true;
+}
+
+/**
+ * The directory, from cache or from GitHub, past the CDN when it has to be.
+ *
+ * Every reader goes through here. They did not, and the ones that did not were
+ * why unlisting looked broken after it had already worked: the flag was written
+ * to index.json correctly, and then the admin list and the browse grid each
+ * fetched the index their own way without asking for a fresh copy, so the CDN
+ * handed back the version from before the change for the next five minutes. The
+ * pack really was hidden and nothing on screen agreed.
+ */
+async function loadDirectory({ force = false } = {}) {
+  if (state.mods && !force && !state.modsStale) return state.mods;
+
+  const result = await window.api.mods.index({ fresh: force || state.modsStale })
+    .catch((err) => ({ ok: false, error: err.message }));
+
+  state.mods = result;
+  state.modsStale = false;
+  return result;
 }
 
 /** Reports waiting to be looked at. */
@@ -1622,7 +1622,7 @@ const SUBMISSION_DAYS = 60;
  * knowing there is a clock at all is worse than knowing there is one.
  */
 function waitNoteFor(item) {
-  if (item.outcome !== 'waiting') return '';
+  if (inboxStateOf(item) !== 'waiting') return '';
 
   const opened = Date.parse(item.openedAt);
   if (!opened) return '';
@@ -1640,15 +1640,61 @@ function waitNoteFor(item) {
 
 /** How each submission outcome is shown. */
 const INBOX_STATES = {
-  waiting: { label: 'Waiting to be looked at', tone: 'muted' },
+  waiting: { label: 'Being checked', tone: 'muted' },
   listed: { label: 'Listed', tone: 'ok' },
+  // Accepted, but not yet visible to anyone. The directory is served through a
+  // cache that holds it for a few minutes, so there is a real window where the
+  // pack has been listed and still cannot be found. Saying "Listed" through it
+  // is not wrong so much as unhelpful: somebody goes looking and concludes it
+  // failed.
+  appearing: { label: 'Appearing shortly', tone: 'warn' },
   // Deliberately not shown in the same colour as a refusal. Being asked to
   // change something is not being turned down, and a page that paints the two
   // the same teaches people to read both as rejection.
   changes: { label: 'Needs a change', tone: 'warn' },
+  taken: { label: 'Taken down', tone: 'bad' },
   refused: { label: 'Not listed', tone: 'bad' },
   closed: { label: 'Closed', tone: 'muted' },
 };
+
+/**
+ * What is actually true of a submission right now.
+ *
+ * The outcome that arrives with a submission is read off the last comment on
+ * its issue, which is a record of what happened once and never changes again. A
+ * pack taken down a week later still said "Listed", and one accepted a minute
+ * ago said "Listed" while the cached directory had not caught up.
+ *
+ * The directory is the authority on where a pack stands, so it is asked. The
+ * comment is left to say what it is good at: why, when the answer was no.
+ */
+function inboxStateOf(item) {
+  const packs = (state.mods && state.mods.ok && state.mods.packs) || [];
+  const listed = item.id ? packs.find((p) => p.id === item.id) : null;
+
+  if (listed) return listed.listed === false ? 'taken' : 'listed';
+
+  // Accepted according to the issue, but not in the copy of the directory this
+  // app is holding. Either it is still propagating or it has been removed
+  // outright, and "appearing shortly" is the honest reading of both.
+  if (item.outcome === 'listed') return 'appearing';
+  return item.outcome;
+}
+
+/**
+ * A moderator's words, without the markdown they were written in.
+ *
+ * The comments are written for GitHub, which renders them. This shows them as
+ * plain text, so `**Meat Grinder** is listed` arrived with its asterisks
+ * showing and read like a mistake.
+ */
+function plainText(markdown) {
+  return String(markdown || '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/^#+\s*/gm, '')
+    .trim();
+}
 
 /** Switches the Mods tab between browsing and your own submissions. */
 async function showMods(which = 'browse') {
@@ -1684,16 +1730,12 @@ async function showMods(which = 'browse') {
  * drift from it.
  */
 async function showPublishers() {
-  if (!state.mods) {
+  if (!state.mods || state.modsStale) {
     el.modsGrid.innerHTML = '<p class="muted small">Looking…</p>';
-    const result = await window.api.mods.index({ fresh: state.modsStale })
-      .catch((err) => ({ ok: false, error: err.message }));
-    if (state.modsShow !== 'publishers') return;
-    state.mods = result;
-    state.modsStale = false;
   }
+  const data = await loadDirectory();
+  if (state.modsShow !== 'publishers') return;
 
-  const data = state.mods;
   el.modsTitle.textContent = 'Publishers';
 
   if (!data || !data.ok || !data.configured) {
@@ -1780,7 +1822,6 @@ async function showPublisher(author) {
       (MOD_TYPES.find((t) => t.id === type) || { label: type }).label)} · ${n}</span>`).join('')}</div>
         </div>
         <div class="publisher-bar">
-          <button type="button" class="btn btn-small" id="pub-back">← All packs</button>
           ${repo ? `<button type="button" class="btn btn-small btn-primary" id="pub-repo">
             Open their repository</button>` : ''}
         </div>
@@ -1789,18 +1830,17 @@ async function showPublisher(author) {
       ${stats ? `<div class="publisher-stats">
         <div><b>${stats.packs}</b><span class="muted small">packs listed</span></div>
         <div><b>${escapeHtml(formatDownloads(stats.downloads))}</b>
-          <span class="muted small">downloads</span></div>
+          <span class="muted small">downloaded</span></div>
         <div><b>${escapeHtml(formatBytes(stats.bytes))}</b>
           <span class="muted small">total size</span></div>
         <div><b>${escapeHtml(formatWhen(stats.latest))}</b>
-          <span class="muted small">last update</span></div>
+          <span class="muted small">last updated</span></div>
       </div>` : ''}
 
       <h3 class="publisher-heading">Their packs</h3>
       <div class="publisher-packs" id="pub-packs"></div>
     </div>`;
 
-  el.modsGrid.querySelector('#pub-back').addEventListener('click', () => showMods('browse'));
   const openRepo = el.modsGrid.querySelector('#pub-repo');
   if (openRepo) openRepo.addEventListener('click', () => openOutside(repo, 'their packs on GitHub'));
 
@@ -1998,9 +2038,9 @@ function drawInbox() {
       key: `s${item.number}`,
       kind: 'submission',
       title: item.title,
-      state: INBOX_STATES[item.outcome] || INBOX_STATES.closed,
+      state: INBOX_STATES[inboxStateOf(item)] || INBOX_STATES.closed,
       when: item.openedAt,
-      changed: seen[item.number] !== undefined && seen[item.number] !== item.outcome,
+      changed: seen[item.number] !== undefined && seen[item.number] !== inboxStateOf(item),
       item,
     });
   }
@@ -2080,7 +2120,7 @@ function drawInbox() {
   // never on screen.
   if (!query) {
     const now = {};
-    for (const item of items) now[item.number] = item.outcome;
+    for (const item of items) now[item.number] = inboxStateOf(item);
     localStorage.setItem('inboxSeen', JSON.stringify(now));
   }
 }
@@ -2116,7 +2156,7 @@ function drawInboxDetail() {
       ${waitNoteFor(item)}
       <h4 class="inbox-h">What was said</h4>
       ${item.reason
-    ? `<p class="inbox-reason">${escapeHtml(item.reason)}</p>`
+    ? `<p class="inbox-reason">${escapeHtml(plainText(item.reason))}</p>`
     : '<p class="inbox-reason muted">Nothing has been said on it yet.</p>'}
       ${mine ? `<h4 class="inbox-h">The file it points at</h4>
       <div class="inbox-files">
@@ -2158,7 +2198,7 @@ function drawInboxDetail() {
     <div class="inbox-figures">
       <div><b>${escapeHtml(formatBytes(file.bytes))}</b><span class="muted small">size</span></div>
       <div><b>${escapeHtml(formatDownloads(file.downloads))}</b>
-        <span class="muted small">downloads</span></div>
+        <span class="muted small">downloaded</span></div>
       <div><b>${file.assets.length}</b>
         <span class="muted small">file${file.assets.length === 1 ? '' : 's'}</span></div>
     </div>
@@ -2195,18 +2235,13 @@ async function refreshMods({ force = false } = {}) {
   }
 
   el.modsSubtitle.textContent = 'Looking…';
-  // Past the cache when this app is the thing that changed the directory, or
-  // when somebody pressed refresh because they expect it to have changed.
-  const result = await window.api.mods.index({ fresh: force || state.modsStale })
-    .catch((err) => ({ ok: false, error: err.message }));
-  state.modsStale = false;
+  await loadDirectory({ force });
 
   // Same reason as the submissions list: this can finish after somebody has
   // moved to the other tab, and painting the directory over their submissions
   // is as wrong in this direction as in the other.
   if (state.modsShow === 'inbox') return;
 
-  state.mods = result;
   renderModTypes();
   renderMods();
 }
@@ -2242,10 +2277,18 @@ function renderModTypes() {
 }
 
 /** Download counts are approximate, so they are shown that way. */
+/**
+ * How many times something has been downloaded.
+ *
+ * Zero is written as zero. It used to say "new", which is a different claim
+ * about a different thing: a pack listed a year ago that nobody has taken is
+ * not new, and dressing the number up made it impossible to tell that apart
+ * from one published this morning.
+ */
 function formatDownloads(count) {
-  if (!count) return 'new';
-  if (count >= 1000) return `${(count / 1000).toFixed(1)}k downloads`;
-  return `${count} download${count === 1 ? '' : 's'}`;
+  const n = Number(count) || 0;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k downloaded`;
+  return `${n} downloaded`;
 }
 
 /** Whether a listed pack is already installed, by title. */
@@ -2886,8 +2929,7 @@ function packIdFor(title) {
  */
 async function alreadyPublished(pack, login) {
   if (!login) return null;
-  if (!state.mods) state.mods = await window.api.mods.index().catch(() => null);
-  const data = state.mods;
+  const data = await loadDirectory();
   if (!data || !data.ok || !data.configured) return null;
 
   const mine = data.packs.filter((p) => (p.author || '').toLowerCase() === login.toLowerCase());
@@ -3263,18 +3305,27 @@ function renderContentDetail(pack) {
       ${issues}
     </div>
 
-    <div class="detail-actions">
-      <button type="button" class="btn btn-primary" id="btn-detail-edit"
-              ${converting ? 'disabled' : ''}>${actionIcon('edit')}Edit this pack</button>
-      <button type="button" class="btn" id="btn-detail-share"
+    <!-- Pictures, the way the pack types are shown in Mods. Four labelled
+         buttons never sat evenly: an earlier rule stretches them to equal
+         widths, so the row was governed by whichever label happened to be
+         longest and every window width broke it somewhere different. Square
+         buttons line up at any width, and each says what it does on hover. -->
+    <div class="detail-actions detail-actions-icons">
+      <button type="button" class="btn btn-primary icon-action" id="btn-detail-edit"
               ${converting ? 'disabled' : ''}
+              title="Edit this pack" aria-label="Edit this pack">${actionIcon('edit')}</button>
+      <button type="button" class="btn icon-action" id="btn-detail-share"
+              ${converting ? 'disabled' : ''}
+              aria-label="Share this pack"
               title="${pack.iconPath || pack.iconUrl
-    ? 'Package this pack to send or publish'
+    ? 'Share this pack'
     : 'This pack needs an icon first. Set one in Edit this pack, under Pack details.'
-}">${actionIcon('export')}Share this pack</button>
-      <button type="button" class="btn" id="btn-detail-open">${actionIcon('folder')}Open folder</button>
-      <button type="button" class="btn btn-danger" id="btn-detail-delete"
-              ${converting ? 'disabled' : ''}>${actionIcon('delete')}Delete</button>
+}">${actionIcon('export')}</button>
+      <button type="button" class="btn icon-action" id="btn-detail-open"
+              title="Open folder" aria-label="Open folder">${actionIcon('folder')}</button>
+      <button type="button" class="btn btn-danger icon-action" id="btn-detail-delete"
+              ${converting ? 'disabled' : ''}
+              title="Delete this pack" aria-label="Delete this pack">${actionIcon('delete')}</button>
     </div>`;
 
   el.contentDetail.querySelector('#btn-detail-edit')
@@ -5796,7 +5847,6 @@ function wireEvents() {
     player.toggle();
     // Pressing play is what "listened to" means, so the new mark comes off here
     // rather than on merely selecting the session in the list.
-    markSessionPlayed(state.session);
   });
 
   el.btnSessionDelete.addEventListener('click', removeCurrentSession);

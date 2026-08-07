@@ -249,25 +249,30 @@
          pane on the right, so they span the width instead of sharing a row
          with a title that changes underneath them. -->
     <header class="mods-bar">
-      <div class="segmented" role="group" aria-label="What to show">
-        <button type="button" id="btn-mods-browse" class="on">Browse</button>
-        <button type="button" id="btn-mods-publishers">Publishers</button>
-        <button type="button" id="btn-mods-inbox">Your submissions</button>
-      </div>
+      <!-- Separate buttons rather than one joined control, matching the tabs
+           above them. They do the same job at a lower level, so they should
+           look like it. -->
+      <nav class="mods-nav" role="tablist" aria-label="What to show">
+        <button type="button" class="tab on" role="tab" id="btn-mods-browse">Browse</button>
+        <button type="button" class="tab" role="tab" id="btn-mods-publishers">Publishers</button>
+        <button type="button" class="tab" role="tab" id="btn-mods-inbox">Your submissions</button>
+      </nav>
+      <button id="btn-mods-refresh" class="btn btn-small">Refresh</button>
       <input id="mods-search" class="input content-search" type="search"
              placeholder="Search packs…" autocomplete="off" />
-      <button id="btn-mods-refresh" class="btn btn-small">Refresh</button>
     </header>
 
     <div class="mods-body">
       <aside class="content-types type-rail" id="mods-types"></aside>
 
       <div class="content-main">
-        <header class="content-head">
-          <div>
-            <h2 id="mods-title">Mods</h2>
-            <p class="muted small" id="mods-subtitle"></p>
-          </div>
+        <!-- The heading and the count sit at opposite ends of the same line.
+             They answer two different questions, so putting the count under
+             the title read as a subtitle explaining it rather than as a
+             separate fact about what is on screen. -->
+        <header class="content-head mods-title-row">
+          <h2 id="mods-title">Mods</h2>
+          <p class="muted small" id="mods-subtitle"></p>
         </header>
 
         <div id="mods-grid" class="content-grid"></div>

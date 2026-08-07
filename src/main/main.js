@@ -311,7 +311,6 @@ const DEFAULT_SETTINGS = {
   // Sessions that have been played here at least once. The game does not record
   // this, and without it there is no way to tell which of several sessions was
   // the one just recorded.
-  playedSessions: {},
   // Donation prompt state. It only appears after the app has actually been
   // useful a few times, and never more than once a fortnight.
   exportsCompleted: 0,
@@ -364,7 +363,6 @@ function saveSettings(next) {
     // Merged for the same reason as the colours: these are keyed by character
     // name across every pack, so a write from one pack must not drop the rest.
     characterVolumes: { ...settings.characterVolumes, ...(next.characterVolumes || {}) },
-    playedSessions: { ...settings.playedSessions, ...(next.playedSessions || {}) },
   };
   delete settings.replaceCharacterColors;
   ffmpeg.setOverrides({ ffmpeg: settings.ffmpegPath, ffprobe: settings.ffprobePath });

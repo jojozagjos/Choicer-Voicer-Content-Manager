@@ -145,10 +145,21 @@ const LIMITS = {
 };
 
 const ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
-// Three to twenty, starting and ending with a letter or number. Written without
-// an optional tail on purpose: making the tail optional also allows a handle of
-// one character, which is worth having a test for.
-const HANDLE_PATTERN = /^[a-z0-9][a-z0-9_-]{1,18}[a-z0-9]$/;
+/**
+ * A GitHub username, as GitHub actually defines one.
+ *
+ * One to thirty-nine characters, letters and numbers and single hyphens, never
+ * starting or ending with a hyphen and never two hyphens in a row.
+ *
+ * This used to be a rule of its own making: three to twenty characters, and
+ * underscores allowed. Every part of that was wrong in a way that turned people
+ * away. `author` is always the account that hosts the file, which this app
+ * reads straight from GitHub, so a username GitHub issued and this refuses is
+ * simply a person who cannot publish and is told their own name is invalid.
+ * Anyone with a name shorter than three characters or longer than twenty hit
+ * it, which is a great many people, and no amount of retrying would have helped.
+ */
+const HANDLE_PATTERN = /^[a-z0-9](?:-?[a-z0-9]){0,38}$/;
 const TAG_PATTERN = /^[a-z0-9][a-z0-9-]{0,23}$/;
 // Either case is accepted and normalised down on the way out, because plenty of
 // tools print a checksum in capitals.
@@ -404,7 +415,12 @@ function validateRecord(input, { fromIndex = false } = {}) {
     problems.add('id', 'id may use lower case letters, numbers and dashes');
   }
   if (typeof input.author !== 'string' || !HANDLE_PATTERN.test(input.author)) {
-    problems.add('author', 'author must be a handle of 3 to 20 characters');
+    // Named, because "a handle" is not enough to work out what is wrong with
+    // yours. This is always the GitHub account the pack is hosted on, so the
+    // only way to reach this now is a name GitHub itself would not issue.
+    problems.add('author',
+      `"${input.author}" is not a GitHub username. A username is 1 to 39 letters, numbers `
+      + 'and single hyphens, and cannot start or end with a hyphen.');
   } else if (isReservedHandle(input.author)) {
     problems.add('author', 'that handle is reserved');
   }

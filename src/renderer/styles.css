@@ -1568,9 +1568,9 @@ input[type="range"]::-webkit-slider-thumb {
   border: none;
   color: var(--muted);
   font: inherit;
-  font-size: 13px;
+  font-size: 17px;
   line-height: 1;
-  padding: 6px 9px;
+  padding: 5px 11px;
   cursor: pointer;
 }
 .theme-toggle button + button { border-left: 1px solid var(--line); }
@@ -2916,13 +2916,27 @@ input[type="range"]::-webkit-slider-thumb {
 .mods-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 14px;
+  gap: 8px;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--line);
   background: var(--bg-raised);
 }
-/* The two controls that act on the chosen view sit apart from the choosing. */
+/* Refresh sits with the view buttons, at the same end of the bar as the back
+   and repository buttons on a publisher page. The search box is the odd one
+   out and goes to the far end. */
 .mods-bar .content-search { margin-left: auto; max-width: 260px; }
+.mods-nav { display: flex; gap: 4px; flex: none; }
+
+/* The heading and the count at opposite ends, on a line of their own with
+   nothing behind it. The bar above already carries the raised surface, and two
+   stacked bands of it made the pane look like it started twice. */
+.mods-title-row {
+  align-items: baseline;
+  background: none;
+  padding: 12px 16px 10px;
+}
+.mods-title-row h2 { margin: 0; }
+.mods-title-row p { margin: 0; }
 
 .mods-body {
   display: grid;
@@ -3628,7 +3642,13 @@ input[type="range"]::-webkit-slider-thumb {
   align-items: start;
   padding-bottom: 24px;
 }
-.inbox-column { display: grid; gap: 4px; align-content: start; }
+.inbox-column {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  padding-right: 16px;
+  border-right: 1px solid var(--line);
+}
 .inbox-none { padding: 10px 2px; }
 
 .inbox-row {
@@ -3763,3 +3783,15 @@ input[type="range"]::-webkit-slider-thumb {
   white-space: nowrap;
 }
 :root[data-theme="dark"] .btn-icon-glyph { filter: invert(1); }
+
+/* Pack actions as squares, so a row of them lines up at any window width. */
+.detail-actions-icons { gap: 8px; }
+.detail-actions-icons .icon-action {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+}
+.detail-actions-icons .btn-icon-glyph { width: 17px; height: 17px; }

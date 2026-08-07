@@ -112,6 +112,8 @@ contextBridge.exposeInMainWorld('api', {
     // The files this app has put on your account, and removing one.
     releases: () => ipcRenderer.invoke('mods:releases'),
     deleteRelease: (id, tag) => ipcRenderer.invoke('mods:deleteRelease', { id, tag }),
+    // Reporting a listed pack, or the account behind it.
+    report: (what) => ipcRenderer.invoke('mods:report', what),
     signIn: () => ipcRenderer.invoke('mods:signIn'),
     signOut: () => ipcRenderer.invoke('mods:signOut'),
     publish: (zipPath, details) => ipcRenderer.invoke('mods:publish', { zipPath, details }),

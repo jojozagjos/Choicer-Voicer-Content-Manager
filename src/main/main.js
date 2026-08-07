@@ -2893,6 +2893,28 @@ function registerPublishIpc() {
     }
   });
 
+  /**
+   * Reports a listed pack, or the account behind one.
+   *
+   * Needs a sign-in, and that is the point rather than a side effect. The issue
+   * is opened under the reporter's own account, so a publisher taken off the
+   * list can see who asked and why, and a report cannot be filed by nobody.
+   */
+  ipcMain.handle('mods:report', async (_event, what) => {
+    const token = loadToken();
+    if (!token) {
+      return { ok: false, error: 'Sign in to GitHub first. Reports are not anonymous.' };
+    }
+    if (!github.canSubmit()) {
+      return { ok: false, error: 'There is no directory set up to report to.' };
+    }
+    try {
+      return await review.report(token, DIRECTORY_REPO, what || {});
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
   /** Who is signed in, if anyone, and whether publishing is possible at all. */
   ipcMain.handle('mods:whoAmI', async () => {
     if (!github.isConfigured()) return { ok: true, configured: false };

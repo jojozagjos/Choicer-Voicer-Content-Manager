@@ -198,6 +198,51 @@ async function main() {
     check('it says so', /nobody named/i.test(threw), threw);
   });
 
+  console.log('\nReporting');
+
+  await run('a reported pack names itself so the moderator can act on it', async () => {
+    const fake = fakeGithub({ index: { version: 1, packs: [record()] } });
+    const result = await reviewWith(fake).report('t', 'owner/dir', {
+      packId: 'meat-grinder', packTitle: 'Meat Grinder', author: 'jojozagjos', reason: 'broken',
+    });
+
+    check('it says where the report went', result.ok && result.issue === 99);
+    const opened = fake.calls.find((c) => c.route.endsWith('/issues') && c.body);
+    check('it is labelled as a report', (opened.labels || []).includes('report'));
+    check('the pack id is in the body on its own',
+      /Pack: meat-grinder/.test(opened.body),
+      'the moderator side finds the pack by matching this against what is listed');
+    check('and what was said is carried', /broken/.test(opened.body));
+  });
+
+  await run('an account can be reported without a pack', async () => {
+    const fake = fakeGithub({ index: { version: 1, packs: [] } });
+    const result = await reviewWith(fake).report('t', 'owner/dir', {
+      author: 'someoneelse', reason: 'spamming',
+    });
+    check('it goes through', result.ok);
+    const opened = fake.calls.find((c) => c.route.endsWith('/issues') && c.body);
+    check('naming the account', /Published by: someoneelse/.test(opened.body));
+  });
+
+  await run('a report with nothing said is refused', async () => {
+    const fake = fakeGithub({ index: { version: 1, packs: [] } });
+    let threw = '';
+    try {
+      await reviewWith(fake).report('t', 'owner/dir', { packId: 'x', reason: '   ' });
+    } catch (err) { threw = err.message; }
+    check('it says why', /needs to say what is wrong/i.test(threw), threw);
+  });
+
+  await run('a report about nothing at all is refused', async () => {
+    const fake = fakeGithub({ index: { version: 1, packs: [] } });
+    let threw = '';
+    try {
+      await reviewWith(fake).report('t', 'owner/dir', { reason: 'something' });
+    } catch (err) { threw = err.message; }
+    check('it says so', /nothing named/i.test(threw), threw);
+  });
+
   console.log('\nThe queue');
 
   await run('only reports are in it', async () => {

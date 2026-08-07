@@ -1625,6 +1625,52 @@ const MOD_SORTS = [
 ];
 
 /**
+ * Reports a pack, or the account behind one, after asking why.
+ *
+ * Says plainly that it is not anonymous before anything is sent. Somebody
+ * reporting a pack is asking for it to be taken off a list, which is a real
+ * thing to do to another person, and finding out afterwards that your name was
+ * attached is the wrong order to learn it in.
+ */
+async function reportSomething({ packId, packTitle, author }) {
+  const what = packId ? `"${packTitle || packId}"` : `@${author}`;
+
+  const me = await ensureSignedIn();
+  if (!me) return;
+
+  const reason = await askText({
+    title: `Report ${what}?`,
+    detail: 'Say what is wrong with it. This opens a report on the directory under your own '
+      + `GitHub account, so it is signed by @${me.login} and whoever published this can see `
+      + 'who asked and why.\n\n'
+      + 'Reports are for packs that should not be listed: something that does not work, is '
+      + 'not what it says it is, or should never have been shared. Not liking a pack is not '
+      + 'a reason to take it off other people.',
+    placeholder: packId ? 'What is wrong with this pack' : 'What this account is doing',
+    buttons: ['Send the report', 'Cancel'],
+    mark: '!',
+    required: true,
+  });
+  if (reason === null) return;
+
+  const sent = await window.api.mods.report({ packId, packTitle, author, reason });
+  if (!sent.ok) {
+    toast(`Could not send that: ${sent.error}`, 'error', 9000);
+    return;
+  }
+
+  const open = await askConfirm({
+    title: 'Report sent',
+    detail: `Thank you. ${what} has been reported and somebody will look at it.\n\n`
+      + 'You can follow it on GitHub, and anything decided is said on the report itself.',
+    buttons: ['See the report', 'Done'],
+    mark: '✓',
+    cancelIndex: 1,
+  });
+  if (open === 0) openOutside(sent.url, 'this report on GitHub');
+}
+
+/**
  * Fills in the profile pictures on whatever was just drawn.
  *
  * The initial is rendered first and the picture replaces it, so a face that
@@ -1894,6 +1940,7 @@ async function showPublisher(author) {
         <div class="publisher-bar">
           ${repo ? `<button type="button" class="btn btn-small btn-primary" id="pub-repo">
             Open their repository</button>` : ''}
+          <button type="button" class="btn btn-small" id="pub-report">Report this publisher</button>
         </div>
       </header>
 
@@ -1913,6 +1960,9 @@ async function showPublisher(author) {
 
   const openRepo = el.modsGrid.querySelector('#pub-repo');
   if (openRepo) openRepo.addEventListener('click', () => openOutside(repo, 'their packs on GitHub'));
+
+  el.modsGrid.querySelector('#pub-report')
+    .addEventListener('click', () => reportSomething({ author }));
 
   const holder = el.modsGrid.querySelector('#pub-packs');
   if (!theirs.length) {
@@ -2591,6 +2641,8 @@ function modCard(pack) {
       <span class="muted small">${formatBytes(pack.bytes)} · ${formatDownloads(pack.downloads)}</span>
       <span class="mod-actions">
         <span class="mod-status muted small"></span>
+        <button class="btn btn-small mod-report" title="Report this pack"
+                aria-label="Report this pack">!</button>
         <button class="btn btn-small mod-install ${installed ? '' : 'btn-primary'}">
           ${installed ? 'Installed' : 'Install'}
         </button>
@@ -2608,6 +2660,10 @@ function modCard(pack) {
 
   card.querySelector('[data-author]')
     .addEventListener('click', () => showPublisher(pack.author));
+
+  card.querySelector('.mod-report').addEventListener('click', () => reportSomething({
+    packId: pack.id, packTitle: pack.title, author: pack.author,
+  }));
 
   fillModIcon(card.querySelector('.mod-icon'), pack);
   return card;

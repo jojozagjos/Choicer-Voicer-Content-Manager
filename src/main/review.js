@@ -101,6 +101,44 @@ async function queue(token, repo) {
 }
 
 /**
+ * Reports a pack, or the account behind one.
+ *
+ * Opened as an issue on the directory, under the reporter's own account, which
+ * is the whole of the accountability here. Nothing is anonymous: somebody
+ * taking a pack off the list is acting on what a named person said, and a
+ * report that costs nothing to file and cannot be traced is a tool for
+ * harassing publishers rather than for keeping the list clean.
+ *
+ * The pack id goes in the body on its own line. The moderator's side finds
+ * which pack a report is about by matching the text against what is listed, so
+ * putting the id in plainly is what lets it offer to take that pack down rather
+ * than leaving somebody to find it by hand.
+ */
+async function report(token, repo, { packId, packTitle, author, reason }) {
+  const words = String(reason || '').trim();
+  if (!words) throw new Error('A report needs to say what is wrong.');
+  if (!packId && !author) throw new Error('There is nothing named to report.');
+
+  const about = packId ? `pack \`${packId}\`` : `@${author}`;
+  const title = packId ? `Report: ${packTitle || packId}` : `Report: @${author}`;
+
+  const body = `A report about ${about}.\n\n`
+    + `${words}\n\n`
+    + '---\n'
+    + (packId ? `Pack: ${packId}\n` : '')
+    + (author ? `Published by: ${author}\n` : '')
+    + '\nSent from the Content Manager.';
+
+  const issue = await github.request(`/repos/${repo}/issues`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify({ title, body, labels: ['report'] }),
+  });
+
+  return { ok: true, issue: issue.number, url: issue.html_url };
+}
+
+/**
  * Blocks an account from publishing.
  *
  * The only thing a report can do to a person rather than to a pack. Applied the
@@ -344,6 +382,7 @@ module.exports = {
   standingOf,
   setListed,
   banAuthor,
+  report,
   queue,
   comment,
   close,

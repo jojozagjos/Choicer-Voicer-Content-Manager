@@ -58,6 +58,16 @@ Sharing packs, and working with a pack that has been recorded several times over
 - A previewed pack goes through the same checks as an installed one: its
   checksum has to match the listing, and the archive has to pass every shape
   check before anything is unpacked.
+- An Installed view lists every pack you have taken from the directory, and says
+  which of them the author has changed since. Updating is a button: nothing is
+  replaced without being asked, because a pack in your game folder may have been
+  recorded over. The number of packs waiting sits on the button.
+- Download counts are real. They are read from the number GitHub already keeps
+  for each file and refreshed daily, rather than sitting at zero forever. An
+  update does not reset a pack's total.
+- A pack is only ever downloaded once. Previewing one, installing it afterwards
+  and opening it again later all use the copy already on your machine, so a
+  listing's count reflects people rather than button presses.
 - Packs that have been taken off the list no longer appear anywhere in browsing,
   and no longer count towards a publisher's total.
 - Packs are listed as soon as they pass their checks. Nobody approves uploads:
@@ -106,6 +116,12 @@ Sharing packs, and working with a pack that has been recorded several times over
 
 ### The editor
 
+- Setting a pack icon from the video, or from a file, no longer throws you back
+  to the Clips list. Whichever side panel is open stays open.
+- The backing track's muffle keeps the music. It now takes out the band that
+  carries speech, roughly 300 Hz to 3.4 kHz, instead of everything above 600 Hz,
+  so a scene holds its bass and its top end while the original voices stop
+  competing with the dub.
 - The character box opens as a name is typed, and the arrow keys move through
   the matches with Enter to take one.
 - Each character's clips are drawn in that character's own colour, so who speaks

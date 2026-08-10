@@ -1,5 +1,6 @@
 import { DubPlayer } from './player.js';
 import { PackEditor } from './editor.js';
+import { escapeForHtml } from './escape.js';
 
 /**
  * Finds an element, and says so loudly when it is not there.
@@ -146,6 +147,9 @@ const el = {
   confirmMark: $('#confirm-mark'),
   confirmTitle: $('#confirm-title'),
   confirmDetail: $('#confirm-detail'),
+  confirmCode: $('#confirm-code'),
+  btnModsInstalled: $('#btn-mods-installed'),
+  modsUpdateBadge: $('#mods-update-badge'),
   confirmButtons: $('#confirm-buttons'),
   setupDialog: $('#setup-dialog'),
   setupDefaultPath: $('#setup-default-path'),
@@ -265,6 +269,9 @@ const state = {
   modsShow: 'browse',
   // The pack whose own page is open, if one is.
   listing: null,
+  // What this machine has installed from the directory, worked out once per
+  // directory refresh and cleared alongside it.
+  installed: null,
   // Whether GitHub says this account can moderate. Decides what is drawn, never
   // what is allowed — GitHub refuses the actions themselves.
   moderator: false,
@@ -1178,10 +1185,20 @@ function showListedPack(pack) {
           ${hidden ? 'List again' : 'Unlist'}
         </button>
       </div>
-    </div>`;
+    </div>
+
+    <!-- The same preview browsing gets. Deciding whether a pack should stay
+         listed used to mean downloading it by hand and opening it somewhere
+         else, which is a lot of steps between a report and an answer. -->
+    <h3 class="publisher-heading">What is in it</h3>
+    ${previewOfferHtml(pack, 'listed-preview')}`;
 
   el.adminMain.querySelector('#listed-open')
     .addEventListener('click', () => window.api.shell.openExternal(pack.downloadUrl));
+
+  const preview = el.adminMain.querySelector('#listed-preview');
+  preview.querySelector('[data-hear]')
+    .addEventListener('click', () => hearListing(pack, preview));
   el.adminMain.querySelector('#listed-toggle')
     .addEventListener('click', () => setPackListed(pack.id, hidden));
 }
@@ -1457,6 +1474,9 @@ async function setPackListed(packId, listed) {
 function directoryChanged() {
   state.mods = null;
   state.modsStale = true;
+  // What is installed is judged against the directory, so it goes stale with
+  // it rather than answering from a comparison against a copy that has gone.
+  state.installed = null;
 }
 
 /**
@@ -1988,6 +2008,7 @@ async function showMods(which = 'browse') {
   // stays lit while it is open rather than nothing being lit at all.
   el.btnModsBrowse.classList.toggle('on', which === 'browse' || which === 'publisher');
   el.btnModsPublishers.classList.toggle('on', which === 'publishers');
+  el.btnModsInstalled.classList.toggle('on', which === 'installed');
   el.btnModsInbox.classList.toggle('on', which === 'inbox');
 
   el.modsSearch.hidden = which === 'publisher';
@@ -1997,13 +2018,19 @@ async function showMods(which = 'browse') {
   el.btnModsRefresh.hidden = false;
   el.modsSearch.placeholder = which === 'publishers' ? 'Search publishers…'
     : which === 'inbox' ? 'Search your submissions…'
-      : 'Search packs…';
+      : which === 'installed' ? 'Search what you have installed…'
+        : 'Search packs…';
   // The type rail is about packs, so it has no meaning on the other views.
   if (which !== 'browse') el.modsTypes.hidden = true;
 
   if (which === 'inbox') await renderInbox();
   else if (which === 'publishers') await showPublishers();
+  else if (which === 'installed') await showInstalled();
   else await refreshMods();
+
+  // Read from the same directory the view above just used, so the number on
+  // the button cannot disagree with what is on screen.
+  await markUpdates();
 }
 
 /**
@@ -2117,9 +2144,9 @@ async function showPublisher(author) {
       (MOD_TYPES.find((t) => t.id === type) || { label: type }).label)} · ${n}</span>`).join('')}</div>
         </div>
         <div class="publisher-bar">
-          ${repo ? `<button type="button" class="btn btn-small btn-primary" id="pub-repo">
+          ${repo ? `<button type="button" class="btn btn-big btn-primary" id="pub-repo">
             Open their repository</button>` : ''}
-          <button type="button" class="btn btn-small mod-report" id="pub-report"
+          <button type="button" class="btn btn-big mod-report" id="pub-report"
                   title="Report this publisher" aria-label="Report this publisher">!</button>
         </div>
       </header>
@@ -2151,6 +2178,149 @@ async function showPublisher(author) {
   }
   for (const pack of theirs) holder.append(modCard(pack));
   fillFaces();
+}
+
+/**
+ * Everything installed from the directory, and what has moved on since.
+ *
+ * Updating is deliberately a button rather than something that happens to you.
+ * A pack in the game folder may have been recorded over, and replacing it
+ * without being asked would throw that away; and an author republishing is not
+ * a reason for anybody's machine to start downloading on its own.
+ */
+async function showInstalled() {
+  state.modsShow = 'installed';
+  state.listing = null;
+  el.modsView.dataset.show = 'installed';
+  el.btnModsBrowse.classList.remove('on');
+  el.btnModsPublishers.classList.remove('on');
+  el.btnModsInstalled.classList.add('on');
+  el.btnModsInbox.classList.remove('on');
+  el.modsSearch.hidden = false;
+  el.modsSearch.placeholder = 'Search what you have installed…';
+  el.modsSortWrap.hidden = true;
+  el.btnModsRefresh.hidden = false;
+  el.modsTypes.hidden = true;
+
+  el.modsTitle.textContent = 'Installed';
+  el.modsSubtitle.textContent = 'Looking…';
+  el.modsGrid.innerHTML = '<p class="muted small">Looking…</p>';
+
+  const mine = await loadInstalled();
+  if (state.modsShow !== 'installed') return;
+
+  if (!mine.length) {
+    el.modsSubtitle.textContent = '';
+    el.modsGrid.innerHTML = `<div class="mods-empty">
+      <h3>Nothing installed from here yet</h3>
+      <p class="muted">Packs you install from Browse are listed here, along with anything the
+         author has changed since.</p>
+      <p class="muted small">Packs you made yourself, or that somebody sent you as a file, are
+         in Content rather than here.</p></div>`;
+    return;
+  }
+
+  const query = (el.modsSearch.value || '').trim().toLowerCase();
+  const showing = query
+    ? mine.filter((p) => `${p.title} ${p.author}`.toLowerCase().includes(query))
+    : mine;
+
+  const waiting = mine.filter((p) => p.hasUpdate).length;
+  el.modsSubtitle.textContent = waiting
+    ? `${mine.length} installed · ${waiting} with an update`
+    : `${mine.length} installed · all up to date`;
+
+  if (!showing.length) {
+    el.modsGrid.innerHTML = '<div class="mods-empty"><h3>Nothing found</h3>'
+      + '<p class="muted">No installed pack matches that.</p></div>';
+    return;
+  }
+
+  // Anything with an update goes first. It is the only row on this page that
+  // asks anything of the reader.
+  const order = [...showing].sort((a, b) => (b.hasUpdate ? 1 : 0) - (a.hasUpdate ? 1 : 0));
+
+  el.modsGrid.innerHTML = `<div class="installed-list">${order.map((p) => `
+    <article class="installed-row${p.hasUpdate ? ' has-update' : ''}" data-id="${escapeHtml(p.id)}">
+      <span class="mod-icon" data-icon>${typeIcon(p.type)}</span>
+      <div class="installed-what">
+        <h3>${escapeHtml(p.title)}</h3>
+        <p class="muted small">by ${escapeHtml(p.author || 'unknown')} ·
+          installed ${escapeHtml(formatWhen(p.installedAt))}</p>
+      </div>
+      <span class="installed-state">${installedStateHtml(p)}</span>
+      <span class="installed-actions">
+        <span class="mod-status muted small" data-status></span>
+        ${p.hasUpdate
+    ? '<button type="button" class="btn btn-small btn-primary" data-update>Update</button>'
+    : ''}
+        ${p.record ? '<button type="button" class="btn btn-small" data-open>View</button>' : ''}
+      </span>
+    </article>`).join('')}</div>`;
+
+  for (const row of el.modsGrid.querySelectorAll('.installed-row')) {
+    const pack = order.find((p) => p.id === row.dataset.id);
+    if (!pack) continue;
+
+    if (pack.record) fillModIcon(row.querySelector('[data-icon]'), pack.record);
+
+    const open = row.querySelector('[data-open]');
+    if (open) open.addEventListener('click', () => showListing(pack.record));
+
+    const update = row.querySelector('[data-update]');
+    if (update) {
+      update.addEventListener('click', async () => {
+        await installMod(pack.record, update, row.querySelector('[data-status]'));
+        // Re-read rather than assume: the install reports its own failures,
+        // and a row still claiming an update after a failed one is worse than
+        // a row that simply has not changed.
+        state.installed = null;
+        await showInstalled();
+      });
+    }
+  }
+}
+
+/** What state one installed pack is in, in a few words. */
+function installedStateHtml(p) {
+  if (p.hasUpdate) return '<span class="chip chip-update">Update available</span>';
+  if (!p.stillListed) return '<span class="chip chip-plain">No longer listed</span>';
+  if (!p.canCompare) return '<span class="muted small">Installed before updates were tracked</span>';
+  return '<span class="muted small">Up to date</span>';
+}
+
+/**
+ * The installed list, read once per directory refresh.
+ *
+ * Answered against the directory already in hand rather than fetching it
+ * again, so opening this page costs nothing and cannot disagree with what
+ * Browse is showing.
+ */
+async function loadInstalled() {
+  if (state.installed) return state.installed;
+
+  const data = await loadDirectory();
+  const packs = data && data.ok && data.configured ? data.packs : [];
+  const got = await window.api.mods.installed(packs).catch(() => null);
+  state.installed = got && got.ok ? got.packs : [];
+  return state.installed;
+}
+
+/**
+ * Puts the number of waiting updates on the Installed button.
+ *
+ * This is the whole of the notification. A pack having been rebuilt is worth
+ * a number on a button and is not worth a dialog in front of whatever somebody
+ * was doing.
+ */
+async function markUpdates() {
+  const mine = await loadInstalled().catch(() => []);
+  const waiting = mine.filter((p) => p.hasUpdate).length;
+  el.modsUpdateBadge.textContent = String(waiting);
+  el.modsUpdateBadge.hidden = waiting === 0;
+  el.btnModsInstalled.title = waiting
+    ? `${waiting} installed pack${waiting === 1 ? ' has' : 's have'} an update`
+    : 'Packs you have installed from the directory';
 }
 
 /**
@@ -2192,11 +2362,10 @@ async function showListing(pack) {
           ${contentFlagsHtml(pack.content)}
         </div>
         <div class="publisher-bar">
-          <button type="button" class="btn btn-small" id="listing-back">All packs</button>
-          <button type="button" class="btn btn-small mod-report" id="listing-report"
-                  title="Report this pack" aria-label="Report this pack">!</button>
           <span class="mod-status muted small" id="listing-status"></span>
-          <button type="button" class="btn btn-small ${installed ? '' : 'btn-primary'}"
+          <button type="button" class="btn btn-big mod-report" id="listing-report"
+                  title="Report this pack" aria-label="Report this pack">!</button>
+          <button type="button" class="btn btn-big ${installed ? '' : 'btn-primary'}"
                   id="listing-install" ${installed ? 'disabled' : ''}>${
   installed ? 'Installed' : 'Install'}</button>
         </div>
@@ -2225,22 +2394,18 @@ async function showListing(pack) {
       </div>
 
       <h3 class="publisher-heading">What is in it</h3>
-      <div id="listing-preview">
-        <p class="muted small">Having a listen downloads the pack, ${
-  escapeHtml(formatBytes(pack.bytes))}. It is kept, so installing afterwards does not
-          download it again.</p>
-        <button type="button" class="btn btn-small" id="listing-hear">Have a listen</button>
-      </div>
+      ${previewOfferHtml(pack, 'listing-preview')}
     </div>`;
 
-  el.modsGrid.querySelector('#listing-back').addEventListener('click', () => showMods('browse'));
   el.modsGrid.querySelector('[data-author]')
     .addEventListener('click', () => showPublisher(pack.author));
   el.modsGrid.querySelector('#listing-report').addEventListener('click', () => reportSomething({
     packId: pack.id, packTitle: pack.title, author: pack.author,
   }));
-  el.modsGrid.querySelector('#listing-hear')
-    .addEventListener('click', () => hearListing(pack));
+
+  const preview = el.modsGrid.querySelector('#listing-preview');
+  preview.querySelector('[data-hear]')
+    .addEventListener('click', () => hearListing(pack, preview));
 
   const install = el.modsGrid.querySelector('#listing-install');
   if (!installed) {
@@ -2263,23 +2428,40 @@ function hostOf(url) {
 }
 
 /**
+ * The offer to fetch a pack and open it up, before anything is downloaded.
+ *
+ * Written once and used from both the pack's own page and the Admin list,
+ * because the question being asked is the same one: is this pack what it says
+ * it is. Somebody about to take a pack down has more need of the answer than
+ * somebody about to install it.
+ */
+function previewOfferHtml(pack, id) {
+  return `<div class="listing-preview" id="${id}">
+      <div class="listing-offer">
+        <button type="button" class="btn btn-big" data-hear>Preview pack</button>
+        <p class="muted small">Downloads the pack, ${escapeHtml(formatBytes(pack.bytes))},
+          and plays it here. It is kept afterwards, so nothing is downloaded twice.</p>
+      </div>
+    </div>`;
+}
+
+/**
  * Fetches a listed pack and shows what is inside it.
  *
  * The one thing a listing cannot tell you is whether the recording is any good,
  * and the only way to find that out was to install it and go looking in the
  * game. This plays the lines where they are, each with whatever it says.
  */
-async function hearListing(pack) {
-  const holder = el.modsGrid.querySelector('#listing-preview');
+async function hearListing(pack, holder) {
   if (!holder) return;
 
-  holder.innerHTML = '<p class="muted small" id="listing-progress">Fetching it…</p>';
-  const note = holder.querySelector('#listing-progress');
+  holder.innerHTML = '<p class="muted small" data-progress>Fetching it…</p>';
+  const note = holder.querySelector('[data-progress]');
 
   const stop = window.api.mods.onProgress(({ stage, percent }) => {
     if (!note.isConnected) return;
-    note.textContent = stage === 'downloading' && percent != null
-      ? `Downloading… ${Math.round(percent)}%`
+    note.textContent = percent != null
+      ? `${stage || 'Working'}… ${Math.round(percent)}%`
       : `${stage || 'Working'}…`;
   });
 
@@ -2299,23 +2481,32 @@ async function hearListing(pack) {
     return;
   }
 
+  // The video and the pictures sit together at the top as one strip, then the
+  // lines below. Stacked loose down the page they read as three unrelated
+  // dumps of whatever the zip happened to hold.
+  const media = (got.videoUrl ? `<video class="listing-video"
+      src="${escapeHtml(got.videoUrl)}" controls preload="metadata"></video>` : '')
+    + (got.images.length ? `<div class="listing-images">${got.images.map((i) =>
+      `<img src="${escapeHtml(i.url)}" alt="${escapeHtml(i.name)}"
+        title="${escapeHtml(i.name)}" loading="lazy" />`).join('')}</div>` : '');
+
   holder.innerHTML = `
-    ${got.videoUrl ? `<video class="listing-video" src="${escapeHtml(got.videoUrl)}"
-      controls preload="metadata"></video>` : ''}
-    ${got.images.length ? `<div class="listing-images">${got.images.map((i) =>
-    `<img src="${escapeHtml(i.url)}" alt="${escapeHtml(i.name)}" title="${escapeHtml(i.name)}"
-      loading="lazy" />`).join('')}</div>` : ''}
+    ${media ? `<div class="listing-media">${media}</div>` : ''}
     ${got.lines.length ? `<div class="listing-lines">${got.lines.map((l) => `
       <div class="listing-line">
-        <audio src="${escapeHtml(l.url)}" controls preload="none"></audio>
-        <span class="listing-said${l.caption ? '' : ' is-empty'}">${
-  escapeHtml(l.caption || l.name)}</span>
+        <!-- metadata, not none. With none, nothing is fetched until play is
+             pressed, so every line sat there reading 0:00 / 0:00 and only
+             admitted its length once it had been listened to. These are files
+             on this machine, so reading their headers costs nothing. -->
+        <audio src="${escapeHtml(l.url)}" controls preload="metadata"></audio>
+        <span class="listing-said${l.caption ? '' : ' is-empty'}"
+              title="${escapeHtml(l.name)}">${escapeHtml(l.caption || l.name)}</span>
       </div>`).join('')}</div>`
     : '<p class="muted small">There are no spoken lines in this pack.</p>'}
-    <p class="muted small">${got.lineCount > got.lines.length
-    ? `The first ${got.lines.length} of ${got.lineCount} lines. ` : ''}${
-  got.fileCount} file${got.fileCount === 1 ? '' : 's'},
-      ${escapeHtml(formatBytes(got.bytes))} unpacked.</p>`;
+    <p class="muted small listing-tally">${got.lineCount > got.lines.length
+    ? `The first ${got.lines.length} of ${got.lineCount} lines · ` : ''}${
+  got.fileCount} file${got.fileCount === 1 ? '' : 's'} ·
+      ${escapeHtml(formatBytes(got.bytes))} unpacked</p>`;
 }
 
 /**
@@ -3254,9 +3445,9 @@ async function ensureSignedIn({ force = false } = {}) {
     window.api.shell.openExternal(verificationUri);
     askConfirm({
       title: 'Your code',
-      detail: `Type this on ${verificationUri}, which should have just opened:\n\n`
-        + `        ${userCode}\n\n`
-        + 'Leave this open until it is done.',
+      detail: `Type this on ${verificationUri}, which should have just opened. `
+        + 'Leave this dialog open until it is done.',
+      code: userCode,
       buttons: ['Done'],
       mark: '#',
     });
@@ -3580,9 +3771,9 @@ async function publishPack(packaged, pack, already = null) {
         + `${updating ? 'offered as an update' : 'offered to the directory'}.\n\n`
         + (updating
           ? 'The listing keeps its place and its download count. Nothing else is needed from you.'
-          : 'It will appear in the Mods tab once it has been looked over. You can follow it in '
-            + 'Your submissions. Nothing else is needed from you.'),
-      go: 'See the submission',
+          : 'It appears in the Mods tab once its checks pass, usually within a few minutes. '
+            + 'You can follow it in Your submissions. Nothing else is needed from you.'),
+      go: 'See your submissions on GitHub',
     }
     : result.submitError
       ? {
@@ -3619,12 +3810,24 @@ function renderContentTypes() {
 
   for (const type of state.content.types) {
     const errors = type.packs.reduce((n, p) => n + p.counts.error, 0);
+    const warnings = type.packs.reduce((n, p) => n + p.counts.warn, 0);
+
+    // Errors outrank warnings on the same icon rather than both being shown.
+    // Two numbers on a 46 pixel button is not a thing anybody reads, and a
+    // type with an error in it is going to be opened regardless of what else
+    // is in there. Warnings only get the badge when there is nothing worse.
+    const badge = errors
+      ? { count: errors, kind: 'error' }
+      : warnings ? { count: warnings, kind: 'warn' } : null;
+
     const button = document.createElement('button');
     button.className = 'type-btn';
     button.dataset.type = type.id;
     button.title = errors
       ? `${type.label} — ${errors} need attention`
-      : `${type.label} (${type.packs.length})`;
+      : warnings
+        ? `${type.label} — ${warnings} worth a look`
+        : `${type.label} (${type.packs.length})`;
     button.setAttribute('aria-label', button.title);
     button.classList.toggle('on', type.id === state.contentType);
     // Pictures only, matching Mods. The one number kept is the count of things
@@ -3632,7 +3835,7 @@ function renderContentTypes() {
     // somebody for; how many host packs exist is not.
     button.innerHTML = `
       <span class="type-icon-wrap">${typeIcon(type.id)}</span>
-      ${errors ? `<b class="badge badge-error type-badge">${errors}</b>` : ''}`;
+      ${badge ? `<b class="badge badge-${badge.kind} type-badge">${badge.count}</b>` : ''}`;
     button.addEventListener('click', () => {
       state.contentType = type.id;
       state.contentPackId = null;
@@ -4598,9 +4801,7 @@ function renderPacks() {
 }
 
 function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text == null ? '' : String(text);
-  return div.innerHTML;
+  return escapeForHtml(text);
 }
 
 // The What's New tab
@@ -5126,13 +5327,19 @@ function staleClose() {
   return el.confirmDialog.open;
 }
 
-function askConfirm({ title, detail, buttons, mark = '?', danger = false, cancelIndex = -1 }) {
+function askConfirm({
+  title, detail, buttons, mark = '?', danger = false, cancelIndex = -1, code = null,
+}) {
   return new Promise((resolve) => {
     el.confirmMark.textContent = mark;
     el.confirmMark.classList.toggle('danger', danger);
     el.confirmTitle.textContent = title;
     el.confirmDetail.textContent = detail || '';
     el.confirmDetail.hidden = !detail;
+    // Text, never markup: this is set from whatever the caller has, and one
+    // dialog that takes HTML is all it takes for a pack title to become one.
+    el.confirmCode.textContent = code || '';
+    el.confirmCode.hidden = !code;
     el.confirmButtons.innerHTML = '';
 
     let settled = false;
@@ -6497,6 +6704,7 @@ function wireEvents() {
   });
   el.btnModsBrowse.addEventListener('click', () => showMods('browse'));
   el.btnModsPublishers.addEventListener('click', () => showMods('publishers'));
+  el.btnModsInstalled.addEventListener('click', () => showMods('installed'));
   el.btnModsInbox.addEventListener('click', () => showMods('inbox'));
 
   el.modsSort.innerHTML = MOD_SORTS

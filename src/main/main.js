@@ -2744,6 +2744,13 @@ function noteOrigin(packDir, record) {
     title: record.title || '',
     dropped: Boolean(record.dropped),
     at: new Date().toISOString(),
+    // What was installed, so a later listing can be compared against it. The
+    // checksum is the honest test: an author who fixes one caption and
+    // republishes changes the file without necessarily changing anything else
+    // about the listing, and a date can be written by hand.
+    sha256: record.sha256 || '',
+    type: record.type || '',
+    updated: record.updated || record.published || '',
   };
   try {
     fs.writeFileSync(originsFile(), `${JSON.stringify(all, null, 2)}\n`);
@@ -2757,12 +2764,144 @@ function originOf(packDir) {
 }
 
 /**
- * Keeps the previews folder from becoming a second copy of the directory.
+ * One copy of every pack file this app has fetched, kept by its checksum.
  *
- * A preview is a whole pack, kept on purpose so that installing right after
- * looking does not download it again. Kept forever, though, browsing for an
- * evening would leave a gigabyte behind with nothing ever asking for it back.
- * The few most recent survive; the rest go, oldest first.
+ * The directory has no server, so how many times a pack has been downloaded is
+ * read from the number GitHub keeps for the file itself. That number counts
+ * requests, which means every avoidable second fetch of the same bytes shows
+ * up as somebody else installing the pack, and an author reading their own
+ * listing is told something untrue.
+ *
+ * None of it can be fixed at the counting end. It can be fixed here: a pack is
+ * fetched once, and previewing it, installing it after previewing it, and
+ * previewing it again a week later all read the copy already on disk. Keyed by
+ * the checksum rather than by the pack, because that is what says two files are
+ * the same file — the address changes with every republish and the id never
+ * changes at all.
+ *
+ * What is left after this is a genuinely new fetch: a pack whose author has
+ * published a new version, or one evicted for being older than the cap below.
+ * Neither is the app counting the same download twice.
+ */
+function packCacheDir() {
+  return path.join(app.getPath('userData'), 'pack-cache');
+}
+
+/** Where a pack of this checksum lives, whether or not it is there yet. */
+function cachedPackPath(sha256) {
+  return path.join(packCacheDir(), `${String(sha256).toLowerCase()}.zip`);
+}
+
+/**
+ * The pack's zip, from the cache when it is already there and correct.
+ *
+ * The checksum is verified either way. A cached file that no longer matches is
+ * treated exactly like one that was never there, so a corrupted or tampered
+ * cache cannot turn into an install.
+ */
+async function fetchPack(pack, { onStage, onProgress, signal } = {}) {
+  const stage = (name, percent) => { if (onStage) onStage(name, percent); };
+  const target = cachedPackPath(pack.sha256);
+
+  if (fs.existsSync(target) && (await checksum(target).catch(() => null)) === pack.sha256) {
+    // Touched so the eviction below treats it as recently wanted.
+    const now = new Date();
+    try { fs.utimesSync(target, now, now); } catch { /* not important */ }
+    return { path: target, cached: true };
+  }
+
+  fs.mkdirSync(packCacheDir(), { recursive: true });
+  const partial = `${target}.${process.pid}.part`;
+
+  try {
+    stage('downloading', 0);
+    await download(pack.downloadUrl, partial, {
+      expectedBytes: pack.bytes,
+      onProgress: (percent) => stage('downloading', percent),
+      signal,
+    });
+
+    stage('checking');
+    if (await checksum(partial) !== pack.sha256) {
+      throw new Error('This download does not match what the listing says it should be, '
+        + 'so it has not been used.');
+    }
+
+    // Renamed only once it is proven, so a cancelled or corrupted download can
+    // never be picked up as a cache hit by the next attempt.
+    fs.renameSync(partial, target);
+    prunePackCache(pack.sha256);
+    return { path: target, cached: false };
+  } catch (err) {
+    try { fs.unlinkSync(partial); } catch { /* never created */ }
+    throw err;
+  }
+}
+
+// Packs are tens of megabytes each, so this is a cache rather than a hoard.
+// Large enough that a normal session of browsing never evicts something it is
+// about to want, small enough not to quietly fill a disk.
+const PACK_CACHE_BYTES = 600 * 1024 * 1024;
+
+/** Drops the least recently wanted packs until the cache is under its cap. */
+function prunePackCache(keepSha) {
+  const keep = `${String(keepSha || '').toLowerCase()}.zip`;
+  try {
+    const files = fs.readdirSync(packCacheDir())
+      .filter((name) => name.endsWith('.zip'))
+      .map((name) => {
+        const full = path.join(packCacheDir(), name);
+        const stat = fs.statSync(full);
+        return { name, full, bytes: stat.size, when: stat.mtimeMs };
+      })
+      .sort((a, b) => b.when - a.when);
+
+    let total = 0;
+    for (const file of files) {
+      total += file.bytes;
+      if (total <= PACK_CACHE_BYTES || file.name === keep) continue;
+      fs.rmSync(file.full, { force: true });
+    }
+  } catch {
+    // No cache folder yet, or a file held open by something else. Neither is
+    // worth failing a download that has already succeeded.
+  }
+}
+
+/**
+ * An address this app is willing to hand to the operating system, or nothing.
+ *
+ * `shell.openExternal` does whatever the machine has been told that scheme
+ * means. On Windows that includes `file:` handing an executable to the shell,
+ * and a long tail of registered handlers that have been used to start programs
+ * from a link. The two callers here open GitHub pages and a donation page, so
+ * https is the whole of what is needed and everything else is refused rather
+ * than reasoned about.
+ *
+ * A credential in the address is refused too. Nothing here builds one, so its
+ * presence means the address came from somewhere it should not have, and
+ * `https://github.com@evil.example/` reads as GitHub to almost everybody.
+ */
+function safeExternalUrl(url) {
+  if (typeof url !== 'string' || url.length > 2048) return null;
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'https:') return null;
+  if (parsed.username || parsed.password) return null;
+  return parsed.toString();
+}
+
+/**
+ * Keeps the unpacked previews from piling up.
+ *
+ * These are the extracted folders, not the downloads: the zips live in the
+ * pack cache and are managed by their own cap, so throwing an unpacked copy
+ * away costs an unzip rather than a download. A few recent ones survive
+ * because reopening the pack you just looked at is the common case.
  */
 function prunePreviews(keepId, keep = 3) {
   const root = path.join(app.getPath('userData'), 'previews');
@@ -2832,7 +2971,10 @@ function describePreview(dir) {
   };
 
   return {
-    videoUrl: video ? mediaUrl(video.full) : null,
+    // The path, not an address. The caller converts it and hands back a URL
+    // for the copy Chromium can actually decode.
+    videoPath: video ? video.full : null,
+    videoUrl: null,
     images: images.slice(0, 12).map((f) => ({ name: f.rel, url: mediaUrl(f.full) })),
     lines: audio.slice(0, 60).map((f) => ({
       name: path.basename(noExt(f.rel)),
@@ -3502,10 +3644,11 @@ function registerModsIpc() {
    * whether the recording is any good, and finding that out by installing it
    * means putting files into the game folder to answer a question.
    *
-   * Downloaded into a temporary folder and kept there, so pressing Install
-   * afterwards does not fetch the same thirty megabytes a second time. Every
-   * check that guards installing runs here too: this is somebody else's zip and
-   * being for a preview does not make it more trustworthy.
+   * The file comes from the shared pack cache, so previewing a pack, then
+   * installing it, then looking at it again a month later is one download
+   * rather than three. Every check that guards installing runs here too: this
+   * is somebody else's zip and being for a preview does not make it more
+   * trustworthy.
    */
   ipcMain.handle('mods:preview', async (event, { record }) => {
     const checked = validateRecord(record, { fromIndex: true });
@@ -3514,8 +3657,9 @@ function registerModsIpc() {
     }
     const pack = checked.record;
 
-    const root = path.join(app.getPath('userData'), 'previews', pack.id);
-    const zipPath = path.join(root, 'pack.zip');
+    // Keyed by checksum, like the cache, so an updated pack unpacks beside the
+    // version it replaced rather than being shown the old one under its id.
+    const root = path.join(app.getPath('userData'), 'previews', pack.sha256.slice(0, 16));
     const unpacked = path.join(root, 'unpacked');
     allowedRoots.add(path.resolve(root));
 
@@ -3524,25 +3668,10 @@ function registerModsIpc() {
     };
 
     try {
-      // Already here from a previous look, and still the file it claims to be.
-      const cached = fs.existsSync(unpacked) && fs.existsSync(zipPath)
-        && (await checksum(zipPath).catch(() => null)) === pack.sha256;
+      const zipPath = (await fetchPack(pack, { onStage: say })).path;
 
-      if (!cached) {
-        fs.rmSync(root, { recursive: true, force: true });
+      if (!fs.existsSync(unpacked)) {
         fs.mkdirSync(root, { recursive: true });
-
-        say('downloading', 0);
-        await download(pack.downloadUrl, zipPath, {
-          expectedBytes: pack.bytes,
-          onProgress: (percent) => say('downloading', percent),
-        });
-
-        say('checking');
-        if (await checksum(zipPath) !== pack.sha256) {
-          throw new Error('This download does not match what the listing says it should be, '
-            + 'so it has not been opened.');
-        }
 
         const shape = checkArchiveShape(await listEntries(zipPath));
         if (!shape.ok) throw new Error(`This pack is not safe to open: ${shape.problems[0]}`);
@@ -3551,13 +3680,96 @@ function registerModsIpc() {
         await extractInto(zipPath, unpacked);
       }
 
+      const found = describePreview(unpacked);
+
+      // The pack video is Theora, which Chromium cannot decode: handing its
+      // address straight to the page produced a black rectangle and nothing
+      // else. Everywhere in the app that shows a video builds a proxy first,
+      // and this is no different for being somebody else's pack.
+      if (found.videoPath) {
+        say('converting the video');
+        try {
+          const proxy = await ensureProxy(found.videoPath, path.join(root, 'proxy'), {
+            onProgress: (percent) => say('converting the video', percent),
+          });
+          found.videoUrl = mediaUrl(proxy.path);
+        } catch {
+          // A pack whose video will not convert is still worth listening to,
+          // so the lines stay and the player goes rather than the whole
+          // preview failing over one file.
+          found.videoUrl = null;
+        }
+      }
+      delete found.videoPath;
+
       say('done');
-      prunePreviews(pack.id);
-      return { ok: true, ...describePreview(unpacked), zipPath };
+      prunePreviews(path.basename(root));
+      return { ok: true, ...found };
     } catch (err) {
+      // Only the unpacked copy goes. The zip stays in the cache, where it is
+      // either correct or will be re-fetched on its own terms; deleting it
+      // because unpacking failed would mean paying for the download again.
       fs.rmSync(root, { recursive: true, force: true });
       return { ok: false, error: err.message };
     }
+  });
+
+  /**
+   * Every pack on this machine that came from the directory, and whether the
+   * listing has moved on since.
+   *
+   * An author who fixes a caption and republishes leaves everyone who already
+   * installed it holding the old copy with nothing to tell them so. Comparing
+   * the checksum recorded at install time against the one the listing carries
+   * now answers that exactly, and it is the only field that cannot be wrong
+   * about it: a pack can be rebuilt without its version or dates changing, but
+   * not without its bytes changing.
+   *
+   * Nothing here installs anything. It reports, and the app asks.
+   */
+  ipcMain.handle('mods:installed', async (event, { packs } = {}) => {
+    const listed = new Map();
+    for (const pack of Array.isArray(packs) ? packs : []) {
+      const checked = validateRecord(pack, { fromIndex: true });
+      if (checked.ok) listed.set(checked.record.id, checked.record);
+    }
+
+    const gameDir = gamedata.resolveGameDir(settings.gameDir || gamedata.defaultGameDir());
+    const origins = readOrigins();
+    const mine = [];
+
+    for (const [dir, origin] of Object.entries(origins)) {
+      if (!origin.id || origin.dropped) continue;
+      // A pack deleted from the game folder is not installed, whatever this
+      // file still remembers about it.
+      if (!fs.existsSync(dir)) continue;
+      // And one sitting outside the folder the app is pointed at is somebody
+      // else's install, or a leftover from a folder that has since moved.
+      if (gameDir && !path.resolve(dir).toLowerCase()
+        .startsWith(path.resolve(gameDir).toLowerCase())) continue;
+
+      const now = listed.get(origin.id) || null;
+      mine.push({
+        dir,
+        id: origin.id,
+        title: origin.title || path.basename(dir),
+        author: origin.author,
+        type: origin.type || (now && now.type) || '',
+        installedAt: origin.at,
+        installedSha: origin.sha256 || '',
+        // Unlisted or removed since. Said plainly rather than guessed at: it
+        // is not out of date, there is simply nothing to compare it to.
+        stillListed: Boolean(now && now.listed !== false),
+        // An install from before checksums were recorded cannot be compared,
+        // and claiming an update exists on that basis would be a lie.
+        canCompare: Boolean(origin.sha256 && now && now.sha256),
+        hasUpdate: Boolean(origin.sha256 && now && now.sha256 && now.sha256 !== origin.sha256),
+        record: now,
+      });
+    }
+
+    mine.sort((a, b) => a.title.localeCompare(b.title));
+    return { ok: true, packs: mine };
   });
 
   /** Downloads, checks and installs one pack from the directory. */
@@ -3579,10 +3791,11 @@ function registerModsIpc() {
     try {
       const result = await installFromRecord(checked.record, gameDir, {
         signal: job.signal,
-        // If this pack was just previewed, its zip is already here. Offered
-        // rather than assumed: installFromRecord checks it against the record
+        // The shared cache, so a pack that was previewed, or installed once
+        // before and since removed, is not fetched again. Offered rather than
+        // assumed: installFromRecord checks it against the record's checksum
         // and downloads afresh if it does not match.
-        cachedZip: path.join(app.getPath('userData'), 'previews', checked.record.id, 'pack.zip'),
+        cachedZip: cachedPackPath(checked.record.sha256),
         onStage: (name) => {
           if (!event.sender.isDestroyed()) event.sender.send('mods:progress', { stage: name });
         },
@@ -4217,8 +4430,12 @@ function registerIpc() {
    * from its update check, so leaving it should never be a surprise.
    */
   ipcMain.handle('shell:openExternalConfirmed', async (_e, { url }) => {
-    // Asked in the app first; this only carries it out.
-    await shell.openExternal(url);
+    // Asked in the app first, but asking is not checking. The dialog in front
+    // of this one shows a host and gets a yes; it does not decide whether the
+    // address is one this app should be handing to the operating system.
+    const safe = safeExternalUrl(url);
+    if (!safe) return { ok: false, error: 'that address cannot be opened' };
+    await shell.openExternal(safe);
     return { ok: true };
   });
 
@@ -4405,7 +4622,8 @@ function registerIpc() {
   });
 
   ipcMain.handle('shell:openExternal', (_e, url) => {
-    if (/^https?:/.test(url)) shell.openExternal(url);
+    const safe = safeExternalUrl(url);
+    if (safe) shell.openExternal(safe);
   });
 }
 

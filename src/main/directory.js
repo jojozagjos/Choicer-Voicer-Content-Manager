@@ -510,6 +510,20 @@ function validateRecord(input, { fromIndex = false } = {}) {
       // published claiming thousands of downloads it never had.
       downloads: fromIndex && Number.isInteger(input.downloads) && input.downloads >= 0
         ? input.downloads : 0,
+      // The counting job's own workings, which have to survive being rewritten
+      // by everything else that touches the index.
+      //
+      // Publishing an update uploads a new file, and GitHub starts that file's
+      // counter at zero. Without somewhere to bank what the previous one
+      // reached, a popular pack would drop back to nothing on the day its
+      // author fixed a caption. `countedUrl` is how the job notices that the
+      // file it is counting is not the file it counted last time.
+      //
+      // Both are dropped from anything arriving as a submission, exactly like
+      // the count itself, so neither can be used to claim a history.
+      downloadsBase: fromIndex && Number.isInteger(input.downloadsBase)
+        && input.downloadsBase >= 0 ? input.downloadsBase : 0,
+      countedUrl: fromIndex && typeof input.countedUrl === 'string' ? input.countedUrl : null,
       // Whether the directory still shows this pack.
       //
       // Kept only for records already in the index, and true unless something

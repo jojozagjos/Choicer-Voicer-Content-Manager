@@ -359,6 +359,32 @@ console.log('\nUnlisting has to survive being validated');
     validateRecord(good({ listed: false })).record.listed === true);
 }
 
+console.log('\nDownload counts, and what a submission may claim about them');
+{
+  const counted = validateIndex({
+    packs: [{ ...good(), downloads: 412, downloadsBase: 300, countedUrl: good().downloadUrl }],
+  }).packs[0];
+  check('a count in the index survives', counted.downloads === 412,
+    'the counting job writes this and everything else rewrites the file');
+  check('the carried-over total survives', counted.downloadsBase === 300,
+    'without this an update resets a popular pack to nothing');
+  check('the address it was counted from survives',
+    counted.countedUrl === good().downloadUrl);
+
+  const claimed = validateRecord(good({
+    downloads: 99999, downloadsBase: 99999, countedUrl: 'https://example.com/x.zip',
+  })).record;
+  check('a submission cannot claim downloads', claimed.downloads === 0);
+  check('a submission cannot claim a carried-over total', claimed.downloadsBase === 0);
+  check('a submission cannot claim what it was counted from', claimed.countedUrl === null);
+
+  const nonsense = validateIndex({
+    packs: [{ ...good(), downloadsBase: -5, countedUrl: 42 }],
+  }).packs[0];
+  check('a negative carried-over total is refused', nonsense.downloadsBase === 0);
+  check('a non-string counted address is refused', nonsense.countedUrl === null);
+}
+
 console.log(`\n${checks - failures}/${checks} passed`);
 if (failures) {
   console.log(`${failures} FAILED`);

@@ -380,14 +380,8 @@ function existingAudioFormat(dir, baseName) {
  */
 async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
   const {
-    mode = 'muffle',      // 'muffle' keeps a dulled bed, 'silence' removes it
+    mode = 'muffle',      // 'muffle' keeps the music, 'silence' removes everything
     level = null,         // overrides the mode's own attenuation
-    // Where the muffle rolls the top off. Tuned from both ends: 1.4 kHz left the
-    // original dialogue clear enough to compete with the dub, and 500 Hz took
-    // nearly everything with it. 600 Hz keeps the body of music and room tone
-    // while cutting the consonants that carry speech, so the scene stays present
-    // without being followable. See the gain below for the measurements.
-    cutoff = 600,
     fade = 0.08,          // seconds of ramp, so the duck does not click
     audioFormat = 'wav',
     baseName = '_backing_track',
@@ -414,23 +408,57 @@ async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
 
   const when = windows.join('+');
 
-  // Silencing under a line leaves a hole where the room tone was, which sounds
-  // like the audio dropped out. Muffling instead rolls the top off and pulls it
-  // down, so the scene keeps its atmosphere and the dub still sits in front.
+  // Muffling used to be a lowpass at 600 Hz plus a global drop to 0.15, which
+  // suppressed the words by taking the whole scene down with them: everything
+  // above 600 Hz went, and music is mostly above 600 Hz. The complaint was
+  // exactly right. Music does not survive that, because nothing in it was
+  // being aimed at.
   //
-  // Measured inside a spoken window of a real pack, against the same window
-  // untouched at -30.6 dB mean:
+  // Speech is intelligible almost entirely between 300 Hz and 3.4 kHz, which
+  // is why a telephone sounds like a telephone. Cutting only that band leaves
+  // the bass a track is built on and the cymbals and sparkle above it, and
+  // takes away the part that carries the words. Two overlapping band cuts do
+  // it, the first spanning about 300 to 1700 Hz and the second 1700 to 3500,
+  // neither reaching down into the bass.
   //
-  //   0.45, 1400 Hz   about 7 dB down, the original lines still followable
-  //   0.30,  900 Hz   -42.7 dB, 12 dB down, still audible under a quiet dub
-  //   0.15,  600 Hz   -50.0 dB, 19 dB down, present but not competing
+  // Measured by applying each chain to the whole of three real pack videos and
+  // taking two seconds of the result, in dB. "speech" is 300 Hz to 3.4 kHz and
+  // wants to be low; "bass" is below 250 Hz and "air" above 4 kHz, and both
+  // want to be high:
   //
-  // 0.15 at 600 Hz is the setting here. Lower starts to be indistinguishable
-  // from silence, which is its own mode for anyone who wants it.
-  const gain = level != null ? level : (mode === 'silence' ? 0 : 0.15);
+  //                        speech          bass            air
+  //   Popped the AI Bubble  -41.2 / -38.1   -39.9 / -32.8   -78.7 / -57.0
+  //   MY HEART! I LOVED HER -34.8 / -42.6   -50.8 / -51.3   -63.0 / -45.0
+  //   Caine's Crashout      -74.1 / -71.0   -65.2 / -50.9  -108.5 / -79.0
+  //                          old  /  now     old  /  now      old  /  now
+  //
+  // Within about 3 dB of the old suppression, better than it on the pack that
+  // is nearly all dialogue, while keeping 7 to 14 dB more bass and 18 to 30 dB
+  // more of everything above 4 kHz. That is the music coming back.
+  //
+  // End to end, building a real backing track and measuring inside a ducked
+  // line rather than across a whole file: speech down 37.2 dB, which is well
+  // past the point of being followable under a dub.
+  //
+  // Centre cancellation was tried first, since dialogue is usually mixed dead
+  // centre and subtracting one channel from the other removes it. It was
+  // abandoned: of the pack videos measured, a third are dual mono, where the
+  // two channels are identical and the subtraction leaves silence. A technique
+  // that guts a third of the library is not one to put behind a button.
+  const SPEECH_CUTS = [
+    'equalizer=f=1000:t=h:width=1400:g=-38',
+    'equalizer=f=2600:t=h:width=1800:g=-36',
+  ];
+
+  // A gentle overall duck on top, so the dub is unambiguously in front. This
+  // is the part that used to be 0.15, which is where most of the music went.
+  const gain = level != null ? level : (mode === 'silence' ? 0 : 0.65);
   const chain = mode === 'silence'
     ? [`volume=${gain}:enable='${when}'`]
-    : [`lowpass=f=${cutoff}:enable='${when}'`, `volume=${gain}:enable='${when}'`];
+    : [
+      ...SPEECH_CUTS.map((cut) => `${cut}:enable='${when}'`),
+      `volume=${gain}:enable='${when}'`,
+    ];
 
   const duration = probeDuration(videoPath);
   const args = [

@@ -104,6 +104,8 @@ contextBridge.exposeInMainWorld('api', {
     // Fetch and unpack a listed pack so it can be heard before installing.
     preview: (record) => ipcRenderer.invoke('mods:preview', { record }),
     install: (record) => ipcRenderer.invoke('mods:install', { record }),
+    // What came from the directory, and which of them have moved on since.
+    installed: (packs) => ipcRenderer.invoke('mods:installed', { packs }),
     share: (packDir, details) => ipcRenderer.invoke('mods:share', { packDir, details }),
     onProgress: (fn) => on('mods:progress', fn),
 

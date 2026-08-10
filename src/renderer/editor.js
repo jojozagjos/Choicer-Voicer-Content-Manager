@@ -12,6 +12,7 @@
 import { attachRecorder } from './recorder.js';
 import { Timeline, computePeaks } from './timeline.js';
 import { specFor, KIND_ACCEPTS } from './packspec.js';
+import { escapeForHtml } from './escape.js';
 
 const el = (tag, className, html) => {
   const node = document.createElement(tag);
@@ -68,11 +69,7 @@ function typeIcon(type) {
   return `<img class="type-icon" src="../../assets/glyphs/${name}.png" alt="" />`;
 }
 
-const escapeHtml = (text) => {
-  const div = document.createElement('div');
-  div.textContent = text == null ? '' : String(text);
-  return div.innerHTML;
-};
+const escapeHtml = escapeForHtml;
 
 /**
  * Turns a config key into something readable.
@@ -132,6 +129,9 @@ export class PackEditor {
     this.pack = null;
     this.onClose = null;
     this.onChanged = null;
+    // Which of Clips and Pack details is open. Kept here rather than read off
+    // the buttons, because the buttons are thrown away and remade.
+    this.sideTab = 'clips';
 
     // Undo covers everything that changes a clip, including deletion, which
     // moves files aside rather than removing them so it can be put back.
@@ -610,21 +610,31 @@ export class PackEditor {
     stage.append(controls);
     body.append(stage);
 
+    // Which side tab is open survives a rebuild, because plenty of things in
+    // Pack details rebuild the editor as their last step. Setting an icon from
+    // the video did exactly that, and the panel you were working in vanished
+    // back to Clips the moment it succeeded, which reads as the button having
+    // done something else entirely.
+    const open = this.sideTab === 'pack' ? 'pack' : 'clips';
+
     const side = el('aside', 'editor-side');
     side.innerHTML = `
       <div class="side-tabs" role="tablist">
-        <button type="button" class="seg-tab on" data-side-tab="clips">Clips</button>
-        <button type="button" class="seg-tab" data-side-tab="pack">Pack details</button>
+        <button type="button" class="seg-tab${open === 'clips' ? ' on' : ''}"
+                data-side-tab="clips">Clips</button>
+        <button type="button" class="seg-tab${open === 'pack' ? ' on' : ''}"
+                data-side-tab="pack">Pack details</button>
       </div>
-      <div data-side-panel="clips">
+      <div data-side-panel="clips"${open === 'clips' ? '' : ' hidden'}>
         <div class="clip-list" data-role="clips"></div>
       </div>
-      <div data-side-panel="pack" hidden></div>`;
+      <div data-side-panel="pack"${open === 'pack' ? '' : ' hidden'}></div>`;
     body.append(side);
 
     side.querySelector('.side-tabs').addEventListener('click', (event) => {
       const which = event.target.dataset.sideTab;
       if (!which) return;
+      this.sideTab = which;
       for (const tab of side.querySelectorAll('[data-side-tab]')) {
         tab.classList.toggle('on', tab.dataset.sideTab === which);
       }
@@ -945,12 +955,13 @@ export class PackEditor {
       title: replacing ? 'Replace the backing track?' : 'Build a backing track?',
       detail: `The video's own audio is used, quietened under each of the ${clips.length} lines `
         + 'so your dub sits in front of it.\n\n'
-        + 'MUFFLE keeps the scene going underneath. The music and room tone are still there, '
-        + 'dulled and turned down, so it sounds like the original with the voices pushed back. '
+        + 'MUFFLE takes out the range that carries speech and leaves the rest, so the music '
+        + 'keeps its bass and its top end and the original voices stop competing with yours. '
         + 'This is almost always what you want.\n\n'
         + 'SILENCE cuts it to nothing under each line. Cleaner, but the scene drops away every '
         + 'time somebody speaks, which can sound like the audio broke.\n\n'
-        + 'Either way, music playing underneath a line is affected along with the voice.'
+        + 'Muffle cannot tell a singer from a speaker, so a song with vocals in it loses those '
+        + 'along with the dialogue.'
         + (replacing ? '\n\nThe current backing track is overwritten.' : ''),
       buttons: ['Muffle (recommended)', 'Silence', 'Cancel'],
       mark: '♪',

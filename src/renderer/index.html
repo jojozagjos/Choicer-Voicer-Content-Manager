@@ -255,6 +255,11 @@
       <nav class="mods-nav" role="tablist" aria-label="What to show">
         <button type="button" class="tab on" role="tab" id="btn-mods-browse">Browse</button>
         <button type="button" class="tab" role="tab" id="btn-mods-publishers">Publishers</button>
+        <!-- What this machine has installed from the directory. The count of
+             packs with an update waiting rides on the button, because that is
+             the only thing anyone needs telling about without asking. -->
+        <button type="button" class="tab" role="tab" id="btn-mods-installed">Installed<span
+          class="tab-badge" id="mods-update-badge" hidden></span></button>
         <button type="button" class="tab" role="tab" id="btn-mods-inbox">Your submissions</button>
       </nav>
       <button id="btn-mods-refresh" class="btn btn-small">Refresh</button>
@@ -702,6 +707,11 @@
       <div>
         <h2 id="confirm-title"></h2>
         <p class="muted small" id="confirm-detail"></p>
+        <!-- Something short that has to be read off the screen and typed
+             somewhere else. Its own element rather than part of the text
+             above, so it can be set apart without any dialog being allowed
+             to put markup into that paragraph. -->
+        <p class="confirm-code" id="confirm-code" hidden></p>
       </div>
     </div>
     <footer class="dialog-actions" id="confirm-buttons"></footer>
@@ -873,16 +883,21 @@
 
         <h4>About the backing track</h4>
         <p>Properly separating a voice from music needs a trained model far too large to ship
-           inside an app like this. Instead, this uses something the pack already knows: exactly
-           when every line speaks. It takes the video's audio and ducks those ranges.</p>
+           inside an app like this. Instead, this uses two things the pack already knows: exactly
+           when every line speaks, and the fact that speech lives in a narrow band of the
+           spectrum. It takes the video's audio and, across those ranges, cuts the band the
+           words ride on.</p>
         <ul class="bullets">
-          <li><b>Muffle</b> dampens the audio so it still plays in the background, as if almost
-              muted, keeping the atmosphere of the clip. This is typically the better option.</li>
+          <li><b>Muffle</b> takes out roughly 300 Hz to 3.4 kHz, which is where speech becomes
+              intelligible and why a telephone sounds like a telephone. The bass a track is built
+              on and everything bright above it come through, so the music carries on while the
+              original voices stop competing with yours. This is typically the better option.</li>
           <li><b>Silence</b> removes it completely, which is cleaner but can sound like the audio
               dropped out.</li>
         </ul>
-        <p class="muted small">Either way, music playing underneath a line is affected along with
-           the voice. That is the limit of doing this without a model.</p>
+        <p class="muted small">Muffle cannot tell a singer from a speaker. A song with vocals in
+           it loses those along with the dialogue, and that is the limit of doing this without a
+           model.</p>
 
         <h4>Pictures</h4>
         <p>Every line in the list has three buttons beside its picture:</p>

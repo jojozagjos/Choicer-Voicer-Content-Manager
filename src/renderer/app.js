@@ -263,6 +263,8 @@ const state = {
   modsType: 'all',
   modsSort: 'downloads',
   modsShow: 'browse',
+  // The pack whose own page is open, if one is.
+  listing: null,
   // Whether GitHub says this account can moderate. Decides what is drawn, never
   // what is allowed — GitHub refuses the actions themselves.
   moderator: false,
@@ -868,7 +870,9 @@ async function switchTab(tab) {
     // drew packs while the view was still set up for whichever list was open
     // last, so coming back from Your submissions left the packs in that view's
     // narrow centred column.
-    await showMods(state.modsShow === 'publisher' ? 'browse' : (state.modsShow || 'browse'));
+    const back = state.modsShow === 'publisher' || state.modsShow === 'listing'
+      ? 'browse' : (state.modsShow || 'browse');
+    await showMods(back);
   }
   if (tab === 'admin') await showAdmin(state.adminShow || 'reports');
 }
@@ -1975,6 +1979,7 @@ function plainText(markdown) {
 /** Switches the Mods tab between browsing and your own submissions. */
 async function showMods(which = 'browse') {
   state.modsShow = which;
+  state.listing = null;
   // The layout follows this rather than which button happens to be lit. Keying
   // it off a button's class meant any path that drew the grid without going
   // through here inherited the previous view's layout.
@@ -2146,6 +2151,171 @@ async function showPublisher(author) {
   }
   for (const pack of theirs) holder.append(modCard(pack));
   fillFaces();
+}
+
+/**
+ * One listed pack, in full, before deciding whether to install it.
+ *
+ * A card in a grid has room for a name and a line, and everything else the
+ * record carries was being thrown away: what it may be reused for, where it is
+ * hosted, when it was last touched. All of that is here, and none of it costs a
+ * request. Hearing the pack is a separate press, because that does mean
+ * downloading it.
+ */
+async function showListing(pack) {
+  state.modsShow = 'listing';
+  state.listing = pack;
+  el.modsView.dataset.show = 'listing';
+  el.btnModsBrowse.classList.add('on');
+  el.btnModsPublishers.classList.remove('on');
+  el.btnModsInbox.classList.remove('on');
+  el.modsSearch.hidden = true;
+  el.modsSortWrap.hidden = true;
+  el.btnModsRefresh.hidden = true;
+  el.modsTypes.hidden = true;
+
+  const installed = isModInstalled(pack);
+  const kind = (MOD_TYPES.find((t) => t.id === pack.type) || { label: pack.type }).label;
+
+  el.modsTitle.textContent = pack.title;
+  el.modsSubtitle.textContent = `${kind} by ${pack.author}`;
+
+  el.modsGrid.innerHTML = `
+    <div class="listing-page">
+      <header class="publisher-hero">
+        <div class="listing-art mod-icon">${typeIcon(pack.type)}</div>
+        <div class="publisher-who">
+          <h2>${escapeHtml(pack.title)}</h2>
+          <p class="muted small">${escapeHtml(kind)} by
+            <button type="button" class="linklike" data-author>${escapeHtml(pack.author)}</button>
+          </p>
+          ${contentFlagsHtml(pack.content)}
+        </div>
+        <div class="publisher-bar">
+          <button type="button" class="btn btn-small" id="listing-back">All packs</button>
+          <button type="button" class="btn btn-small mod-report" id="listing-report"
+                  title="Report this pack" aria-label="Report this pack">!</button>
+          <span class="mod-status muted small" id="listing-status"></span>
+          <button type="button" class="btn btn-small ${installed ? '' : 'btn-primary'}"
+                  id="listing-install" ${installed ? 'disabled' : ''}>${
+  installed ? 'Installed' : 'Install'}</button>
+        </div>
+      </header>
+
+      <div class="publisher-stats">
+        <div><b>${escapeHtml(formatBytes(pack.bytes))}</b><span class="muted small">size</span></div>
+        <div><b>${(pack.downloads || 0).toLocaleString()}</b>
+          <span class="muted small">downloaded</span></div>
+        <div><b>${escapeHtml(formatWhen(pack.published))}</b>
+          <span class="muted small">published</span></div>
+        <div><b>${escapeHtml(formatWhen(pack.updated || pack.published))}</b>
+          <span class="muted small">last updated</span></div>
+      </div>
+
+      <h3 class="publisher-heading">About</h3>
+      <p class="listing-summary">${escapeHtml(pack.summary || 'Nothing written about it.')}</p>
+      ${pack.description ? `<p class="listing-desc">${escapeHtml(pack.description)}</p>` : ''}
+      <div class="listing-facts">
+        <div><span class="muted small">Reuse</span>
+          <span>${escapeHtml(licenceLabel(pack.licence))}</span></div>
+        <div><span class="muted small">Tags</span>
+          <span>${(pack.tags || []).length ? escapeHtml(pack.tags.join(', ')) : 'none'}</span></div>
+        <div><span class="muted small">Hosted on</span>
+          <span>${escapeHtml(hostOf(pack.downloadUrl))}</span></div>
+      </div>
+
+      <h3 class="publisher-heading">What is in it</h3>
+      <div id="listing-preview">
+        <p class="muted small">Having a listen downloads the pack, ${
+  escapeHtml(formatBytes(pack.bytes))}. It is kept, so installing afterwards does not
+          download it again.</p>
+        <button type="button" class="btn btn-small" id="listing-hear">Have a listen</button>
+      </div>
+    </div>`;
+
+  el.modsGrid.querySelector('#listing-back').addEventListener('click', () => showMods('browse'));
+  el.modsGrid.querySelector('[data-author]')
+    .addEventListener('click', () => showPublisher(pack.author));
+  el.modsGrid.querySelector('#listing-report').addEventListener('click', () => reportSomething({
+    packId: pack.id, packTitle: pack.title, author: pack.author,
+  }));
+  el.modsGrid.querySelector('#listing-hear')
+    .addEventListener('click', () => hearListing(pack));
+
+  const install = el.modsGrid.querySelector('#listing-install');
+  if (!installed) {
+    install.addEventListener('click', () => installMod(pack, install,
+      el.modsGrid.querySelector('#listing-status')));
+  }
+
+  fillModIcon(el.modsGrid.querySelector('.listing-art'), pack);
+}
+
+/** How a licence reads, using the same wording the publisher chose it by. */
+function licenceLabel(id) {
+  const known = (state.info && state.info.licences) || [];
+  return (known.find((l) => l.id === id) || { label: id || 'unstated' }).label;
+}
+
+/** Where a pack is hosted, so that is known before anything is downloaded. */
+function hostOf(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return 'unknown'; }
+}
+
+/**
+ * Fetches a listed pack and shows what is inside it.
+ *
+ * The one thing a listing cannot tell you is whether the recording is any good,
+ * and the only way to find that out was to install it and go looking in the
+ * game. This plays the lines where they are, each with whatever it says.
+ */
+async function hearListing(pack) {
+  const holder = el.modsGrid.querySelector('#listing-preview');
+  if (!holder) return;
+
+  holder.innerHTML = '<p class="muted small" id="listing-progress">Fetching it…</p>';
+  const note = holder.querySelector('#listing-progress');
+
+  const stop = window.api.mods.onProgress(({ stage, percent }) => {
+    if (!note.isConnected) return;
+    note.textContent = stage === 'downloading' && percent != null
+      ? `Downloading… ${Math.round(percent)}%`
+      : `${stage || 'Working'}…`;
+  });
+
+  let got;
+  try {
+    got = await window.api.mods.preview(pack);
+  } finally {
+    stop();
+  }
+
+  // Somebody who walked away mid-download is not still looking at this page.
+  if (!holder.isConnected) return;
+
+  if (!got || !got.ok) {
+    holder.innerHTML = `<p class="muted small">Could not open it: ${
+      escapeHtml((got && got.error) || 'no reason given')}</p>`;
+    return;
+  }
+
+  holder.innerHTML = `
+    ${got.videoUrl ? `<video class="listing-video" src="${escapeHtml(got.videoUrl)}"
+      controls preload="metadata"></video>` : ''}
+    ${got.images.length ? `<div class="listing-images">${got.images.map((i) =>
+    `<img src="${escapeHtml(i.url)}" alt="${escapeHtml(i.name)}" title="${escapeHtml(i.name)}"
+      loading="lazy" />`).join('')}</div>` : ''}
+    ${got.lines.length ? `<div class="listing-lines">${got.lines.map((l) => `
+      <div class="listing-line">
+        <audio src="${escapeHtml(l.url)}" controls preload="none"></audio>
+        <span class="listing-said${l.caption ? '' : ' is-empty'}">${
+  escapeHtml(l.caption || l.name)}</span>
+      </div>`).join('')}</div>`
+    : '<p class="muted small">There are no spoken lines in this pack.</p>'}
+    <p class="muted small">${got.lineCount > got.lines.length
+    ? `The first ${got.lines.length} of ${got.lineCount} lines. ` : ''}${
+  got.fileCount} file${got.fileCount === 1 ? '' : 's'},
+      ${escapeHtml(formatBytes(got.bytes))} unpacked.</p>`;
 }
 
 /**
@@ -2839,6 +3009,13 @@ function modCard(pack) {
   card.querySelector('.mod-report').addEventListener('click', () => reportSomething({
     packId: pack.id, packTitle: pack.title, author: pack.author,
   }));
+
+  // The card itself opens the pack's own page. The buttons on it keep doing
+  // what they say, so this only picks up the presses that hit nothing else.
+  card.addEventListener('click', (e) => {
+    if (e.target.closest('button')) return;
+    showListing(pack);
+  });
 
   fillModIcon(card.querySelector('.mod-icon'), pack);
   return card;
@@ -3626,27 +3803,26 @@ function renderContentDetail(pack) {
       ${issues}
     </div>
 
-    <!-- Pictures, the way the pack types are shown in Mods. Four labelled
-         buttons never sat evenly: an earlier rule stretches them to equal
-         widths, so the row was governed by whichever label happened to be
-         longest and every window width broke it somewhere different. Square
-         buttons line up at any width, and each says what it does on hover. -->
+    <!-- Picture and word together. The picture alone made the row line up
+         neatly at any width and left four unlabelled squares that had to be
+         hovered to be told apart, which is a worse trade than an uneven row.
+         Each button is sized by its own label and the row wraps between them,
+         so nothing breaks inside a word. -->
     <div class="detail-actions detail-actions-icons">
       <button type="button" class="btn btn-primary icon-action" id="btn-detail-edit"
               ${converting ? 'disabled' : ''}
-              title="Edit this pack" aria-label="Edit this pack">${actionIcon('edit')}</button>
+              title="Edit this pack">${actionIcon('edit')}<span>Edit</span></button>
       <button type="button" class="btn icon-action" id="btn-detail-share"
               ${converting ? 'disabled' : ''}
-              aria-label="Share this pack"
               title="${pack.iconPath || pack.iconUrl
     ? 'Share this pack'
     : 'This pack needs an icon first. Set one in Edit this pack, under Pack details.'
-}">${actionIcon('export')}</button>
+}">${actionIcon('export')}<span>Share</span></button>
       <button type="button" class="btn icon-action" id="btn-detail-open"
-              title="Open folder" aria-label="Open folder">${actionIcon('folder')}</button>
+              title="Open this pack's folder">${actionIcon('folder')}<span>Open folder</span></button>
       <button type="button" class="btn btn-danger icon-action" id="btn-detail-delete"
               ${converting ? 'disabled' : ''}
-              title="Delete this pack" aria-label="Delete this pack">${actionIcon('delete')}</button>
+              title="Delete this pack">${actionIcon('delete')}<span>Delete</span></button>
     </div>`;
 
   el.contentDetail.querySelector('#btn-detail-edit')

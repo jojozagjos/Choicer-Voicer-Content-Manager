@@ -325,18 +325,28 @@ function extractInto(zipPath, targetDir) {
  *
  * `record` has already been through validateRecord. `gameDir` is the folder the
  * app is pointed at. Returns where the pack landed.
+ *
+ * `cachedZip` is a copy of this pack already on disk, left behind by a preview.
+ * It is used only if it is still the file the record describes, which the
+ * checksum below decides exactly as it would for a fresh download, so nothing is
+ * trusted merely for being local.
  */
-async function installFromRecord(record, gameDir, { onStage, onProgress, signal } = {}) {
+async function installFromRecord(record, gameDir, {
+  onStage, onProgress, signal, cachedZip,
+} = {}) {
   const stage = (name) => { if (onStage) onStage(name); };
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'cvmod-'));
-  const zipPath = path.join(scratch, 'pack.zip');
-  const staging = path.join(scratch, 'unpacked');
+  const reuse = cachedZip && existsReally(cachedZip)
+    && (await checksum(cachedZip).catch(() => null)) === record.sha256;
+  const zipPath = reuse ? cachedZip : path.join(scratch, 'pack.zip');
 
   try {
-    stage('downloading');
-    await download(record.downloadUrl, zipPath, {
-      expectedBytes: record.bytes, onProgress, signal,
-    });
+    if (!reuse) {
+      stage('downloading');
+      await download(record.downloadUrl, zipPath, {
+        expectedBytes: record.bytes, onProgress, signal,
+      });
+    }
 
     stage('checking');
     const got = await checksum(zipPath);

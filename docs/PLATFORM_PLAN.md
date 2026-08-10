@@ -166,11 +166,12 @@ discarded.
 
 ## What is not built
 
-- **Reports.** There is no report button in the app yet. The moderation queue
-  reads issues labelled `report`, so the plumbing is there and the button is not.
-- **A publishers list.** `publishers.json`, generated from the index after each
-  merge, would answer "who has published what". Nothing generates it yet.
 - **Download counts.** The record carries the field; nothing counts.
+
+Reports and the publishers list have since been built. Reporting a pack or an
+account opens an issue labelled `report`, which is what the queue reads.
+Publishers are derived from the index at read time rather than generated into a
+second file, so there is nothing that can fall out of step with it.
 
 ## The weakest part, named plainly
 

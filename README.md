@@ -142,6 +142,13 @@ Sort by most downloaded, newest, recently updated, name or size. **Publishers**
 lists everyone with packs listed, and each of them has a page showing what they
 have made and how it has been received.
 
+Selecting a pack opens its own page, with everything the listing says: what it
+may be reused for, where it is hosted, its size, and when it was published and
+last updated. **Have a listen** on that page plays the pack before you install
+it, every line with what it says, so you can hear whether it is what you want
+without putting anything into your game folder. The download is kept, so
+installing straight afterwards does not fetch it again.
+
 ### Sharing one of yours
 
 Open a pack in **Content** and press **Share this pack**. That alone gives you a

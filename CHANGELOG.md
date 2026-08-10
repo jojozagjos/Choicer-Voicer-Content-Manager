@@ -48,14 +48,24 @@ Sharing packs, and working with a pack that has been recorded several times over
   how many packs they have, total downloads and size, when they started, when
   they last updated something, everything of theirs, and a button to open their
   repository on GitHub.
+- Selecting a listed pack opens its own page: everything the listing says, what
+  it may be reused for, where it is hosted, its size, how many times it has been
+  downloaded, and when it was published and last updated.
+- That page can play the pack before it is installed. Every line is listed with
+  what it says, alongside the pack's video and pictures, so a pack can be heard
+  without putting anything into the game folder first. The download is kept, so
+  installing straight afterwards does not fetch it a second time.
+- A previewed pack goes through the same checks as an installed one: its
+  checksum has to match the listing, and the archive has to pass every shape
+  check before anything is unpacked.
 - Packs that have been taken off the list no longer appear anywhere in browsing,
   and no longer count towards a publisher's total.
 - Packs are listed as soon as they pass their checks. Nobody approves uploads:
   the record has to be valid, the author has to be the account hosting the file,
   the file has to pass a malware check, and the account must not be blocked.
   Anything failing one of those is refused with the reason.
-- A pack can be reported once it is listed, and a reported pack can be taken
-  down or its author blocked.
+- Any listed pack, or the account behind it, can be reported from the button on
+  it. Reporting asks what is wrong and needs nothing else filled in.
 - A submissions list shows what happened to every pack offered to the directory,
   and why. A pack that was not listed carries the reason with it, rather than the
   explanation sitting somewhere nobody looks. Each one opens on its own, so a

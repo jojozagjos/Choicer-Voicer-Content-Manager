@@ -2711,6 +2711,100 @@ function originOf(packDir) {
   return readOrigins()[path.resolve(packDir).toLowerCase()] || null;
 }
 
+/**
+ * Keeps the previews folder from becoming a second copy of the directory.
+ *
+ * A preview is a whole pack, kept on purpose so that installing right after
+ * looking does not download it again. Kept forever, though, browsing for an
+ * evening would leave a gigabyte behind with nothing ever asking for it back.
+ * The few most recent survive; the rest go, oldest first.
+ */
+function prunePreviews(keepId, keep = 3) {
+  const root = path.join(app.getPath('userData'), 'previews');
+  try {
+    const folders = fs.readdirSync(root)
+      .filter((name) => name !== keepId)
+      .map((name) => {
+        const dir = path.join(root, name);
+        return { dir, when: fs.statSync(dir).mtimeMs };
+      })
+      .sort((a, b) => b.when - a.when);
+
+    for (const old of folders.slice(keep - 1)) {
+      fs.rmSync(old.dir, { recursive: true, force: true });
+      allowedRoots.delete(path.resolve(old.dir));
+    }
+  } catch {
+    // Nothing to tidy, or something is holding a file open. Neither is worth
+    // failing a preview that has already succeeded.
+  }
+}
+
+/**
+ * What is inside an unpacked pack, well enough to judge it before installing.
+ *
+ * Handed back as cvmedia:// addresses so the page can play and show it without
+ * ever being given a filesystem path, the same as everything else it displays.
+ *
+ * Keyed off the audio rather than off the config files. A line is a sound
+ * somebody recorded; what describes it varies between packs, and building this
+ * from `.ini` files alone once showed one line out of thirty.
+ */
+function describePreview(dir) {
+  const files = [];
+  const walk = (at) => {
+    for (const entry of fs.readdirSync(at, { withFileTypes: true })) {
+      const full = path.join(at, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile()) files.push({ rel: path.relative(dir, full), full });
+    }
+  };
+  walk(dir);
+
+  const ext = (f) => path.extname(f.rel).toLowerCase();
+  const noExt = (rel) => rel.slice(0, rel.length - path.extname(rel).length);
+
+  const video = files.find((f) => ['.ogv', '.mp4', '.webm'].includes(ext(f)));
+  const images = files.filter((f) => ICON_EXTS.includes(ext(f)));
+  const audio = files.filter((f) => ['.wav', '.ogg', '.mp3', '.opus'].includes(ext(f)));
+
+  // The words each line says, where the pack carries them. Read from a plain
+  // `.txt` beside the clip first, which is what most packs use, then from an
+  // `.ini` of the same name.
+  const captionOf = (base) => {
+    const plain = files.find((f) => f.rel === `${base}.txt`);
+    if (plain) {
+      try { return fs.readFileSync(plain.full, 'utf8').trim().slice(0, 300); } catch { /* skip */ }
+    }
+    const ini = files.find((f) => f.rel === `${base}.ini` || f.rel === `${base}.cfg`);
+    if (ini) {
+      try {
+        const said = fs.readFileSync(ini.full, 'utf8').match(/^\s*caption\s*=\s*(.+)$/im);
+        if (said) return said[1].trim().replace(/^["']|["']$/g, '').slice(0, 300);
+      } catch { /* skip */ }
+    }
+    return '';
+  };
+
+  return {
+    videoUrl: video ? mediaUrl(video.full) : null,
+    images: images.slice(0, 12).map((f) => ({ name: f.rel, url: mediaUrl(f.full) })),
+    lines: audio.slice(0, 60).map((f) => ({
+      name: path.basename(noExt(f.rel)),
+      url: mediaUrl(f.full),
+      caption: captionOf(noExt(f.rel)),
+    })),
+    // How many there really are. A long pack shows the first sixty, and saying
+    // so is the difference between a sample and a pack that appears to be
+    // missing most of itself.
+    lineCount: audio.length,
+    fileCount: files.length,
+    bytes: files.reduce((n, f) => {
+      try { return n + fs.statSync(f.full).size; } catch { return n; }
+    }, 0),
+  };
+}
+
 const ICON_EXTS = ['.png', '.jpg', '.jpeg', '.webp'];
 
 // Matches the ceiling github.js refuses to upload past, so an icon that was
@@ -3355,6 +3449,72 @@ function registerModsIpc() {
     }
   });
 
+  /**
+   * Fetches a listed pack so it can be heard before it is installed.
+   *
+   * The whole point of a directory is that you are taking somebody's word for
+   * what a pack is. A name, a line of description and a picture do not tell you
+   * whether the recording is any good, and finding that out by installing it
+   * means putting files into the game folder to answer a question.
+   *
+   * Downloaded into a temporary folder and kept there, so pressing Install
+   * afterwards does not fetch the same thirty megabytes a second time. Every
+   * check that guards installing runs here too: this is somebody else's zip and
+   * being for a preview does not make it more trustworthy.
+   */
+  ipcMain.handle('mods:preview', async (event, { record }) => {
+    const checked = validateRecord(record, { fromIndex: true });
+    if (!checked.ok) {
+      return { ok: false, error: `That listing is not valid: ${checked.problems[0].message}` };
+    }
+    const pack = checked.record;
+
+    const root = path.join(app.getPath('userData'), 'previews', pack.id);
+    const zipPath = path.join(root, 'pack.zip');
+    const unpacked = path.join(root, 'unpacked');
+    allowedRoots.add(path.resolve(root));
+
+    const say = (stage, percent) => {
+      if (!event.sender.isDestroyed()) event.sender.send('mods:progress', { stage, percent });
+    };
+
+    try {
+      // Already here from a previous look, and still the file it claims to be.
+      const cached = fs.existsSync(unpacked) && fs.existsSync(zipPath)
+        && (await checksum(zipPath).catch(() => null)) === pack.sha256;
+
+      if (!cached) {
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.mkdirSync(root, { recursive: true });
+
+        say('downloading', 0);
+        await download(pack.downloadUrl, zipPath, {
+          expectedBytes: pack.bytes,
+          onProgress: (percent) => say('downloading', percent),
+        });
+
+        say('checking');
+        if (await checksum(zipPath) !== pack.sha256) {
+          throw new Error('This download does not match what the listing says it should be, '
+            + 'so it has not been opened.');
+        }
+
+        const shape = checkArchiveShape(await listEntries(zipPath));
+        if (!shape.ok) throw new Error(`This pack is not safe to open: ${shape.problems[0]}`);
+
+        say('unpacking');
+        await extractInto(zipPath, unpacked);
+      }
+
+      say('done');
+      prunePreviews(pack.id);
+      return { ok: true, ...describePreview(unpacked), zipPath };
+    } catch (err) {
+      fs.rmSync(root, { recursive: true, force: true });
+      return { ok: false, error: err.message };
+    }
+  });
+
   /** Downloads, checks and installs one pack from the directory. */
   handleWrite('mods:install', () => null, async (event, { record }) => {
     const gameDir = gamedata.resolveGameDir(settings.gameDir || gamedata.defaultGameDir());
@@ -3374,6 +3534,10 @@ function registerModsIpc() {
     try {
       const result = await installFromRecord(checked.record, gameDir, {
         signal: job.signal,
+        // If this pack was just previewed, its zip is already here. Offered
+        // rather than assumed: installFromRecord checks it against the record
+        // and downloads afresh if it does not match.
+        cachedZip: path.join(app.getPath('userData'), 'previews', checked.record.id, 'pack.zip'),
         onStage: (name) => {
           if (!event.sender.isDestroyed()) event.sender.send('mods:progress', { stage: name });
         },

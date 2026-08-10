@@ -101,6 +101,8 @@ contextBridge.exposeInMainWorld('api', {
     index: (options) => ipcRenderer.invoke('mods:index', options || {}),
     icon: (url, sha256) => ipcRenderer.invoke('mods:icon', { url, sha256 }),
     avatar: (login) => ipcRenderer.invoke('mods:avatar', { login }),
+    // Fetch and unpack a listed pack so it can be heard before installing.
+    preview: (record) => ipcRenderer.invoke('mods:preview', { record }),
     install: (record) => ipcRenderer.invoke('mods:install', { record }),
     share: (packDir, details) => ipcRenderer.invoke('mods:share', { packDir, details }),
     onProgress: (fn) => on('mods:progress', fn),

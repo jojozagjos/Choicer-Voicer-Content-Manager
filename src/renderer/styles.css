@@ -3008,7 +3008,12 @@ input[type="range"]::-webkit-slider-thumb {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--panel);
+  /* The whole card opens the pack's own page. */
+  cursor: pointer;
 }
+.mod-card:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+/* The buttons on it do their own thing, so they do not read as part of that. */
+.mod-card button { cursor: pointer; }
 
 .mod-card-head { display: flex; gap: 9px; align-items: flex-start; }
 /* Sized so the glyph and a real icon occupy the same box, and the card does not
@@ -3360,9 +3365,10 @@ input[type="range"]::-webkit-slider-thumb {
   margin: 0;
 }
 
-/* A publisher's page is one column of sections that each manage their own
-   width, so the grid steps out of the way entirely. */
-.mods-view[data-show="publisher"] #mods-grid {
+/* A publisher's page, and one pack's page, are single columns of sections that
+   each manage their own width, so the grid steps out of the way entirely. */
+.mods-view[data-show="publisher"] #mods-grid,
+.mods-view[data-show="listing"] #mods-grid {
   display: block;
   max-width: none;
   margin: 0;
@@ -3543,6 +3549,71 @@ input[type="range"]::-webkit-slider-thumb {
   grid-template-columns: repeat(auto-fill, minmax(258px, 1fr));
   gap: 12px;
 }
+
+/* One pack's own page. Built out of the publisher page's pieces on purpose:
+   they are the same kind of page and looking alike is the point. */
+.listing-page { display: grid; gap: 18px; padding-bottom: 24px; }
+.listing-page .listing-art {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 62px;
+  height: 62px;
+  border-radius: 13px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.listing-page .listing-art img { width: 100%; height: 100%; object-fit: cover; }
+
+.listing-summary { margin: 0; font-size: 15px; }
+.listing-desc { margin: 0; color: var(--muted); white-space: pre-wrap; }
+
+.listing-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+.listing-facts > div {
+  display: grid;
+  gap: 2px;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--panel);
+}
+
+.listing-video {
+  width: 100%;
+  max-height: 340px;
+  border-radius: 11px;
+  background: #000;
+}
+.listing-images { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.listing-images img {
+  width: 92px;
+  height: 92px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+/* Every line in the pack, each with what it says. Two columns so the words
+   line up down the page and can be read without listening to all of them. */
+.listing-lines { display: grid; gap: 6px; margin: 12px 0; }
+.listing-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.listing-line audio { flex: none; width: 230px; height: 32px; }
+.listing-said { flex: 1; min-width: 0; font-size: 13px; }
+/* A line with no caption falls back to its file name, which is not what it
+   says, so it is set apart rather than passed off as the words. */
+.listing-said.is-empty { color: var(--muted); font-style: italic; }
 
 /* A name that behaves like a link without being one. */
 .linklike {
@@ -3815,14 +3886,23 @@ input[type="range"]::-webkit-slider-thumb {
 :root[data-theme="dark"] .btn-icon-glyph { filter: invert(1); }
 
 /* Pack actions as squares, so a row of them lines up at any window width. */
-.detail-actions-icons { gap: 8px; }
-.detail-actions-icons .icon-action {
-  flex: none;
+/* Equal columns rather than a row of buttons each sized by its own label, which
+   left them bunched at one end with the rest of the panel empty. Four across
+   while there is room, two by two once there is not, and every button the same
+   width either way. */
+.detail-actions-icons {
   display: grid;
-  place-items: center;
-  width: 40px;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 8px;
+}
+.detail-actions-icons .icon-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   height: 40px;
-  padding: 0;
+  padding: 0 10px;
+  white-space: nowrap;
 }
 .detail-actions-icons .btn-icon-glyph { width: 17px; height: 17px; }
 

@@ -308,9 +308,15 @@ const DEFAULT_SETTINGS = {
   // How loud each character is, as a multiplier on every line they speak.
   characterVolumes: {},
   useCharacterVolumes: true,
-  // Sessions that have been played here at least once. The game does not record
-  // this, and without it there is no way to tell which of several sessions was
-  // the one just recorded.
+  // The work done on each pack and session: which take every line uses, how
+  // loud it is, how far its timing was nudged, and the music and dub balance.
+  //
+  // Replaced wholesale rather than merged, unlike the two above. Those are
+  // keyed by character name and shared across packs, so a write from one pack
+  // must not drop another's. This is keyed by pack and session and the renderer
+  // sends the whole thing back, which is also what lets an entry be removed
+  // when everything in it is reset to normal.
+  mixes: {},
   // Donation prompt state. It only appears after the app has actually been
   // useful a few times, and never more than once a fortnight.
   exportsCompleted: 0,

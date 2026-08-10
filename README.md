@@ -131,6 +131,54 @@ Changes made outside the app show up on their own, so a pack unzipped into the f
 recording made in the game appears without asking for it. **Rescan** is still in the top bar for
 anything a watch cannot see.
 
+## Sharing packs
+
+**Mods** lists packs other people have made. Pick one and press **Install**; it
+downloads, checks it against the checksum it was published with, refuses
+anything malformed, and adds it to your library. Browsing and installing never
+ask you to sign in.
+
+Sort by most downloaded, newest, recently updated, name or size. **Publishers**
+lists everyone with packs listed, and each of them has a page showing what they
+have made and how it has been received.
+
+### Sharing one of yours
+
+Open a pack in **Content** and press **Share this pack**. That alone gives you a
+single zip in your exports folder, shrunk on the way, ready to send to anyone.
+They drop it on their own library and it installs.
+
+**Publish it** goes further and puts it on the list everyone sees. It needs a
+GitHub account, which you sign into once with a short code. Then:
+
+- the pack is uploaded to **your own GitHub account**, not somebody else's
+- you are asked how it should be listed: name, one line about it, tags, and
+  whether other people may reuse it
+- it appears in Mods once its checks pass, which takes a minute or two
+
+Your pack stays yours. It lives on your account, you can take it down whenever
+you like, and **Your submissions** shows everything you have published along
+with the files it left behind, so you can clear out anything you have abandoned.
+
+A pack needs a name and an icon before it can be shared, because a listing
+without either is a blank square nobody installs.
+
+### What is and is not allowed
+
+Nobody approves uploads. A pack that passes its checks is listed straight away,
+and the checks are rules rather than opinions: the record has to be valid, you
+have to be the account hosting the file, the file has to pass a malware check,
+and your account must not be blocked.
+
+If something should not be listed, report it. Every pack has a report button,
+and so does every publisher. Reports are not anonymous: they are opened under
+your GitHub account, because asking for somebody's work to be taken down is
+something they should be able to see the source of.
+
+Packs can be marked as containing strong language, graphic violence, drug or
+alcohol references, or flashing images, and that shows on the listing. Sexual
+content and nudity are not listed at all.
+
 ## Where your files live
 
 Will be adding Linux support eventally.

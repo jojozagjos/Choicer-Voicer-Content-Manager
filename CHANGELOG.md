@@ -72,15 +72,27 @@ Sharing packs, and working with a pack that has been recorded several times over
 - A pack installed from the directory keeps its author. It can still be packaged
   and passed on, but not published under a different name.
 
+### Working on a dub
+
+- What you set on a session is kept: which take each line uses, how loud it is,
+  how far its timing was nudged, and the music and dub balance. Coming back to a
+  pack picks up where you left it, and closing the app no longer throws an
+  evening of levelling away.
+- Kept per pack and per session, because the same pack recorded twice is two
+  performances. A take lifted in one is not the take in the other.
+- A line whose recording has since been deleted falls back rather than pointing
+  at a file that is gone.
+- The take session box no longer empties when switching packs. It was being
+  handed the session chosen on the pack you just left, which showed as blank
+  while a session was in fact loaded and playing.
+
 ### Recording sessions
 
 - A session can be deleted, with the button beside the take session list. It
   removes that session's recordings and nothing else, leaving the pack and every
   other session untouched.
-- A session that has not been listened to yet is marked NEW in the list. After a
-  run of takes, the one just recorded is the one that stands out rather than the
-  one that has to be worked out from the names.
-- The mark comes off as soon as the session is opened.
+- Sessions are listed newest first and each is named by when it was recorded, so
+  the one just made is the one at the top.
 
 ### The editor
 

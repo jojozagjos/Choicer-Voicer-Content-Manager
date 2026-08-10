@@ -4704,6 +4704,104 @@ async function loadPreviewVideo(pack, superseded, { rebuild = false } = {}) {
  * load that has been superseded returns without touching anything. The player's
  * own decode loop is aborted at the same time so it stops fetching.
  */
+/**
+ * Where one session's adjustments are filed.
+ *
+ * Pack and session together, because the same pack recorded twice is two
+ * different performances: takes that need lifting in one are not the takes in
+ * the other, and timing nudged to fit one recording is wrong for the next.
+ */
+function mixKeyFor(pack, session) {
+  if (!pack) return null;
+  return `${pack.id}::${session ? session.id : 'none'}`;
+}
+
+/**
+ * Saves the work done on a session: which take each line uses, how loud it is,
+ * how far its timing was nudged, and the music and dub balance.
+ *
+ * Kept because it is work. Levelling thirty lines and nudging half of them into
+ * place is an evening, and until now all of it was in memory: closing the app,
+ * or just clicking another pack to check something, threw the lot away with no
+ * warning and no way back.
+ *
+ * Written whole rather than patched, and only the values that differ from what
+ * a fresh load would produce. A file of thirty lines all saying "normal volume,
+ * no offset" is a file recording that nothing happened.
+ */
+function saveAdjustments() {
+  const key = mixKeyFor(state.pack, state.session);
+  if (!key || !player.items.length) return;
+
+  const lines = {};
+  for (const item of player.items) {
+    const fresh = item.takeUrl ? 'take' : (item.originalUrl ? 'original' : 'none');
+    const changed = item.source !== fresh
+      || item.volume !== 1
+      || item.offset !== 0
+      || item.muted;
+    if (!changed) continue;
+
+    lines[item.id] = {
+      source: item.source,
+      volume: item.volume,
+      offset: item.offset,
+      muted: item.muted,
+    };
+  }
+
+  const mix = {
+    backing: Number(el.volBacking.value) / 100,
+    dub: Number(el.volDub.value) / 100,
+    lines,
+  };
+
+  const nothingToSay = !Object.keys(lines).length && mix.backing === 1 && mix.dub === 1;
+  const saved = { ...(state.settings.mixes || {}) };
+  if (nothingToSay) delete saved[key];
+  else saved[key] = mix;
+
+  // Fire and forget. Losing one write because the app closed mid-save costs a
+  // slider position, and making every nudge wait on the disk would make the
+  // sliders feel stuck.
+  state.settings.mixes = saved;
+  window.api.settings.set({ mixes: saved }).catch(() => { /* next change retries */ });
+}
+
+/** Puts back whatever was saved for this pack and session. */
+function restoreAdjustments(pack, session) {
+  const key = mixKeyFor(pack, session);
+  const mix = key && state.settings.mixes && state.settings.mixes[key];
+  if (!mix) return;
+
+  // The slider and its number box mirror each other, so both are set. Leaving
+  // the box behind makes it look as though the value can be typed and ignored.
+  if (Number.isFinite(mix.backing)) {
+    el.volBacking.value = Math.round(mix.backing * 100);
+    el.volBackingVal.value = el.volBacking.value;
+  }
+  if (Number.isFinite(mix.dub)) {
+    el.volDub.value = Math.round(mix.dub * 100);
+    el.volDubVal.value = el.volDub.value;
+  }
+  renderMixReadout();
+
+  for (const item of player.items) {
+    const saved = mix.lines && mix.lines[item.id];
+    if (!saved) continue;
+
+    // A line whose recording has since been deleted cannot be set back to it,
+    // so the saved choice is only honoured where it is still possible.
+    if (saved.source === 'take' && !item.takeUrl) continue;
+    if (saved.source === 'original' && !item.originalUrl) continue;
+
+    if (saved.source) item.source = saved.source;
+    if (Number.isFinite(saved.volume)) item.volume = saved.volume;
+    if (Number.isFinite(saved.offset)) item.offset = saved.offset;
+    item.muted = Boolean(saved.muted);
+  }
+}
+
 async function loadSession(session) {
   const ticket = ++state.loadTicket;
   const superseded = () => ticket !== state.loadTicket;
@@ -4783,6 +4881,9 @@ async function loadSession(session) {
   }
   if (superseded()) return;
   showLoading(false);
+
+  // Whatever was set last time on this pack and session, put back.
+  restoreAdjustments(pack, session);
 
   player.setBackingVolume(Number(el.volBacking.value) / 100);
   player.setDubVolume(Number(el.volDub.value) / 100);
@@ -5285,6 +5386,7 @@ function renderLines() {
       button.addEventListener('click', async () => {
         await player.setLineSource(item.id, button.dataset.src);
         renderLines();
+        saveAdjustments();
       });
     }
 
@@ -5296,6 +5398,7 @@ function renderLines() {
       const value = clamp(Math.round(percent), 0, 200);
       echoTo.value = String(value);
       player.setLineVolume(item.id, value / 100);
+      saveAdjustments();
     };
 
     volSlider.addEventListener('input', () => applyVolume(Number(volSlider.value), volNumber));
@@ -5308,6 +5411,7 @@ function renderLines() {
       offsetInput.value = String(value);
       player.setLineOffset(item.id, value / 1000);
       renderMarkers();
+      saveAdjustments();
     };
 
     offsetInput.addEventListener('change', () => applyOffset(Number(offsetInput.value)));
@@ -6250,10 +6354,12 @@ function wireEvents() {
   bindMixControl(el.volBacking, el.volBackingVal, 150, (v) => {
     player.setBackingVolume(v / 100);
     renderMixReadout();
+    saveAdjustments();
   });
   bindMixControl(el.volDub, el.volDubVal, 200, (v) => {
     player.setDubVolume(v / 100);
     renderMixReadout();
+    saveAdjustments();
   });
 
   el.btnAllTake.addEventListener('click', () => setAllSources('take'));
@@ -6268,6 +6374,7 @@ function wireEvents() {
     player._schedule();
     renderLines();
     renderMarkers();
+    saveAdjustments();
   });
 
   el.btnExport.addEventListener('click', openExportDialog);
@@ -6446,6 +6553,7 @@ async function setAllSources(source) {
     if (available) await player.setLineSource(item.id, source);
   }
   renderLines();
+  saveAdjustments();
 }
 
 async function pickGameDir() {

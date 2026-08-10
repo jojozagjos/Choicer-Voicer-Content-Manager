@@ -7,7 +7,6 @@
 [![Download](https://img.shields.io/badge/Download-latest%20release-5ecdf5?style=for-the-badge)](https://github.com/jojozagjos/Choicer-Voicer-Content-Manager/releases/latest)
 
 An unofficial fan tool for [The Choicer Voicer](https://yeahmaybe.itch.io/the-choicer-voicer).
-Free, open source, Windows.
 
 </div>
 
@@ -29,8 +28,8 @@ quietly ignores it.
 | **The dub editor.** Mark a range on the video and the clip and its timestamp come out together. | **Exporting.** Every line keeps its own take, volume and timing. |
 | ![The content library](docs/images/library.png) | ![The help screen](docs/images/help.png) |
 | **Your library.** Everything installed, of every type, with whatever needs fixing. | **Built-in help.** How everything works, without leaving the app. |
-| ![Packs other people have shared](docs/images/mods.png) |  |
-| **Mods.** Packs other people have shared, by kind. Selecting one opens its page, where it can be played before it is installed. Nobody has published yet. |  |
+| ![Packs other people have shared](docs/images/mods.png) | ![One pack's page, before installing it](docs/images/mods-pack.png) |
+| **Mods.** Packs other people have shared, by kind, sorted however you like. | **Before you install.** Everything the listing says, and a button that plays the pack so you can hear it first. |
 
 ## Getting it
 
@@ -102,12 +101,14 @@ A dub pack wants the scene's music and atmosphere without the original voices. T
 knows exactly when every line speaks, so the video's own audio is taken and quietened across those
 ranges.
 
-**Muffle** dampens it so it still plays underneath, keeping the atmosphere of the clip. This is
-usually the better option. **Silence** removes it completely, which is cleaner but can sound like
-the audio dropped out.
+**Muffle** takes out the band speech rides on, roughly 300 Hz to 3.4 kHz, which is why a telephone
+sounds like a telephone. The bass a track is built on and everything bright above it come through,
+so the music carries on while the original voices stop competing with yours. This is usually the
+better option. **Silence** removes it completely, which is cleaner but can sound like the audio
+dropped out.
 
-*It cannot recover music that was playing underneath a voice; separating those properly needs a
-trained model far too large to ship in an app like this.*
+*Muffle cannot tell a singer from a speaker, so a song with vocals loses those along with the
+dialogue. Separating them properly needs a trained model far too large to ship in an app like this.*
 
 ### Every other pack type
 
@@ -146,10 +147,17 @@ have made and how it has been received.
 
 Selecting a pack opens its own page, with everything the listing says: what it
 may be reused for, where it is hosted, its size, and when it was published and
-last updated. **Have a listen** on that page plays the pack before you install
-it, every line with what it says, so you can hear whether it is what you want
-without putting anything into your game folder. The download is kept, so
-installing straight afterwards does not fetch it again.
+last updated. **Preview pack** on that page plays it before you install it,
+every line with what it says, so you can hear whether it is what you want
+without putting anything into your game folder.
+
+A pack is only ever downloaded once. Previewing one, installing it afterwards
+and opening it again next week all use the copy already on your machine.
+
+**Installed** lists everything you have taken from the directory and tells you
+which of them the author has changed since, with the count on the button. Packs
+are never replaced without being asked, because yours may have been recorded
+over; updating is a button you press when you want it.
 
 ### Sharing one of yours
 

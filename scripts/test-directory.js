@@ -103,6 +103,31 @@ console.log('\nHandles');
   check('a reserved author is refused', refused({ author: 'moderator' }, 'author'));
   check('a handle with a slash is refused', refused({ author: 'a/b' }, 'author'));
   check('a one character handle is refused', refused({ author: 'a' }, 'author'));
+
+  // GitHub keeps the capitals somebody signed up with, so a name with any in
+  // it arrives capitalised and was being told it was not a GitHub username.
+  // Nobody hitting that could do anything about it: it was their own name.
+  const capitals = validateRecord(good({
+    author: 'Reagan-Val',
+    downloadUrl: 'https://github.com/Reagan-Val/packs/releases/download/v1/pack.zip',
+  }));
+  check('a capitalised handle is accepted', capitals.ok,
+    capitals.ok ? '' : capitals.problems.map((p) => p.message).join('; '));
+  check('the capitals are kept as they were given',
+    capitals.ok && capitals.record.author === 'Reagan-Val');
+
+  // The account that hosts the file is matched without regard to case, so a
+  // capitalised name still has to own what it is credited with.
+  check('case does not let one account claim another\'s file',
+    refused({
+      author: 'Reagan-Val',
+      downloadUrl: 'https://github.com/someone-else/packs/releases/download/v1/pack.zip',
+    }, 'author'));
+  check('a differently capitalised owner still counts as the same account',
+    validateRecord(good({
+      author: 'JoJoZagjos',
+      downloadUrl: 'https://github.com/jojozagjos/packs/releases/download/v1/pack.zip',
+    })).ok);
 }
 
 console.log('\nText fields');

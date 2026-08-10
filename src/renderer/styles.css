@@ -4060,16 +4060,28 @@ input[type="range"]::-webkit-slider-thumb {
 /* Two actions beside Open on GitHub on a publisher page. */
 .admin-head-actions { display: flex; gap: 8px; flex: none; flex-wrap: wrap; }
 
-/* The count of things needing attention, on an icon-only rail. */
-.type-rail .type-btn { position: relative; }
+/* The count of things needing attention, on an icon-only rail.
+   Pinned to the button's top right corner and allowed to hang off it, rather
+   than sitting inside a 46 pixel square where it landed on top of the picture
+   it was meant to be annotating and made both harder to read. */
+.type-rail .type-btn { position: relative; overflow: visible; }
 .type-badge {
   position: absolute;
-  top: 4px;
-  right: 8px;
-  font-size: 9px;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
   padding: 0 4px;
+  font-size: 9.5px;
+  line-height: 15px;
+  text-align: center;
   border-radius: 999px;
+  /* A ring in the rail's own colour, so the badge sits clear of the icon and
+     the button edge. Not a background, because the colour of one of these is
+     the whole point of it and belongs to .badge-error and .badge-warn. */
+  box-shadow: 0 0 0 2px var(--bg);
 }
+/* Room for the overhang, so the badge is not clipped against the rail edge. */
+.type-rail { overflow: visible; }
 
 /* Ordering the reports queue, under its search box. */
 .admin-sort {

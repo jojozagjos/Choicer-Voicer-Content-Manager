@@ -2868,6 +2868,38 @@ function prunePackCache(keepSha) {
   }
 }
 
+// The parts of a listing somebody typed, as against the parts this app filled
+// in from GitHub. Everything not in here — the author, the address, the
+// checksum, the size, the dates — came from the account that just signed in
+// and the release that was just made, so it is not something a person chose or
+// can change.
+const TYPED_FIELDS = new Set(['title', 'summary', 'description', 'tags', 'licence', 'content']);
+
+/**
+ * Why a finished listing would not validate, said to the right person.
+ *
+ * This runs after the upload has succeeded, on a record this app assembled. A
+ * publisher was shown the raw complaint and left holding it: told that their
+ * own GitHub username is not a GitHub username, with no way to change their
+ * username and no suggestion that anything but they was at fault. Which of the
+ * two situations it is turns entirely on which field failed.
+ */
+function explainBadRecord(problem) {
+  const detail = problem && problem.message ? problem.message : 'no reason given';
+
+  if (problem && TYPED_FIELDS.has(problem.field)) {
+    return 'The pack uploaded, but the listing details need a change before it can be '
+      + `offered: ${detail}\n\nPublish it again and adjust that when asked. The upload is `
+      + 'finished and will not be done twice.';
+  }
+
+  return 'The pack uploaded, but this app could not build a valid listing for it, which is a '
+    + `fault here rather than anything you did: ${detail}\n\nNothing was sent to the directory. `
+    + 'The release is on your account and the zip is still in your exports folder, so nothing '
+    + 'has been lost. Reporting this with the message above is the most useful thing you can do '
+    + 'with it.';
+}
+
 /**
  * An address this app is willing to hand to the operating system, or nothing.
  *
@@ -3379,7 +3411,7 @@ function registerPublishIpc() {
       if (!checked.ok) {
         return {
           ok: false,
-          error: `The pack uploaded, but its record is not valid: ${checked.problems[0].message}`,
+          error: explainBadRecord(checked.problems[0]),
           releaseUrl: uploaded.releaseUrl,
         };
       }

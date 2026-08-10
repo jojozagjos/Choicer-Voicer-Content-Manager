@@ -58,16 +58,23 @@ Sharing packs, and working with a pack that has been recorded several times over
 - A previewed pack goes through the same checks as an installed one: its
   checksum has to match the listing, and the archive has to pass every shape
   check before anything is unpacked.
-- An Installed view lists every pack you have taken from the directory, and says
-  which of them the author has changed since. Updating is a button: nothing is
-  replaced without being asked, because a pack in your game folder may have been
-  recorded over. The number of packs waiting sits on the button.
+- An Installed view lists every pack taken from the directory and says which of
+  them the author has changed since. Updating is a button and never happens on
+  its own, because a pack in the game folder may have been recorded over. The
+  number of packs waiting sits on the button.
 - Download counts are real. They are read from the number GitHub already keeps
   for each file and refreshed daily, rather than sitting at zero forever. An
   update does not reset a pack's total.
 - A pack is only ever downloaded once. Previewing one, installing it afterwards
-  and opening it again later all use the copy already on your machine, so a
+  and opening it again later all use the copy already on the machine, so a
   listing's count reflects people rather than button presses.
+- Sharing a pack says up front that it can be published to the Mods tab once it
+  is packaged. It read as making a zip and nothing else, which left the way to
+  list a pack reachable only by pressing something that looked unrelated.
+- A pack that uploads but cannot be listed says whether the problem is something
+  in the listing details, which can be changed and published again, or a fault
+  in the app, which cannot. It used to give the same wording for both.
+- The sign-in code is set large enough to read off the screen and copy.
 - Packs that have been taken off the list no longer appear anywhere in browsing,
   and no longer count towards a publisher's total.
 - Packs are listed as soon as they pass their checks. Nobody approves uploads:
@@ -94,17 +101,17 @@ Sharing packs, and working with a pack that has been recorded several times over
 
 ### Working on a dub
 
-- What you set on a session is kept: which take each line uses, how loud it is,
-  how far its timing was nudged, and the music and dub balance. Coming back to a
-  pack picks up where you left it, and closing the app no longer throws an
-  evening of levelling away.
+- What is set on a session is kept: which take each line uses, how loud it is,
+  how far its timing was nudged, and the music and dub balance. Reopening a pack
+  picks up where it was left, and closing the app no longer throws an evening of
+  levelling away.
 - Kept per pack and per session, because the same pack recorded twice is two
   performances. A take lifted in one is not the take in the other.
 - A line whose recording has since been deleted falls back rather than pointing
   at a file that is gone.
 - The take session box no longer empties when switching packs. It was being
-  handed the session chosen on the pack you just left, which showed as blank
-  while a session was in fact loaded and playing.
+  handed the session chosen on the pack just left, which showed as blank while a
+  session was in fact loaded and playing.
 
 ### Recording sessions
 
@@ -116,8 +123,8 @@ Sharing packs, and working with a pack that has been recorded several times over
 
 ### The editor
 
-- Setting a pack icon from the video, or from a file, no longer throws you back
-  to the Clips list. Whichever side panel is open stays open.
+- Setting a pack icon from the video, or from a file, no longer jumps back to
+  the Clips list. Whichever side panel is open stays open.
 - The backing track's muffle keeps the music. It now takes out the band that
   carries speech, roughly 300 Hz to 3.4 kHz, instead of everything above 600 Hz,
   so a scene holds its bass and its top end while the original voices stop
@@ -145,11 +152,23 @@ Sharing packs, and working with a pack that has been recorded several times over
 - Opening the exports folder works from the buttons that offer it. It was being
   refused for being outside the game folder, and the refusal was not shown.
 
+### Content
+
+- A pack type whose packs have warnings is marked on the rail, in amber, beside
+  the red used for errors. Warnings were counted and then thrown away, so a type
+  containing nothing but warnings looked as clean as one containing nothing.
+- The mark sits in the corner of the type's button rather than on top of its
+  picture, where it obscured the thing it was pointing at.
+- The buttons on a selected pack have their labels back, laid out in even
+  columns rather than bunched at one end.
+
 ### Under the hood
 
 - Updated to a current Chromium, and the window that displays packs now runs
   sandboxed. Both matter more than they used to, because the app now opens files
   that came from other people.
+- The download is about 48 MB smaller. Chromium ships a translation of its own
+  interface in each of 55 languages, and this app is only in English.
 
 ## 1.0.2
 

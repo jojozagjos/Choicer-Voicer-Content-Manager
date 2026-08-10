@@ -267,8 +267,10 @@ const state = {
   modsType: 'all',
   modsSort: 'downloads',
   modsShow: 'browse',
-  // The pack whose own page is open, if one is.
+  // The pack whose own page is open, if one is, and which list it was opened
+  // from so that list stays lit and is where going back goes.
   listing: null,
+  listingFrom: 'browse',
   // What this machine has installed from the directory, worked out once per
   // directory refresh and cleared alongside it.
   installed: null,
@@ -877,8 +879,11 @@ async function switchTab(tab) {
     // drew packs while the view was still set up for whichever list was open
     // last, so coming back from Your submissions left the packs in that view's
     // narrow centred column.
-    const back = state.modsShow === 'publisher' || state.modsShow === 'listing'
-      ? 'browse' : (state.modsShow || 'browse');
+    // A pack's page goes back to whichever list it was opened from; a
+    // publisher's page belongs to Browse.
+    const back = state.modsShow === 'listing' ? state.listingFrom
+      : state.modsShow === 'publisher' ? 'browse'
+        : (state.modsShow || 'browse');
     await showMods(back);
   }
   if (tab === 'admin') await showAdmin(state.adminShow || 'reports');
@@ -2265,7 +2270,7 @@ async function showInstalled() {
     if (pack.record) fillModIcon(row.querySelector('[data-icon]'), pack.record);
 
     const open = row.querySelector('[data-open]');
-    if (open) open.addEventListener('click', () => showListing(pack.record));
+    if (open) open.addEventListener('click', () => showListing(pack.record, 'installed'));
 
     const update = row.querySelector('[data-update]');
     if (update) {
@@ -2332,11 +2337,16 @@ async function markUpdates() {
  * request. Hearing the pack is a separate press, because that does mean
  * downloading it.
  */
-async function showListing(pack) {
+async function showListing(pack, from = 'browse') {
   state.modsShow = 'listing';
   state.listing = pack;
+  // Which list this page was opened from stays lit, because that is where
+  // going back lands. It was always Browse, so opening a pack from Installed
+  // said the reader had left the view they were still working in.
+  state.listingFrom = from === 'installed' ? 'installed' : 'browse';
   el.modsView.dataset.show = 'listing';
-  el.btnModsBrowse.classList.add('on');
+  el.btnModsBrowse.classList.toggle('on', state.listingFrom === 'browse');
+  el.btnModsInstalled.classList.toggle('on', state.listingFrom === 'installed');
   el.btnModsPublishers.classList.remove('on');
   el.btnModsInbox.classList.remove('on');
   el.modsSearch.hidden = true;
@@ -3303,11 +3313,17 @@ async function sharePack(pack) {
 
   const go = await askConfirm({
     title: `Share "${pack.title}"?`,
-    detail: 'This makes one zip in your exports folder, ready to send to anyone.\n\n'
-      + 'It is shrunk on the way, usually to about half the size, which is worth a few '
-      + 'minutes for a pack with video in it. Your own copy is not touched.\n\n'
-      + 'Nothing is uploaded and nothing leaves this machine.',
-    buttons: ['Make the zip', 'Cancel'],
+    // Publishing is named here rather than only on the dialog that follows.
+    // This step makes a zip and says so, which read as the whole of what the
+    // button did, so the way to get a pack listed in Mods was reachable only
+    // by pressing something that appeared to do something else and waiting
+    // several minutes to find out.
+    detail: 'This packages the pack into one zip in your exports folder, shrunk on the way, '
+      + 'usually to about half the size. Your own copy is not touched.\n\n'
+      + 'When it is done you can publish it to the Mods tab, where everyone can find and '
+      + 'install it, or just send the zip to somebody directly. Both are offered once it is '
+      + 'packaged, and nothing is uploaded until you choose to.',
+    buttons: ['Package it', 'Cancel'],
     mark: '↗',
   });
   if (go !== 0) return;
@@ -4018,7 +4034,7 @@ function renderContentDetail(pack) {
       <button type="button" class="btn icon-action" id="btn-detail-share"
               ${converting ? 'disabled' : ''}
               title="${pack.iconPath || pack.iconUrl
-    ? 'Share this pack'
+    ? 'Package this pack, to publish to Mods or send to somebody'
     : 'This pack needs an icon first. Set one in Edit this pack, under Pack details.'
 }">${actionIcon('export')}<span>Share</span></button>
       <button type="button" class="btn icon-action" id="btn-detail-open"

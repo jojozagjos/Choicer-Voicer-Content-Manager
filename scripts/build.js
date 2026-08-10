@@ -154,6 +154,49 @@ function copyLicenses(appDir) {
  * those timestamps without complaint. It is addressed by full path because Git
  * for Windows puts GNU tar, which cannot write zips, earlier on PATH.
  */
+/**
+ * Drops the Chromium translations this app has no use for.
+ *
+ * Electron ships a `.pak` per language it supports, 55 of them, together about
+ * 47 MB. They translate Chromium's own interface: the right-click menu, its
+ * error pages, the print dialog. This app is written in English throughout and
+ * has no way to be in anything else, so 54 of them are 47 MB of a download
+ * nobody will ever see the effect of.
+ *
+ * en-US stays. Chromium falls back to it, and removing the one it falls back
+ * to is the way this optimisation turns into a crash report.
+ */
+function dropUnusedLocales(appDir) {
+  const dir = path.join(appDir, 'locales');
+  const keep = new Set(['en-US.pak']);
+
+  let files;
+  try {
+    files = fs.readdirSync(dir);
+  } catch {
+    return { dropped: 0, bytes: 0 }; // no locales folder on this platform
+  }
+
+  let dropped = 0;
+  let bytes = 0;
+  for (const name of files) {
+    if (keep.has(name) || !name.endsWith('.pak')) continue;
+    const full = path.join(dir, name);
+    bytes += fs.statSync(full).size;
+    fs.rmSync(full, { force: true });
+    dropped++;
+  }
+
+  // Losing the fallback would leave Chromium with no strings at all, so this
+  // is checked rather than assumed. Better a failed build than a release that
+  // starts to a blank window on somebody else's machine.
+  if (!fs.existsSync(path.join(dir, 'en-US.pak'))) {
+    throw new Error('locales/en-US.pak is missing, so the app would have no interface strings');
+  }
+
+  return { dropped, bytes };
+}
+
 function makeZip(appDir, zipPath) {
   const parent = path.dirname(appDir);
   const name = path.basename(appDir);
@@ -244,11 +287,16 @@ async function main() {
   fs.rmSync(staging, { recursive: true, force: true });
 
   const licenses = copyLicenses(appDir);
+  const droppedLocales = dropUnusedLocales(appDir);
 
   const exe = path.join(appDir, `${APP_NAME}${platform === 'win32' ? '.exe' : ''}`);
   console.log('\nApp built:');
   console.log(`  ${exe}`);
   console.log(`\nLicences shipped in licenses/: ${licenses.join(', ')}`);
+  if (droppedLocales.dropped) {
+    console.log(`Dropped ${droppedLocales.dropped} unused Chromium translations `
+      + `(${(droppedLocales.bytes / 1e6).toFixed(0)} MB)`);
+  }
   console.log('\nThe whole folder is the app. Move, copy or zip it as one piece.');
 
   if (WANT_ZIP) {

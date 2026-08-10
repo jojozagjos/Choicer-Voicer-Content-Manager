@@ -158,8 +158,14 @@ const ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
  * simply a person who cannot publish and is told their own name is invalid.
  * Anyone with a name shorter than three characters or longer than twenty hit
  * it, which is a great many people, and no amount of retrying would have helped.
+ *
+ * It was then wrong a second time in the same spirit: lower case only. GitHub
+ * keeps the capitals somebody signed up with and hands them back that way, so
+ * `Reagan-Val` arrives exactly like that and was refused as not being a GitHub
+ * username, which is both false and impossible to act on. Matched without
+ * regard to case, and stored as it was given, because it is somebody's name.
  */
-const HANDLE_PATTERN = /^[a-z0-9](?:-?[a-z0-9]){0,38}$/;
+const HANDLE_PATTERN = /^[a-z0-9](?:-?[a-z0-9]){0,38}$/i;
 const TAG_PATTERN = /^[a-z0-9][a-z0-9-]{0,23}$/;
 // Either case is accepted and normalised down on the way out, because plenty of
 // tools print a checksum in capitals.

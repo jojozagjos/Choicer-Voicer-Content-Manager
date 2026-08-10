@@ -204,6 +204,8 @@ const el = {
   btnAdminRefresh: $('#btn-admin-refresh'),
   adminTabs: document.querySelectorAll('[data-admin]'),
   adminSearch: $('#admin-search'),
+  adminSort: $('#admin-sort'),
+  adminSortWrap: $('#admin-sort-wrap'),
   githubStatus: $('#github-status'),
   githubNote: $('#github-note'),
   btnGithubLink: $('#btn-github-link'),
@@ -266,6 +268,7 @@ const state = {
   moderator: false,
   adminItems: [],
   adminShow: 'reports',
+  adminSort: 'oldest',
   // Issues decided in this session, so a slow refetch cannot resurrect one.
   adminDecided: new Set(),
   publishers: [],
@@ -1091,6 +1094,9 @@ function matchingAdmin(rows, textOf) {
  * the second kind inside the first.
  */
 async function showAdmin(which = 'reports', { force = false } = {}) {
+  // Ordering is a question about the reports queue, so it goes away on the
+  // views that are lists of other things.
+  if (el.adminSortWrap) el.adminSortWrap.hidden = which !== 'reports';
   state.adminShow = which;
   state.adminOpen = null;
   for (const button of el.adminTabs) {
@@ -1498,10 +1504,38 @@ async function refreshAdminQueue() {
   drawAdminQueue(state.adminItems);
 }
 
+/**
+ * The orders reports can be worked through in.
+ *
+ * Oldest first is the default, which is the opposite of everywhere else in this
+ * app and deliberate. A queue read newest first leaves its oldest entries
+ * permanently at the bottom, and those are the ones somebody has been waiting
+ * longest on.
+ */
+const REPORT_SORTS = [
+  { id: 'oldest', label: 'Oldest first' },
+  { id: 'newest', label: 'Newest first' },
+  { id: 'discussed', label: 'Most discussed' },
+  { id: 'pack', label: 'By pack' },
+];
+
+function sortReports(items, how) {
+  const at = (value) => Date.parse(value) || 0;
+  const by = {
+    oldest: (a, b) => at(a.openedAt) - at(b.openedAt),
+    newest: (a, b) => at(b.openedAt) - at(a.openedAt),
+    discussed: (a, b) => (b.comments || 0) - (a.comments || 0) || at(a.openedAt) - at(b.openedAt),
+    pack: (a, b) => String(a.title).localeCompare(String(b.title)),
+  };
+  return [...items].sort(by[how] || by.oldest);
+}
+
 /** Draws the queue rail from a list of items, narrowed by the search box. */
 function drawAdminQueue(items) {
-  const shown = matchingAdmin(items,
-    (i) => `${i.record ? i.record.title : i.title} ${i.author || ''} #${i.number}`);
+  const shown = sortReports(
+    matchingAdmin(items, (i) => `${i.title} ${i.author || ''} #${i.number}`),
+    state.adminSort,
+  );
   el.adminList.innerHTML = '';
   if (!shown.length) {
     el.adminList.innerHTML = '<p class="muted small">Nothing matches that.</p>';
@@ -1955,6 +1989,7 @@ async function showMods(which = 'browse') {
   // Ordering is about packs, so it goes with them rather than following the
   // reader onto a list of people or their own submissions.
   el.modsSortWrap.hidden = which !== 'browse';
+  el.btnModsRefresh.hidden = false;
   el.modsSearch.placeholder = which === 'publishers' ? 'Search publishers…'
     : which === 'inbox' ? 'Search your submissions…'
       : 'Search packs…';
@@ -2029,10 +2064,17 @@ async function showPublishers() {
 async function showPublisher(author) {
   state.modsShow = 'publisher';
   el.modsView.dataset.show = 'publisher';
-  el.btnModsBrowse.classList.add('on');
-  el.btnModsPublishers.classList.remove('on');
+  // Publishers stays lit, because that is where this page belongs and where
+  // going back lands. Browse was lit instead, which said the wrong thing about
+  // where you were.
+  el.btnModsBrowse.classList.remove('on');
+  el.btnModsPublishers.classList.add('on');
   el.btnModsInbox.classList.remove('on');
   el.modsSearch.hidden = true;
+  el.modsSortWrap.hidden = true;
+  // Nothing on this page is a list that refreshing would change: it is one
+  // person, drawn from the directory already in hand.
+  el.btnModsRefresh.hidden = true;
   el.modsTypes.hidden = true;
 
   const data = state.mods;
@@ -2072,13 +2114,14 @@ async function showPublisher(author) {
         <div class="publisher-bar">
           ${repo ? `<button type="button" class="btn btn-small btn-primary" id="pub-repo">
             Open their repository</button>` : ''}
-          <button type="button" class="btn btn-small" id="pub-report">Report this publisher</button>
+          <button type="button" class="btn btn-small mod-report" id="pub-report"
+                  title="Report this publisher" aria-label="Report this publisher">!</button>
         </div>
       </header>
 
       ${stats ? `<div class="publisher-stats">
         <div><b>${stats.packs}</b><span class="muted small">packs listed</span></div>
-        <div><b>${escapeHtml(formatDownloads(stats.downloads))}</b>
+        <div><b>${stats.downloads.toLocaleString()}</b>
           <span class="muted small">downloaded</span></div>
         <div><b>${escapeHtml(formatBytes(stats.bytes))}</b>
           <span class="muted small">total size</span></div>
@@ -3402,11 +3445,17 @@ function renderContentTypes() {
     const button = document.createElement('button');
     button.className = 'type-btn';
     button.dataset.type = type.id;
+    button.title = errors
+      ? `${type.label} — ${errors} need attention`
+      : `${type.label} (${type.packs.length})`;
+    button.setAttribute('aria-label', button.title);
     button.classList.toggle('on', type.id === state.contentType);
+    // Pictures only, matching Mods. The one number kept is the count of things
+    // that need attention, because that is the only one worth interrupting
+    // somebody for; how many host packs exist is not.
     button.innerHTML = `
       <span class="type-icon-wrap">${typeIcon(type.id)}</span>
-      <span>${escapeHtml(type.label)}</span>
-      <span class="count">${errors ? `<b class="badge badge-error">${errors}</b> ` : ''}${type.packs.length}</span>`;
+      ${errors ? `<b class="badge badge-error type-badge">${errors}</b>` : ''}`;
     button.addEventListener('click', () => {
       state.contentType = type.id;
       state.contentPackId = null;
@@ -4585,7 +4634,15 @@ function renderSessionOptions() {
     opt.textContent = friendlySessionName(session);
     el.sessionSelect.append(opt);
   }
-  if (chosen) el.sessionSelect.value = chosen;
+  // Only put back a choice this pack actually has.
+  //
+  // Setting a select to a value none of its options carry leaves it showing
+  // nothing at all, and the value it was being handed came from whichever pack
+  // was open before. Switching packs therefore emptied the box every time,
+  // while a session was in fact loaded and playing.
+  if (chosen && pack.sessions.some((s) => s.id === chosen)) {
+    el.sessionSelect.value = chosen;
+  }
   el.btnSessionDelete.disabled = false;
 }
 
@@ -6241,6 +6298,16 @@ function wireEvents() {
   el.btnAdminRefresh.addEventListener('click', () => showAdmin(state.adminShow, { force: true }));
   el.adminSearch.addEventListener('input', () => {
     showAdmin(state.adminShow);
+  });
+
+  el.adminSort.innerHTML = REPORT_SORTS
+    .map((s) => `<option value="${s.id}">${escapeHtml(s.label)}</option>`).join('');
+  el.adminSort.value = state.adminSort;
+  el.adminSort.addEventListener('change', () => {
+    state.adminSort = el.adminSort.value;
+    // Redrawn from what is already held rather than fetched again: ordering is
+    // a question about the list on screen, not about GitHub.
+    drawAdminQueue(state.adminItems || []);
   });
   el.adminSearch.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;

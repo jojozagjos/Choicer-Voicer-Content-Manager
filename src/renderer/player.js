@@ -33,8 +33,21 @@ export class DubPlayer {
     this.driftTimer = null;
     this.onStateChange = null;
 
-    this.video.muted = false; // routed through Web Audio instead
-    this.video.volume = 1;
+    // The video is silent on purpose, from the moment it exists.
+    //
+    // Its soundtrack is the original mix, with the original dialogue in it.
+    // What plays instead is the backing track, which is that same audio with
+    // the spoken ranges quietened, plus whichever take each line is set to.
+    // Letting the element through would put the original performance
+    // underneath the dub.
+    //
+    // This used to happen by accident. The element was routed into the audio
+    // graph through a MediaElementAudioSource connected to a gain left at zero;
+    // because a custom scheme counts as cross-origin, the graph refused to read
+    // it and emitted silence and a console warning on every load. Nothing ever
+    // raised that gain, so the whole path existed to mute the video by failing
+    // at it.
+    this.video.muted = true;
 
     this.video.addEventListener('play', () => this._onPlay());
     this.video.addEventListener('pause', () => this._onPause());
@@ -59,15 +72,6 @@ export class DubPlayer {
     this.backingGain = this.ctx.createGain();
     this.backingGain.connect(this.master);
 
-    // The video's own audio is the original mix (with the original dialogue).
-    // Kept at zero unless explicitly asked for, but wired up so it can be
-    // faded in for reference.
-    this.originalGain = this.ctx.createGain();
-    this.originalGain.gain.value = 0;
-    this.originalGain.connect(this.master);
-
-    this.videoSource = this.ctx.createMediaElementSource(this.video);
-    this.videoSource.connect(this.originalGain);
   }
 
   /**
@@ -298,10 +302,6 @@ export class DubPlayer {
     this.dubGain.gain.value = v;
   }
 
-  setOriginalVolume(v) {
-    this._ensureContext();
-    this.originalGain.gain.value = v;
-  }
 
   // transport
 

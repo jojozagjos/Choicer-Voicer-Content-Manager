@@ -768,10 +768,14 @@ function createWindow() {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
     // Surface renderer errors in the terminal too, which is much easier than
     // hunting through a detached DevTools window.
-    const levels = ['debug', 'info', 'warn', 'error'];
-    mainWindow.webContents.on('console-message', (_e, level, message, line, source) => {
-      const tag = levels[level] || 'log';
-      console.log(`[renderer:${tag}] ${message}${source ? ` (${path.basename(source)}:${line})` : ''}`);
+    // One event object rather than positional arguments. Electron deprecated
+    // the old signature and warns about it on every single message, which is
+    // noise printed on top of whatever was actually being reported.
+    mainWindow.webContents.on('console-message', (event) => {
+      const where = event.sourceId
+        ? ` (${path.basename(event.sourceId)}:${event.lineNumber})`
+        : '';
+      console.log(`[renderer:${event.level || 'log'}] ${event.message}${where}`);
     });
   }
 
@@ -1296,9 +1300,19 @@ function runSmokeTest(win) {
   // which meant a pack with one dangling file, something the app reports
   // properly and carries on from, failed the whole run.
   const warnings = [];
-  win.webContents.on('console-message', (_e, level, message) => {
-    if (level >= 3) errors.push(message);
-    else if (level === 2) warnings.push(message);
+  // Both shapes of this event are read on purpose.
+  //
+  // Electron moved from positional arguments to an event object, and the old
+  // form numbered its levels while the new one names them. Reading only one
+  // would leave this catching nothing on the other, and a smoke test that has
+  // quietly stopped detecting anything reports success forever, which is worse
+  // than not having one.
+  win.webContents.on('console-message', (event, level, message) => {
+    const named = event && typeof event.level === 'string' ? event.level : null;
+    const text = event && event.message !== undefined ? event.message : message;
+
+    if (named === 'error' || level >= 3) errors.push(text);
+    else if (named === 'warning' || level === 2) warnings.push(text);
   });
   win.webContents.on('render-process-gone', (_e, details) => {
     errors.push(`renderer gone: ${details.reason}`);

@@ -2946,7 +2946,8 @@ input[type="range"]::-webkit-slider-thumb {
 /* Refresh sits with the view buttons, at the same end of the bar as the back
    and repository buttons on a publisher page. The search box is the odd one
    out and goes to the far end. */
-.mods-bar .content-search { margin-left: auto; max-width: 260px; }
+.mods-bar .mods-sort { margin-left: auto; }
+.mods-bar .content-search { max-width: 260px; }
 .mods-nav { display: flex; gap: 4px; flex: none; }
 
 /* The heading and the count at opposite ends, on a line of their own with
@@ -3862,3 +3863,23 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* Two actions beside Open on GitHub on a publisher page. */
 .admin-head-actions { display: flex; gap: 8px; flex: none; flex-wrap: wrap; }
+
+/* The count of things needing attention, on an icon-only rail. */
+.type-rail .type-btn { position: relative; }
+.type-badge {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  font-size: 9px;
+  padding: 0 4px;
+  border-radius: 999px;
+}
+
+/* Ordering the reports queue, under its search box. */
+.admin-sort {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px 8px;
+}
+.admin-sort .select { flex: 1; min-width: 0; padding: 4px 8px; font-size: 12px; }

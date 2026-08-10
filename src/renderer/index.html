@@ -206,7 +206,7 @@
 
   <!-- Content manager. Spans the whole width, so the dub sidebar steps aside. -->
   <section class="content-view" id="content-view" hidden>
-    <aside class="content-types" id="content-types"></aside>
+    <aside class="content-types type-rail" id="content-types"></aside>
 
     <div class="content-main">
       <header class="content-head">
@@ -298,6 +298,10 @@
       </header>
       <input id="admin-search" class="input admin-search" type="search"
              placeholder="Search…" autocomplete="off" />
+      <label class="admin-sort" id="admin-sort-wrap">
+        <span class="muted small">Sort</span>
+        <select id="admin-sort" class="select"></select>
+      </label>
       <div id="admin-list" class="admin-list"></div>
     </aside>
 

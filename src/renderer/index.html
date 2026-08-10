@@ -23,7 +23,7 @@
   <nav class="tabs" role="tablist">
     <button class="tab on" role="tab" data-tab="home">Home</button>
     <button class="tab" role="tab" data-tab="content">Content</button>
-    <button class="tab" role="tab" data-tab="mods">Mods</button>
+    <button class="tab" role="tab" data-tab="mods">Packs</button>
     <button class="tab" role="tab" data-tab="export">Export</button>
     <!-- Only shown to someone GitHub says can write to the directory. Hidden is
          the correct default: this is not a secret, but it is noise to everyone
@@ -40,6 +40,8 @@
       <button type="button" data-theme-set="dark" title="Dark mode">☾</button>
     </div>
     <button id="btn-refresh" class="btn btn-ghost" title="Rescan the game folder (R)"><span class="refresh-mark">⟳</span> Rescan</button>
+    <button id="btn-report" class="btn btn-ghost"
+            title="Report a bug or suggest something, without leaving the app">Report Bugs</button>
     <button id="btn-settings" class="btn btn-ghost">Settings</button>
     <button id="btn-about" class="btn btn-ghost" title="About, setup and credits">Help</button>
     <button id="version-badge" class="version-badge" title="Which version this is. Click for help and credits.">
@@ -281,7 +283,7 @@
              the title read as a subtitle explaining it rather than as a
              separate fact about what is on screen. -->
         <header class="content-head mods-title-row">
-          <h2 id="mods-title">Mods</h2>
+          <h2 id="mods-title">Packs</h2>
           <p class="muted small" id="mods-subtitle"></p>
         </header>
 
@@ -884,15 +886,18 @@
 
         <h4>About the backing track</h4>
         <p>Properly separating a voice from music needs a trained model far too large to ship
-           inside an app like this. Instead, this uses two things the pack already knows: exactly
-           when every line speaks, and the fact that speech lives in a narrow band of the
-           spectrum. It takes the video's audio and, across those ranges, cuts the band the
-           words ride on.</p>
+           inside an app like this. Instead, this uses two things it can work out for itself:
+           exactly when every line speaks, and where in the stereo picture the voice is sitting.</p>
         <ul class="bullets">
-          <li><b>Muffle</b> takes out roughly 300 Hz to 3.4 kHz, which is where speech becomes
-              intelligible and why a telephone sounds like a telephone. The bass a track is built
-              on and everything bright above it come through, so the music carries on while the
-              original voices stop competing with yours. This is typically the better option.</li>
+          <li><b>Muffle</b> removes the original voices and leaves the music. Dialogue is mixed
+              dead centre in almost everything, so where the audio is properly stereo it
+              subtracts one channel from the other, which cancels whatever is centred and leaves
+              the music spread around it nearly untouched. This is typically the better
+              option.</li>
+          <li>Where both channels carry the same signal there is no centre to cancel, so it falls
+              back to cutting the range speech occupies, roughly 220 Hz to 7 kHz. That works on
+              anything but takes some of the music with it, so those packs sound duller
+              underneath a line.</li>
           <li><b>Silence</b> removes it completely, which is cleaner but can sound like the audio
               dropped out.</li>
         </ul>

@@ -29,7 +29,7 @@ quietly ignores it.
 | ![The content library](docs/images/library.png) | ![The help screen](docs/images/help.png) |
 | **Your library.** Everything installed, of every type, with whatever needs fixing. | **Built-in help.** How everything works, without leaving the app. |
 | ![Packs other people have shared](docs/images/mods.png) | ![One pack's page, before installing it](docs/images/mods-pack.png) |
-| **Mods.** Packs other people have shared, by kind, sorted however you like. | **Before you install.** Everything the listing says, and a button that plays the pack so you can hear it first. |
+| **Packs.** What other people have shared, by kind, sorted however you like. | **Before you install.** Everything the listing says, and a button that plays the pack so you can hear it first. |
 
 ## Getting it
 
@@ -101,11 +101,13 @@ A dub pack wants the scene's music and atmosphere without the original voices. T
 knows exactly when every line speaks, so the video's own audio is taken and quietened across those
 ranges.
 
-**Muffle** takes out the band speech rides on, roughly 300 Hz to 3.4 kHz, which is why a telephone
-sounds like a telephone. The bass a track is built on and everything bright above it come through,
-so the music carries on while the original voices stop competing with yours. This is usually the
-better option. **Silence** removes it completely, which is cleaner but can sound like the audio
-dropped out.
+**Muffle** removes the original voices and leaves the music. Dialogue is mixed dead centre in
+almost everything, so where the audio is properly stereo it subtracts one channel from the other,
+which cancels whatever is centred and leaves the music spread around it. Where both channels carry
+the same signal there is no centre to cancel, so it falls back to cutting the range speech occupies
+and those packs sound duller underneath a line. This is usually the better option.
+
+**Silence** removes it completely, which is cleaner but can sound like the audio dropped out.
 
 *Muffle cannot tell a singer from a speaker, so a song with vocals loses those along with the
 dialogue. Separating them properly needs a trained model far too large to ship in an app like this.*
@@ -136,7 +138,7 @@ anything a watch cannot see.
 
 ## Sharing packs
 
-**Mods** lists packs other people have made. Pick one and press **Install**; it
+**Packs** lists what other people have made. Pick one and press **Install**; it
 downloads, checks it against the checksum it was published with, refuses
 anything malformed, and adds it to your library. Browsing and installing never
 ask you to sign in.
@@ -171,7 +173,7 @@ GitHub account, which you sign into once with a short code. Then:
 - the pack is uploaded to **your own GitHub account**, not somebody else's
 - you are asked how it should be listed: name, one line about it, tags, and
   whether other people may reuse it
-- it appears in Mods once its checks pass, which takes a minute or two
+- it appears in Packs once its checks pass, which takes a minute or two
 
 Your pack stays yours. It lives on your account, you can take it down whenever
 you like, and **Your submissions** shows everything you have published along

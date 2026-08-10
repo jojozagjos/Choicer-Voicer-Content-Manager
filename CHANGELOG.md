@@ -34,7 +34,7 @@ Sharing packs, and working with a pack that has been recorded several times over
 - A pack cannot be published without a name or without a picture. Both are asked
   for before anything is uploaded rather than after.
 
-### The Mods tab
+### The Packs tab
 
 - A new tab listing packs other people have shared, by kind, with a search box.
   Installing one checks it against the checksum it was published with, refuses
@@ -68,7 +68,7 @@ Sharing packs, and working with a pack that has been recorded several times over
 - A pack is only ever downloaded once. Previewing one, installing it afterwards
   and opening it again later all use the copy already on the machine, so a
   listing's count reflects people rather than button presses.
-- Sharing a pack says up front that it can be published to the Mods tab once it
+- Sharing a pack says up front that it can be published to the Packs tab once it
   is packaged. It read as making a zip and nothing else, which left the way to
   list a pack reachable only by pressing something that looked unrelated.
 - A pack that uploads but cannot be listed says whether the problem is something
@@ -125,10 +125,15 @@ Sharing packs, and working with a pack that has been recorded several times over
 
 - Setting a pack icon from the video, or from a file, no longer jumps back to
   the Clips list. Whichever side panel is open stays open.
-- The backing track's muffle keeps the music. It now takes out the band that
-  carries speech, roughly 300 Hz to 3.4 kHz, instead of everything above 600 Hz,
-  so a scene holds its bass and its top end while the original voices stop
-  competing with the dub.
+- The playhead can be moved by pressing the backing track lane, and dragged
+  along it to find the moment a duck starts. It draws the same playhead as the
+  timeline above it and did nothing when pressed.
+- The backing track's muffle removes the original voices instead of quietening
+  the whole scene. Where the video's audio is properly stereo it cancels
+  whatever sits dead centre, which is where dialogue is mixed, leaving the music
+  around it almost untouched. Where both channels carry the same signal there is
+  no centre to cancel, so it cuts the range speech occupies instead. On a real
+  pack the voice now drops 18 dB further than the music, against 6 dB before.
 - The character box opens as a name is typed, and the arrow keys move through
   the matches with Enter to take one.
 - Each character's clips are drawn in that character's own colour, so who speaks

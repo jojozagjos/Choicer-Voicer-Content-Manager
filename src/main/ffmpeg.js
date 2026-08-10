@@ -95,6 +95,47 @@ function probeDuration(file) {
 }
 
 /**
+ * How much of a file's audio is spread across the stereo field, in dB.
+ *
+ * Returns side level minus mid level. Around -6 is a wide, genuinely stereo
+ * mix; -40 or below means the two channels are the same signal, which is a
+ * mono recording carried in a stereo container and is very common.
+ *
+ * This decides whether centre cancellation is worth attempting on a file.
+ * Dialogue is mixed dead centre in almost everything, so subtracting one
+ * channel from the other removes it and leaves the music around it. On a file
+ * whose channels are identical that subtraction leaves silence, so the same
+ * technique that is the best available on one file destroys another.
+ *
+ * Measured over a sample rather than the whole file, because this runs before
+ * a build that is already minutes long and the answer does not change.
+ */
+function probeStereoWidth(file, { seconds = 60 } = {}) {
+  const level = (pan) => {
+    const res = spawnSync(ffmpegPath(), [
+      '-v', 'info', '-t', String(seconds), '-i', file,
+      '-af', `pan=mono|c0=${pan},astats=metadata=1:reset=0`,
+      '-f', 'null', '-',
+    ], { encoding: 'utf8', windowsHide: true, maxBuffer: 32 * 1024 * 1024 });
+    const found = (res.stderr || '').match(/RMS level dB:\s*(-?[\d.]+|-inf)/g);
+    if (!found) return null;
+    const value = found[found.length - 1].split(':')[1].trim();
+    return value === '-inf' ? -120 : parseFloat(value);
+  };
+
+  try {
+    const mid = level('0.5*c0+0.5*c1');
+    const side = level('0.5*c0-0.5*c1');
+    if (mid === null || side === null || !Number.isFinite(mid) || !Number.isFinite(side)) {
+      return null;
+    }
+    return side - mid;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * When the video stream starts presenting, in seconds, or null if unreadable.
  *
  * Worth checking on anything freshly muxed. A file whose picture starts late
@@ -252,6 +293,7 @@ module.exports = {
   ffmpegPath,
   ffprobePath,
   probeDuration,
+  probeStereoWidth,
   probeVideo,
   probeStartTime,
   probeFirstFrameDecodes,

@@ -955,9 +955,11 @@ export class PackEditor {
       title: replacing ? 'Replace the backing track?' : 'Build a backing track?',
       detail: `The video's own audio is used, quietened under each of the ${clips.length} lines `
         + 'so your dub sits in front of it.\n\n'
-        + 'MUFFLE takes out the range that carries speech and leaves the rest, so the music '
-        + 'keeps its bass and its top end and the original voices stop competing with yours. '
-        + 'This is almost always what you want.\n\n'
+        + 'MUFFLE removes the original voices and leaves the music. Where the audio is properly '
+        + 'stereo it cancels whatever sits dead centre, which is where dialogue is mixed, so the '
+        + 'music around it comes through nearly untouched. Where both channels are the same '
+        + 'signal there is no centre to cancel, so it cuts the speech range instead and the '
+        + 'music is duller for it. This is almost always what you want.\n\n'
         + 'SILENCE cuts it to nothing under each line. Cleaner, but the scene drops away every '
         + 'time somebody speaks, which can sound like the audio broke.\n\n'
         + 'Muffle cannot tell a singer from a speaker, so a song with vocals in it loses those '
@@ -1254,9 +1256,59 @@ export class PackEditor {
 
     this.listenTo('video');
 
+    this.scrubBackingLane(canvas, video);
+
     this.drawBackingWave();
     new ResizeObserver(() => this.drawBackingWave()).observe(canvas);
     this.loadBackingPeaks();
+  }
+
+  /**
+   * Moving the playhead by pressing on the backing track.
+   *
+   * The lane draws the same playhead as the timeline above it and sits under
+   * the same ruler, so it reads as part of the same view and pressing it is the
+   * obvious way to go somewhere. It did nothing, which made the lane look like
+   * a picture of the track rather than part of the editor.
+   *
+   * The video is seeked rather than the track, because the video is the clock
+   * here and the track chases it. Seeking the track directly would be undone by
+   * the next sync.
+   */
+  scrubBackingLane(canvas, video) {
+    const seekTo = (event) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const at = this.timeline ? this.timeline.xToTime(x) : 0;
+      const end = video.duration || this.backingDuration || 0;
+      video.currentTime = Math.max(0, Math.min(at, end ? end - 0.01 : at));
+    };
+
+    canvas.addEventListener('pointerdown', (event) => {
+      // Left button only. The timeline above uses the others for panning, and
+      // a lane that seeked on a right press would fight that.
+      if (event.button !== 0) return;
+      event.preventDefault();
+      canvas.setPointerCapture(event.pointerId);
+      canvas.classList.add('is-scrubbing');
+      seekTo(event);
+    });
+
+    // Dragging scrubs, which is how somebody finds the exact moment a duck
+    // starts rather than pressing repeatedly and creeping up on it.
+    canvas.addEventListener('pointermove', (event) => {
+      if (!canvas.hasPointerCapture(event.pointerId)) return;
+      seekTo(event);
+    });
+
+    const release = (event) => {
+      if (canvas.hasPointerCapture(event.pointerId)) {
+        canvas.releasePointerCapture(event.pointerId);
+      }
+      canvas.classList.remove('is-scrubbing');
+    };
+    canvas.addEventListener('pointerup', release);
+    canvas.addEventListener('pointercancel', release);
   }
 
   /**

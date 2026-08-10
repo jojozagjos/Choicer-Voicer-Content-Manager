@@ -18,7 +18,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  runFfmpeg, probeVideo, probeDuration,
+  runFfmpeg, probeVideo, probeDuration, probeStereoWidth,
   probeStartTime, probeFirstFrameDecodes, probeKeyframesNear,
 } = require('./ffmpeg');
 
@@ -406,65 +406,109 @@ async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
       return `between(t,${from.toFixed(3)},${to.toFixed(3)})`;
     });
 
+  // Every range was unusable, which is not the same as none being given and is
+  // caught separately from it. An empty condition below builds `enable=''`,
+  // which ffmpeg refuses with a parse error rather than anything that points
+  // at the pack, and the check above only looks at how many ranges arrived
+  // rather than how many survived being read.
+  if (!windows.length) {
+    throw new Error('None of this pack\'s lines have a usable time and length, so there is '
+      + 'nothing to quieten the audio under.');
+  }
+
   const when = windows.join('+');
 
-  // Muffling used to be a lowpass at 600 Hz plus a global drop to 0.15, which
-  // suppressed the words by taking the whole scene down with them: everything
-  // above 600 Hz went, and music is mostly above 600 Hz. The complaint was
-  // exactly right. Music does not survive that, because nothing in it was
-  // being aimed at.
+  // How the muffle got here, because two earlier versions of it were wrong in
+  // ways that are not obvious from the result.
   //
-  // Speech is intelligible almost entirely between 300 Hz and 3.4 kHz, which
-  // is why a telephone sounds like a telephone. Cutting only that band leaves
-  // the bass a track is built on and the cymbals and sparkle above it, and
-  // takes away the part that carries the words. Two overlapping band cuts do
-  // it, the first spanning about 300 to 1700 Hz and the second 1700 to 3500,
-  // neither reaching down into the bass.
+  // It began as a lowpass at 600 Hz plus a global drop to 0.15. That removed
+  // the music, since music is mostly above 600 Hz.
   //
-  // Measured by applying each chain to the whole of three real pack videos and
-  // taking two seconds of the result, in dB. "speech" is 300 Hz to 3.4 kHz and
-  // wants to be low; "bass" is below 250 Hz and "air" above 4 kHz, and both
-  // want to be high:
+  // It then became a band cut across 300 Hz to 3.4 kHz, on the reasoning that
+  // speech is intelligible almost entirely inside that band. Better, and still
+  // wrong twice over. Consonants live at 4 to 8 kHz, and that version
+  // deliberately kept everything above 4 kHz as "air", so it preserved the
+  // sibilance that makes speech followable. And a wide peaking filter at -38 dB
+  // has shallow skirts, so it pulled the whole scene down by 15 dB rather than
+  // cutting a band out of it. Voice and music dropped together, which changes
+  // nothing about how audible the voice is over the music.
   //
-  //                        speech          bass            air
-  //   Popped the AI Bubble  -41.2 / -38.1   -39.9 / -32.8   -78.7 / -57.0
-  //   MY HEART! I LOVED HER -34.8 / -42.6   -50.8 / -51.3   -63.0 / -45.0
-  //   Caine's Crashout      -74.1 / -71.0   -65.2 / -50.9  -108.5 / -79.0
-  //                          old  /  now     old  /  now      old  /  now
+  // That last point is the one that matters and the one both earlier versions
+  // missed. What counts is not how far the voice drops. It is how much further
+  // the voice drops than the music, because anyone who has lost 15 dB of music
+  // simply turns the music up, and brings the voice back with it.
   //
-  // Within about 3 dB of the old suppression, better than it on the pack that
-  // is nearly all dialogue, while keeping 7 to 14 dB more bass and 18 to 30 dB
-  // more of everything above 4 kHz. That is the music coming back.
+  // Measured by running each chain over a real dialogue clip panned centre and
+  // over a stretch of the same pack with nobody speaking, separately, which is
+  // valid because these filters are linear. In dB:
   //
-  // End to end, building a real backing track and measuring inside a ducked
-  // line rather than across a whole file: speech down 37.2 dB, which is well
-  // past the point of being followable under a dub.
+  //                          voice   music    gap
+  //   Popped the AI Bubble
+  //     lowpass 600          -23.5   -17.7   +5.7
+  //     300-3400 band cut    -33.2   -17.5  +15.7
+  //     centre + scoop       -25.1    -7.0  +18.1
+  //   Caine's Crashout
+  //     lowpass 600          -21.7   -16.7   +5.0
+  //     300-3400 band cut    -21.9    -5.8  +16.0
+  //     centre + scoop       -15.7    -0.6  +15.1
   //
-  // Centre cancellation was tried first, since dialogue is usually mixed dead
-  // centre and subtracting one channel from the other removes it. It was
-  // abandoned: of the pack videos measured, a third are dual mono, where the
-  // two channels are identical and the subtraction leaves silence. A technique
-  // that guts a third of the library is not one to put behind a button.
-  const SPEECH_CUTS = [
-    'equalizer=f=1000:t=h:width=1400:g=-38',
-    'equalizer=f=2600:t=h:width=1800:g=-36',
-  ];
+  // Centre cancellation wins because it is the only one of the three aimed at
+  // the voice rather than at a frequency range the voice happens to use.
+  // Dialogue is mixed dead centre in almost everything, so subtracting one
+  // channel from the other removes it and leaves the music that was spread
+  // around it. Bass is taken from the original, because it is usually centred
+  // too and is wanted.
+  //
+  // It only works on a file that is genuinely stereo. A third of the pack
+  // videos measured are the same signal in both channels, where the
+  // subtraction leaves silence, so the file is asked first and the band cut is
+  // used when the answer is no.
+  const spread = mode === 'silence' ? null : probeStereoWidth(videoPath);
+  const wideEnough = spread != null && spread > -20;
+
+  const CENTRE = 'asplit=2[lo][sd];'
+    + '[lo]lowpass=f=200:poles=2[l];'
+    + '[sd]pan=stereo|c0=0.5*c0-0.5*c1|c1=0.5*c1-0.5*c0,highpass=f=200:poles=2[s];'
+    + '[l][s]amix=inputs=2:normalize=0,'
+    // Whatever voice was not perfectly centred, scooped without touching the
+    // bass or the top.
+    + 'equalizer=f=1800:t=h:width=3000:g=-9';
+
+  // For a file with no stereo to work with. Cuts the speech range including
+  // the consonants this time, and keeps bass and everything above 7 kHz.
+  const BAND = 'asplit=3[lo][md][hi];'
+    + '[lo]lowpass=f=220:poles=2[l];'
+    + '[md]highpass=f=220:poles=2,lowpass=f=7000:poles=2,volume=0.05[m];'
+    + '[hi]highpass=f=7000:poles=2,volume=0.8[h];'
+    + '[l][m][h]amix=inputs=3:normalize=0';
+
+  const technique = wideEnough ? 'centre' : 'band';
+  const suppress = wideEnough ? CENTRE : BAND;
 
   // A gentle overall duck on top, so the dub is unambiguously in front. This
   // is the part that used to be 0.15, which is where most of the music went.
-  const gain = level != null ? level : (mode === 'silence' ? 0 : 0.65);
-  const chain = mode === 'silence'
-    ? [`volume=${gain}:enable='${when}'`]
-    : [
-      ...SPEECH_CUTS.map((cut) => `${cut}:enable='${when}'`),
-      `volume=${gain}:enable='${when}'`,
-    ];
+  const gain = level != null ? level : (mode === 'silence' ? 0 : 0.85);
+
+  // Silencing is one filter and needs no graph.
+  //
+  // Muffling does, because neither `pan` nor `amix` can be switched on and off
+  // over time the way `volume` can. So the original and the suppressed version
+  // are both built, and `volume` gates pick between them: the original is
+  // silenced across the spoken windows and the suppressed copy is silenced
+  // everywhere else. Summing the two gives the original outside a line and the
+  // treated version inside it.
+  const graph = mode === 'silence'
+    ? `volume=${gain}:enable='${when}'`
+    : `asplit=2[dry][wet];`
+      + `[dry]volume=0:enable='${when}'[drygate];`
+      + `[wet]${suppress},volume=${gain},volume=0:enable='not(${when})'[wetgate];`
+      + '[drygate][wetgate]amix=inputs=2:normalize=0';
 
   const duration = probeDuration(videoPath);
   const args = [
     '-i', videoPath,
     '-vn',
-    '-af', chain.join(','),
+    '-filter_complex', graph,
   ];
   if (audioFormat === 'wav') args.push('-c:a', 'pcm_s16le', '-ar', '48000', '-f', 'wav');
   else if (audioFormat === 'mp3') args.push('-c:a', 'libmp3lame', '-q:a', '2', '-f', 'mp3');
@@ -484,7 +528,9 @@ async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
     throw err;
   }
 
-  return { path: target, ducked: windows.length, mode, gain };
+  return {
+    path: target, ducked: windows.length, mode, gain, technique, spread,
+  };
 }
 
 /**

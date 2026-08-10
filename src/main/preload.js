@@ -46,6 +46,10 @@ contextBridge.exposeInMainWorld('api', {
 
   checkUpdate: () => ipcRenderer.invoke('app:checkUpdate'),
   changelog: () => ipcRenderer.invoke('app:changelog'),
+  // Reporting a bug without leaving for a browser, and the few facts about
+  // this machine that are worth attaching to one.
+  diagnostics: () => ipcRenderer.invoke('app:diagnostics'),
+  reportIssue: (what) => ipcRenderer.invoke('app:reportIssue', what),
 
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),

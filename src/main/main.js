@@ -3911,6 +3911,66 @@ function registerIpc() {
     }
   });
 
+  /**
+   * What the app knows about itself, for the bottom of a bug report.
+   *
+   * Deliberately narrow. Which version, which Windows, whether ffmpeg was
+   * found: those are the three things that explain most reports and none of
+   * them say anything about the person sending it. No folder paths, because a
+   * Windows path carries an account name, and somebody reporting that export
+   * is broken has not agreed to publish their own name on a public issue.
+   */
+  ipcMain.handle('app:diagnostics', () => ({
+    version: app.getVersion(),
+    electron: process.versions.electron,
+    platform: `${process.platform} ${os.release()}`,
+    arch: process.arch,
+    ffmpeg: ffmpeg.status().ok ? 'found' : 'missing',
+    gameFolder: settings.gameDir ? 'set' : 'not set',
+  }));
+
+  /**
+   * Files a bug report on the app's own repository.
+   *
+   * Reporting used to mean leaving for a browser, finding the right repository
+   * and writing the report a second time, which is enough steps that most of
+   * what goes wrong never gets reported at all.
+   *
+   * GitHub has no way to open an issue without an account, so this asks for
+   * the sign-in the app already knows how to do. Whoever will not sign in is
+   * offered the browser instead, which is where they were going anyway.
+   */
+  ipcMain.handle('app:reportIssue', async (_e, { title, body, kind }) => {
+    const token = loadToken();
+    if (!token) return { ok: false, needsSignIn: true };
+
+    const clean = String(title || '').trim().slice(0, 120);
+    if (clean.length < 5) {
+      return { ok: false, error: 'Give it a short title, so it can be told apart from others.' };
+    }
+
+    try {
+      const issue = await github.request(`/repos/${GITHUB_REPO}/issues`, {
+        token,
+        method: 'POST',
+        body: JSON.stringify({
+          title: clean,
+          body: String(body || '').slice(0, 20000),
+          // GitHub drops labels from anyone without push access to the
+          // repository, which is everybody sending one of these, so the label
+          // is an attempt rather than a guarantee. The body says which it is
+          // as well, because that part always arrives. Both names are labels
+          // the repository already has; inventing one would mean it applied
+          // for the owner and vanished for everyone else.
+          labels: [kind === 'idea' ? 'enhancement' : 'bug'],
+        }),
+      });
+      return { ok: true, url: issue.html_url, number: issue.number };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('settings:get', () => settings);
 
   /**

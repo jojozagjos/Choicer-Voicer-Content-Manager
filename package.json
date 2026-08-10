@@ -22,7 +22,7 @@
     "build:zip": "node scripts/build.js --zip",
     "icon": "electron scripts/make-icon.js",
     "shots": "node scripts/make-screenshots.js",
-    "test": "node scripts/test-directory.js && node scripts/test-modinstall.js && node scripts/test-linkhealth.js && node scripts/test-shrink.js && node scripts/test-packscan.js && node scripts/test-review.js && node scripts/test-dialogs.js && node scripts/test-escape.js"
+    "test": "node scripts/test-directory.js && node scripts/test-modinstall.js && node scripts/test-linkhealth.js && node scripts/test-shrink.js && node scripts/test-packscan.js && node scripts/test-review.js && node scripts/test-dialogs.js && node scripts/test-escape.js && node scripts/test-counts.js"
   },
   "devDependencies": {
     "@electron/packager": "^20.0.4",

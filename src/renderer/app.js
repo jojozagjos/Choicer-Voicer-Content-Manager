@@ -57,6 +57,7 @@ const el = {
 
   btnRefresh: $('#btn-refresh'),
   btnSettings: $('#btn-settings'),
+  btnReport: $('#btn-report'),
 
   packSearch: $('#pack-search'),
   packList: $('#pack-list'),
@@ -1255,7 +1256,7 @@ function publishersFrom(packs) {
 async function refreshAdminPublishers() {
   el.adminList.innerHTML = '<p class="muted small">Reading the directory…</p>';
 
-  // The Mods tab may never have been opened, so the index is fetched rather
+  // The Packs tab may never have been opened, so the index is fetched rather
   // than assumed.
   const data = await loadDirectory();
 
@@ -1445,7 +1446,7 @@ async function setPackListed(packId, listed) {
   if (!listed) {
     const sure = await askConfirm({
       title: 'Unlist this pack?',
-      detail: 'It stops appearing in the Mods tab. The record is kept and the file stays '
+      detail: 'It stops appearing in the Packs tab. The record is kept and the file stays '
         + 'on its author\'s account, so this can be undone at any time.\n\n'
         + 'The author is not told automatically.',
       buttons: ['Unlist it', 'Cancel'],
@@ -1687,7 +1688,7 @@ async function decideReview(item, decision, pack) {
   const asked = {
     hide: {
       title: pack ? `Take "${pack.title}" down?` : 'Take it down?',
-      detail: 'It stops appearing in the Mods tab straight away. The file stays on its '
+      detail: 'It stops appearing in the Packs tab straight away. The file stays on its '
         + 'author\'s own account and anyone who already has the address keeps it; this is '
         + 'the directory refusing to point at it, not a takedown.\n\n'
         + 'It can be put back at any time from the Listed tab.',
@@ -2001,7 +2002,7 @@ function plainText(markdown) {
     .trim();
 }
 
-/** Switches the Mods tab between browsing and your own submissions. */
+/** Switches the Packs tab between browsing and your own submissions. */
 async function showMods(which = 'browse') {
   state.modsShow = which;
   state.listing = null;
@@ -2424,6 +2425,101 @@ async function showListing(pack, from = 'browse') {
   }
 
   fillModIcon(el.modsGrid.querySelector('.listing-art'), pack);
+}
+
+/**
+ * Reports a bug, or asks for something, without leaving the app.
+ *
+ * Somebody who has just watched an export fail is the one person who knows
+ * exactly what happened, and they are also the least likely to go and find the
+ * right repository, work out the format and write it out a second time. Almost
+ * everything that goes wrong is never reported, and this is why.
+ *
+ * What gets attached is shown before anything is sent. It is three lines about
+ * the build and no paths: a Windows folder carries an account name, and
+ * somebody reporting a broken export has not agreed to put their own name on a
+ * public issue to do it.
+ */
+async function reportIssue() {
+  const facts = await window.api.diagnostics().catch(() => null);
+  const about = facts
+    ? `Version ${facts.version} · Electron ${facts.electron} · ${facts.platform} ${facts.arch}`
+      + ` · ffmpeg ${facts.ffmpeg} · game folder ${facts.gameFolder}`
+    : 'Could not be read.';
+
+  const said = await askForm({
+    title: 'Report a bug, or ask for something',
+    detail: 'This opens an issue on the app\'s GitHub page without leaving here. '
+      + 'Anyone can read it, so leave out anything private.\n\n'
+      + `Attached: ${about}`,
+    mark: '!',
+    buttons: ['Send it', 'Cancel'],
+    fields: [
+      {
+        key: 'kind',
+        label: 'What is this',
+        value: 'bug',
+        options: [['bug', 'Something is broken'], ['idea', 'A suggestion']],
+      },
+      {
+        key: 'title',
+        label: 'In a few words',
+        placeholder: 'Exporting stops at 40% every time',
+        max: 120,
+        min: 5,
+        required: true,
+      },
+      {
+        key: 'body',
+        label: 'What happened',
+        placeholder: 'What were you doing, what did you expect, and what happened instead?',
+        multiline: true,
+        max: 4000,
+      },
+    ],
+  });
+  if (!said) return;
+
+  const body = `**${said.kind === 'idea' ? 'A suggestion' : 'Something is broken'}**\n\n`
+    + `${said.body || '(nothing else said)'}\n\n---\n\n${about}\n\n`
+    + '<sub>Sent from the Choicer Voicer Content Manager.</sub>';
+
+  const sent = await window.api.reportIssue({ title: said.title, body, kind: said.kind });
+
+  // GitHub has no way to open an issue without an account, so the sign-in the
+  // app already knows how to do is offered rather than the report being lost.
+  // What was typed is held and sent straight after, so signing in does not
+  // mean writing it out a second time.
+  if (sent && sent.needsSignIn) {
+    const who = await ensureSignedIn({
+      why: 'GitHub does not allow an issue to be opened without an account, so sending this '
+        + 'report needs a GitHub sign-in. What you have written is kept and sent as soon as '
+        + 'you are in.',
+    });
+    if (!who) return;
+    return finishReport(await window.api.reportIssue({
+      title: said.title, body, kind: said.kind,
+    }));
+  }
+
+  return finishReport(sent);
+}
+
+/** What happened to a report, and where it went. */
+async function finishReport(sent) {
+  if (!sent || !sent.ok) {
+    toast(`Could not send it: ${(sent && sent.error) || 'no reason given'}`, 'error', 9000);
+    return;
+  }
+
+  const open = await askConfirm({
+    title: 'Sent',
+    detail: `It is issue #${sent.number}. Replies arrive by email from GitHub.`,
+    buttons: ['See it on GitHub', 'Done'],
+    mark: '✓',
+    cancelIndex: 1,
+  });
+  if (open === 0) await openOutside(sent.url, 'the report on GitHub');
 }
 
 /** How a licence reads, using the same wording the publisher chose it by. */
@@ -3145,12 +3241,6 @@ async function askListingDetails(pack, already) {
   };
 }
 
-/** A time as m:ss, for reading a script against the video. */
-function formatClock(seconds) {
-  const whole = Math.max(0, Math.floor(Number(seconds) || 0));
-  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
-}
-
 /**
  * The warnings an author declared, as small labels.
  *
@@ -3315,12 +3405,12 @@ async function sharePack(pack) {
     title: `Share "${pack.title}"?`,
     // Publishing is named here rather than only on the dialog that follows.
     // This step makes a zip and says so, which read as the whole of what the
-    // button did, so the way to get a pack listed in Mods was reachable only
+    // button did, so the way to get a pack listed in Packs was reachable only
     // by pressing something that appeared to do something else and waiting
     // several minutes to find out.
     detail: 'This packages the pack into one zip in your exports folder, shrunk on the way, '
       + 'usually to about half the size. Your own copy is not touched.\n\n'
-      + 'When it is done you can publish it to the Mods tab, where everyone can find and '
+      + 'When it is done you can publish it to the Packs tab, where everyone can find and '
       + 'install it, or just send the zip to somebody directly. Both are offered once it is '
       + 'packaged, and nothing is uploaded until you choose to.',
     buttons: ['Package it', 'Cancel'],
@@ -3389,7 +3479,7 @@ async function offerToShare(result, pack, saved, canPublish, already) {
     detail: `${pack.title}.zip (${formatBytes(result.bytes)}) is in your exports folder, `
       + 'under "Shared packs".\n\n'
       + saved
-      + 'Send it to anyone. They open the Mods tab and pick it.'
+      + 'Send it to anyone. They open the Packs tab and pick it.'
       + (already
         ? '\n\nThis pack is already in the directory. Updating it replaces what is listed '
           + 'with this version. The listing keeps its place and its download count.'
@@ -3433,7 +3523,7 @@ async function openSharedFolder(zipPath) {
  * that happens, because the code is useless once it is dismissed and there is
  * no way to ask for it again without starting over.
  */
-async function ensureSignedIn({ force = false } = {}) {
+async function ensureSignedIn({ force = false, why = null } = {}) {
   const who = await window.api.mods.whoAmI();
   if (!who.configured) {
     toast('This build cannot sign in to GitHub.', 'error', 7000);
@@ -3443,11 +3533,14 @@ async function ensureSignedIn({ force = false } = {}) {
   // being signed in is the reason you pressed the button.
   if (who.signedIn && !force) return who;
 
+  // Why an account is being asked for depends on what was pressed. Publishing
+  // and reporting a bug both need one and have nothing else in common, and a
+  // report explained in terms of releases reads as the wrong dialog.
   const go = await askConfirm({
     title: 'Sign in to GitHub',
-    detail: 'Publishing puts the pack on your own GitHub account, so it stays yours and you '
-      + 'can take it down whenever you like.\n\n'
-      + 'You will get a short code to type on github.com. It is only asked for once.\n\n'
+    detail: (why || 'Publishing puts the pack on your own GitHub account, so it stays yours and '
+      + 'you can take it down whenever you like.')
+      + '\n\nYou will get a short code to type on github.com. It is only asked for once.\n\n'
       + 'The app can create one repository for your packs and add releases to it. It cannot '
       + 'read your other repositories.',
     buttons: ['Sign in', 'Cancel'],
@@ -3787,7 +3880,7 @@ async function publishPack(packaged, pack, already = null) {
         + `${updating ? 'offered as an update' : 'offered to the directory'}.\n\n`
         + (updating
           ? 'The listing keeps its place and its download count. Nothing else is needed from you.'
-          : 'It appears in the Mods tab once its checks pass, usually within a few minutes. '
+          : 'It appears in the Packs tab once its checks pass, usually within a few minutes. '
             + 'You can follow it in Your submissions. Nothing else is needed from you.'),
       go: 'See your submissions on GitHub',
     }
@@ -3846,7 +3939,7 @@ function renderContentTypes() {
         : `${type.label} (${type.packs.length})`;
     button.setAttribute('aria-label', button.title);
     button.classList.toggle('on', type.id === state.contentType);
-    // Pictures only, matching Mods. The one number kept is the count of things
+    // Pictures only, matching the Packs tab. The one number kept is the count of things
     // that need attention, because that is the only one worth interrupting
     // somebody for; how many host packs exist is not.
     button.innerHTML = `
@@ -4034,7 +4127,7 @@ function renderContentDetail(pack) {
       <button type="button" class="btn icon-action" id="btn-detail-share"
               ${converting ? 'disabled' : ''}
               title="${pack.iconPath || pack.iconUrl
-    ? 'Package this pack, to publish to Mods or send to somebody'
+    ? 'Package this pack, to publish to Packs or send to somebody'
     : 'This pack needs an icon first. Set one in Edit this pack, under Pack details.'
 }">${actionIcon('export')}<span>Share</span></button>
       <button type="button" class="btn icon-action" id="btn-detail-open"
@@ -6601,6 +6694,7 @@ function wireEvents() {
   });
 
   el.btnSettings.addEventListener('click', openSettings);
+  el.btnReport.addEventListener('click', reportIssue);
 
   for (const button of el.tabButtons) {
     button.addEventListener('click', () => switchTab(button.dataset.tab));

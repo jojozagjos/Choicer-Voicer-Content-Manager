@@ -29,6 +29,8 @@ quietly ignores it.
 | **The dub editor.** Mark a range on the video and the clip and its timestamp come out together. | **Exporting.** Every line keeps its own take, volume and timing. |
 | ![The content library](docs/images/library.png) | ![The help screen](docs/images/help.png) |
 | **Your library.** Everything installed, of every type, with whatever needs fixing. | **Built-in help.** How everything works, without leaving the app. |
+| ![Packs other people have shared](docs/images/mods.png) |  |
+| **Mods.** Packs other people have shared, by kind. Selecting one opens its page, where it can be played before it is installed. Nobody has published yet. |  |
 
 ## Getting it
 

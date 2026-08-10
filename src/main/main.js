@@ -1225,6 +1225,44 @@ async function runScreenshots(win) {
       `,
     },
     {
+      name: 'mods',
+      settle: 2000,
+      js: `
+        document.querySelector('[data-tab="mods"]').click();
+        await wait(900);
+
+        // The directory is fetched, so this waits for it rather than for a
+        // fixed time. An empty directory is a real state and worth a picture,
+        // but a picture taken mid-fetch is of nothing at all.
+        for (let i = 0; i < 40; i++) {
+          await wait(500);
+          const grid = document.getElementById('mods-grid');
+          if (grid && !/Looking/.test(grid.textContent)) break;
+        }
+        await wait(600);
+      `,
+    },
+    {
+      // The new pack page, which is where the interesting part of Mods is.
+      // Skipped rather than faked when there is nothing listed to open.
+      name: 'mods-pack',
+      settle: 1800,
+      js: `
+        document.querySelector('[data-tab="mods"]').click();
+        await wait(900);
+        for (let i = 0; i < 40; i++) {
+          await wait(500);
+          const grid = document.getElementById('mods-grid');
+          if (grid && !/Looking/.test(grid.textContent)) break;
+        }
+
+        const card = document.querySelector('.mod-card');
+        if (!card) return 'nothing listed in the directory';
+        card.click();
+        await wait(1200);
+      `,
+    },
+    {
       name: 'help',
       settle: 900,
       js: `
@@ -1242,11 +1280,18 @@ async function runScreenshots(win) {
   ];
 
   // Nothing to photograph behind the splash or the first run panel.
+  //
+  // The Admin tab goes too. It appears only for an account that can write to
+  // the directory, so whoever takes these pictures sees a tab that nobody
+  // reading them will have, and a screenshot advertising it is a screenshot of
+  // a different app from the one being downloaded.
   await win.webContents.executeJavaScript(`
     const s = document.getElementById('splash');
     if (s) s.hidden = true;
     const setup = document.getElementById('setup-dialog');
     if (setup && setup.open) setup.close();
+    const admin = document.getElementById('tab-admin');
+    if (admin) admin.hidden = true;
     true;
   `).catch(() => {});
 

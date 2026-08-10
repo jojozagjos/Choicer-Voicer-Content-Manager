@@ -4453,7 +4453,57 @@ function registerIpc() {
    * See convert.buildBackingTrack for why this is done from the clip times
    * rather than by trying to separate the voice out.
    */
-  handleWrite('content:buildBacking', (p) => p.packDir, async (event, { packDir, videoPath, ranges, level, mode, jobId }) => {
+  /**
+   * A few seconds of what the backing track would sound like.
+   *
+   * Building the real thing is minutes of ffmpeg over the whole video, which
+   * is far too long to spend finding out that a setting was wrong. This cuts
+   * the same treatment over one line and hands back something playable in a
+   * second or two, so the setting can be chosen by ear rather than by
+   * building, listening, and building again.
+   *
+   * Written outside the pack, because a half-judged sample is not something
+   * the game folder should ever contain.
+   */
+  ipcMain.handle('content:previewBacking', async (_e, { videoPath, ranges, mode, strength, at }) => {
+    if (!videoPath || !fs.existsSync(videoPath)) {
+      return { ok: false, error: 'This pack has no video to work from.' };
+    }
+
+    const root = path.join(app.getPath('userData'), 'backing-preview');
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.mkdirSync(root, { recursive: true });
+    allowedRoots.add(path.resolve(root));
+
+    // Long enough to hear the line and a moment of the scene on either side of
+    // it, which is the comparison being made.
+    const lead = 1.2;
+    const from = Math.max(0, (Number(at) || 0) - lead);
+    const seconds = 6;
+
+    try {
+      const built = await convert.buildBackingTrack(videoPath, ranges || [], root, {
+        mode: mode === 'silence' ? 'silence' : 'muffle',
+        strength: Number.isFinite(strength) ? strength : 0.5,
+        baseName: `sample-${Date.now()}`,
+        audioFormat: 'wav',
+        sampleFrom: from,
+        sampleFor: seconds,
+      });
+      return {
+        ok: true,
+        url: mediaUrl(built.path),
+        technique: built.technique,
+        spread: built.spread,
+        from,
+        seconds,
+      };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  handleWrite('content:buildBacking', (p) => p.packDir, async (event, { packDir, videoPath, ranges, level, mode, strength, jobId }) => {
     if (!isAllowed(packDir)) return { ok: false, error: 'That folder is outside the game folder' };
 
     // Which of muffle or silence was chosen is decided in the app, where the
@@ -4463,6 +4513,7 @@ function registerIpc() {
       const result = await convert.buildBackingTrack(videoPath, ranges || [], packDir, {
         mode: mode === 'silence' ? 'silence' : 'muffle',
         level: Number.isFinite(level) ? level : null,
+        strength: Number.isFinite(strength) ? strength : 0.5,
         signal: job.signal,
         onProgress: ({ percent }) => {
           if (!event.sender.isDestroyed()) {

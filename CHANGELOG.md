@@ -93,7 +93,9 @@ Sharing packs, and working with a pack that has been recorded several times over
 - Sharing a pack requires it to have an icon, and the Share button says so
   before it is pressed.
 - Publishing says which repository it will create on the author's account, and
-  asks, before creating anything.
+  asks, before creating anything. That question now waits five seconds before it
+  will take yes, since it is the one thing the app does that changes an account
+  outside itself. Cancelling stays available the whole time.
 - Publishing always says how it ended: listed, uploaded with nowhere to list it,
   uploaded but not offered, or not published at all with the reason.
 - A pack installed from the directory keeps its author. It can still be packaged
@@ -134,6 +136,16 @@ Sharing packs, and working with a pack that has been recorded several times over
   around it almost untouched. Where both channels carry the same signal there is
   no centre to cancel, so it cuts the range speech occupies instead. On a real
   pack the voice now drops 18 dB further than the music, against 6 dB before.
+- Building one asks how hard to press, and plays a few seconds of the real
+  result before anything is committed to. How much of a voice can be taken out
+  without taking the music with it depends on how the scene was mixed, so there
+  is no setting that suits every pack and the difference is audible in about two
+  seconds. A sample takes a second or two against several minutes for the whole
+  track.
+- A pack with a deep voice is handled properly. The cut used to start at 220 Hz
+  to protect the bass, which is also where a low voice keeps its fundamental, so
+  it was protecting the thing it was aimed at: those packs lost 8 dB of dialogue
+  where higher voices lost 25. It starts at 90 Hz now.
 - The character box opens as a name is typed, and the arrow keys move through
   the matches with Enter to take one.
 - Each character's clips are drawn in that character's own colour, so who speaks

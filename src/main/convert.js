@@ -382,6 +382,14 @@ async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
   const {
     mode = 'muffle',      // 'muffle' keeps the music, 'silence' removes everything
     level = null,         // overrides the mode's own attenuation
+    // How hard to press on the voices, 0 to 1. There is no setting here that
+    // is right for every pack: how well any of this works depends on how the
+    // scene was mixed, which is why it is offered rather than decided.
+    strength = 0.5,
+    // Builds a short sample instead of the whole track, for listening to
+    // before committing several minutes to a setting.
+    sampleFrom = null,
+    sampleFor = 0,
     fade = 0.08,          // seconds of ramp, so the duck does not click
     audioFormat = 'wav',
     baseName = '_backing_track',
@@ -463,8 +471,15 @@ async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
   // videos measured are the same signal in both channels, where the
   // subtraction leaves silence, so the file is asked first and the band cut is
   // used when the answer is no.
+  // How wide a file has to be before cancelling its centre is worth doing.
+  //
+  // This was -20 dB, which let through a file measuring -19.8: nearly mono,
+  // almost nothing in the side signal to keep, and the cancellation took about
+  // 7 dB off the voice where a genuinely wide file gets 17. It looked like the
+  // muffle had stopped working, and from where anybody was sitting it had.
+  // -12 dB is comfortably inside real stereo and comfortably outside that.
   const spread = mode === 'silence' ? null : probeStereoWidth(videoPath);
-  const wideEnough = spread != null && spread > -20;
+  const wideEnough = spread != null && spread > -12;
 
   const CENTRE = 'asplit=2[lo][sd];'
     + '[lo]lowpass=f=200:poles=2[l];'
@@ -474,16 +489,45 @@ async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
     // bass or the top.
     + 'equalizer=f=1800:t=h:width=3000:g=-9';
 
-  // For a file with no stereo to work with. Cuts the speech range including
-  // the consonants this time, and keeps bass and everything above 7 kHz.
-  const BAND = 'asplit=3[lo][md][hi];'
-    + '[lo]lowpass=f=220:poles=2[l];'
-    + '[md]highpass=f=220:poles=2,lowpass=f=7000:poles=2,volume=0.05[m];'
-    + '[hi]highpass=f=7000:poles=2,volume=0.8[h];'
-    + '[l][m][h]amix=inputs=3:normalize=0';
+  // The band cut, for a file with no stereo to work with, and as a second pass
+  // on one that has.
+  //
+  // The lower edge was 220 Hz, to protect the bass a track is built on. That
+  // is also where a deep voice keeps its fundamental, so on a pack with a low
+  // male lead it was protecting the very thing it was aimed at: the words came
+  // down 8 dB where a higher voice came down 25. Measured across three packs,
+  // moving the edge to 90 Hz roughly doubles the separation and costs a few dB
+  // of music. Sub-bass below 90 Hz, which is most of what a listener registers
+  // as weight, is still untouched.
+  const band = (mid, top) => 'asplit=3[blo][bmd][bhi];'
+    + '[blo]lowpass=f=90:poles=2[bl];'
+    + `[bmd]highpass=f=90:poles=2,lowpass=f=7000:poles=2,volume=${mid.toFixed(3)}[bm];`
+    + `[bhi]highpass=f=7000:poles=2,volume=${top.toFixed(3)}[bh];`
+    + '[bl][bm][bh]amix=inputs=3:normalize=0';
 
+  // How hard to press, 0 to 1.
+  //
+  // Two things move together, because moving only the middle band ran out of
+  // effect halfway along: once that band is crushed, what is still audible of
+  // the voice is its consonants above 7 kHz, and no amount of further crushing
+  // underneath them changes that. So the top comes down as well, and the whole
+  // length of the slider does something.
+  //
+  // Both are curves rather than straight lines. The audible step from 0.30 to
+  // 0.25 is small and the step from 0.05 to 0.03 is not, so an even mapping
+  // feels dead at one end and twitchy at the other.
+  const press = Math.min(1, Math.max(0, strength == null ? 0.5 : strength));
+  const midGain = 0.30 * (0.03 / 0.30) ** press;
+  const topGain = 0.90 * (0.30 / 0.90) ** press;
+
+  // Centre cancellation first where the file allows it, because it is aimed at
+  // the voice rather than at a frequency range, then the band cut over the top
+  // for whatever it left behind. On a wide file the two together separate by
+  // about 27 dB where either alone manages 17.
   const technique = wideEnough ? 'centre' : 'band';
-  const suppress = wideEnough ? CENTRE : BAND;
+  const suppress = wideEnough
+    ? `${CENTRE},${band(midGain, topGain)}`
+    : band(midGain, topGain);
 
   // A gentle overall duck on top, so the dub is unambiguously in front. This
   // is the part that used to be 0.15, which is where most of the music went.
@@ -505,11 +549,20 @@ async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
       + '[drygate][wetgate]amix=inputs=2:normalize=0';
 
   const duration = probeDuration(videoPath);
+
+  // A sample is cut out of the middle rather than built from the start, and
+  // seeking happens after the input is opened rather than before it. The
+  // windows above are absolute times in the video, and an input-side seek
+  // would move the audio underneath them while leaving them where they were,
+  // so the sample would duck a second or two away from the line it was
+  // supposed to be demonstrating.
+  const sampling = Number.isFinite(sampleFrom) && sampleFor > 0;
   const args = [
     '-i', videoPath,
     '-vn',
     '-filter_complex', graph,
   ];
+  if (sampling) args.push('-ss', String(Math.max(0, sampleFrom)), '-t', String(sampleFor));
   if (audioFormat === 'wav') args.push('-c:a', 'pcm_s16le', '-ar', '48000', '-f', 'wav');
   else if (audioFormat === 'mp3') args.push('-c:a', 'libmp3lame', '-q:a', '2', '-f', 'mp3');
   else args.push('-c:a', 'libvorbis', '-q:a', '5', '-f', 'ogg');
@@ -529,7 +582,14 @@ async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
   }
 
   return {
-    path: target, ducked: windows.length, mode, gain, technique, spread,
+    path: target,
+    ducked: windows.length,
+    mode,
+    gain,
+    technique,
+    spread,
+    strength: press,
+    sample: sampling,
   };
 }
 

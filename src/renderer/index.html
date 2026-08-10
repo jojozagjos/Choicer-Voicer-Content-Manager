@@ -700,6 +700,54 @@
   </div>
 </div>
 
+<!-- Building a backing track, with somewhere to hear it first.
+     How well any of this works depends entirely on how the scene was mixed,
+     which nothing can know in advance, so the setting is offered rather than
+     decided and a few seconds of the real result can be heard before spending
+     minutes on the whole thing. -->
+<dialog id="backing-dialog" class="dialog">
+  <div class="dialog-body">
+    <div class="confirm-head">
+      <span class="confirm-mark">♪</span>
+      <div>
+        <h2 id="backing-title">Build a backing track</h2>
+        <p class="muted small" id="backing-detail"></p>
+      </div>
+    </div>
+
+    <div class="backing-settings">
+      <div class="field-row">
+        <span class="field-label">What to do with the original voices</span>
+        <div class="segmented" role="group" id="backing-mode">
+          <button type="button" data-mode="muffle" class="on">Remove them</button>
+          <button type="button" data-mode="silence">Silence everything</button>
+        </div>
+      </div>
+
+      <label class="field-row" id="backing-strength-row">
+        <span class="field-label">How hard to press
+          <em class="muted small" id="backing-strength-note"></em></span>
+        <input type="range" id="backing-strength" class="scrub"
+               min="0" max="100" step="5" value="50" />
+      </label>
+
+      <p class="muted small" id="backing-technique"></p>
+
+      <div class="backing-try">
+        <button type="button" class="btn btn-small" id="backing-preview">Hear a few seconds</button>
+        <audio id="backing-sample" controls preload="none" hidden></audio>
+        <span class="muted small" id="backing-sample-note"></span>
+      </div>
+    </div>
+
+    <footer class="dialog-actions">
+      <button type="button" class="btn btn-small btn-primary" id="backing-go">Build it</button>
+      <span class="grow"></span>
+      <button type="button" class="btn btn-small" id="backing-cancel">Cancel</button>
+    </footer>
+  </div>
+</dialog>
+
 <!-- Asking things in the app's own voice. Native message boxes play the Windows
      system alert sound, which for "shall I build a backing track" reads as
      something having gone badly wrong. -->

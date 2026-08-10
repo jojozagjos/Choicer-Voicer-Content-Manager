@@ -149,6 +149,18 @@ const el = {
   confirmTitle: $('#confirm-title'),
   confirmDetail: $('#confirm-detail'),
   confirmCode: $('#confirm-code'),
+  backingDialog: $('#backing-dialog'),
+  backingDetail: $('#backing-detail'),
+  backingMode: $('#backing-mode'),
+  backingStrength: $('#backing-strength'),
+  backingStrengthRow: $('#backing-strength-row'),
+  backingStrengthNote: $('#backing-strength-note'),
+  backingTechnique: $('#backing-technique'),
+  backingPreview: $('#backing-preview'),
+  backingSample: $('#backing-sample'),
+  backingSampleNote: $('#backing-sample-note'),
+  backingGo: $('#backing-go'),
+  backingCancel: $('#backing-cancel'),
   btnModsInstalled: $('#btn-mods-installed'),
   modsUpdateBadge: $('#mods-update-badge'),
   confirmButtons: $('#confirm-buttons'),
@@ -288,7 +300,7 @@ const state = {
 };
 
 const player = new DubPlayer(el.video);
-const editor = new PackEditor(el.editorView, window.api, toast, askConfirm);
+const editor = new PackEditor(el.editorView, window.api, toast, askConfirm, askBackingSettings);
 
 // Utilities
 
@@ -3766,6 +3778,11 @@ async function publishPack(packaged, pack, already = null) {
       buttons: ['Create it and publish', 'Cancel'],
       mark: '#',
       cancelIndex: 1,
+      // This one makes a public repository on somebody's own account. It is
+      // the only thing the app does that changes something outside itself
+      // without an obvious way back, so the way forward waits a few seconds
+      // while the words are still on screen.
+      holdFor: 5,
     });
     if (ok !== 0) return;
     state.toldAboutRepo = true;
@@ -5432,12 +5449,16 @@ function showLoading(visible, text) {
  * A stale event is easy to recognise. If the dialog is open right now, whatever
  * closed is not the thing that is on screen, so the event is not ours.
  */
-function staleClose() {
-  return el.confirmDialog.open;
+function staleClose(dialog = el.confirmDialog) {
+  return dialog.open;
 }
 
 function askConfirm({
   title, detail, buttons, mark = '?', danger = false, cancelIndex = -1, code = null,
+  // Seconds to hold the way forward shut for. For the few dialogs that change
+  // something outside this app, where the cost of being read too quickly is
+  // that somebody finds an account of theirs altered and has to work out why.
+  holdFor = 0,
 }) {
   return new Promise((resolve) => {
     el.confirmMark.textContent = mark;
@@ -5452,9 +5473,11 @@ function askConfirm({
     el.confirmButtons.innerHTML = '';
 
     let settled = false;
+    let ticking = null;
     const finish = (index) => {
       if (settled) return;
       settled = true;
+      if (ticking) clearInterval(ticking);
       el.confirmDialog.removeEventListener('close', onClose);
       el.confirmDialog.close();
       resolve(index);
@@ -5475,10 +5498,156 @@ function askConfirm({
       el.confirmButtons.append(button);
     });
 
+    // Only the way forward waits. Cancelling stays available throughout, so a
+    // countdown never traps anybody in a dialog they have already decided
+    // against, which would make it an obstacle rather than a pause.
+    const go = el.confirmButtons.querySelector('button');
+    if (holdFor > 0 && go) {
+      const label = buttons[0];
+      let left = Math.ceil(holdFor);
+      go.disabled = true;
+      go.textContent = `${label} (${left})`;
+      ticking = setInterval(() => {
+        left -= 1;
+        if (left > 0) {
+          go.textContent = `${label} (${left})`;
+          return;
+        }
+        clearInterval(ticking);
+        ticking = null;
+        go.disabled = false;
+        go.textContent = label;
+      }, 1000);
+    }
+
     el.confirmDialog.addEventListener('close', onClose);
     el.confirmDialog.showModal();
-    const first = el.confirmButtons.querySelector('button');
-    if (first) first.focus();
+    // The countdown is the point, so focus goes to the way out rather than to
+    // a button that cannot be pressed yet and would swallow a stray Enter the
+    // moment it became live.
+    const focusOn = holdFor > 0
+      ? el.confirmButtons.querySelector('button:last-of-type')
+      : el.confirmButtons.querySelector('button');
+    if (focusOn) focusOn.focus();
+  });
+}
+
+/** How a strength setting reads, so the number means something. */
+function strengthWords(value) {
+  if (value <= 0.15) return 'barely';
+  if (value <= 0.35) return 'gently';
+  if (value <= 0.6) return 'firmly';
+  if (value <= 0.85) return 'hard';
+  return 'as hard as it goes';
+}
+
+/**
+ * Asks how to build a backing track, with a few seconds of it to listen to.
+ *
+ * There is no setting that is right for every pack. How much of a voice can be
+ * taken out without taking the music with it depends on how the scene was
+ * mixed, which nothing can know in advance, and the difference between a good
+ * result and a poor one is audible in about two seconds and invisible on
+ * paper. So this asks, and lets the answer be heard before the several minutes
+ * that building the real thing costs.
+ *
+ * Resolves with `{ mode, strength }`, or null if it was declined.
+ */
+function askBackingSettings({ videoPath, ranges, replacing, lineAt }) {
+  return new Promise((resolve) => {
+    let mode = 'muffle';
+    let settled = false;
+
+    el.backingDialog.querySelector('#backing-title').textContent = replacing
+      ? 'Replace the backing track?' : 'Build a backing track';
+    el.backingDetail.textContent = `The video's own audio is used, with the original voices `
+      + `taken out under each of the ${ranges.length} lines so your dub sits in front of them.`;
+
+    const showMode = () => {
+      for (const button of el.backingMode.querySelectorAll('[data-mode]')) {
+        button.classList.toggle('on', button.dataset.mode === mode);
+      }
+      // Silence has nothing to tune: it is zero everywhere under a line.
+      el.backingStrengthRow.hidden = mode !== 'muffle';
+      el.backingTechnique.hidden = mode !== 'muffle';
+      el.backingTechnique.textContent = mode === 'muffle'
+        ? 'Where the audio is properly stereo the centred voices are cancelled, which barely '
+          + 'touches the music. Where both channels are the same signal there is no centre to '
+          + 'cancel and the speech range is cut instead, which costs a little more music.'
+        : '';
+    };
+
+    const strength = () => Number(el.backingStrength.value) / 100;
+    const showStrength = () => {
+      el.backingStrengthNote.textContent = `(${strengthWords(strength())})`;
+    };
+
+    const clearSample = () => {
+      el.backingSample.pause();
+      el.backingSample.removeAttribute('src');
+      el.backingSample.hidden = true;
+      el.backingSampleNote.textContent = '';
+    };
+
+    showMode();
+    showStrength();
+    clearSample();
+
+    const onStrength = () => { showStrength(); clearSample(); };
+    const onMode = (event) => {
+      const picked = event.target.dataset.mode;
+      if (!picked) return;
+      mode = picked;
+      showMode();
+      clearSample();
+    };
+
+    const onPreview = async () => {
+      el.backingPreview.disabled = true;
+      el.backingSampleNote.textContent = 'Building a few seconds…';
+      try {
+        const got = await window.api.content.previewBacking({
+          videoPath, ranges, mode, strength: strength(), at: lineAt,
+        });
+        if (!got || !got.ok) {
+          el.backingSampleNote.textContent = (got && got.error) || 'Could not build a sample.';
+          return;
+        }
+        el.backingSample.src = got.url;
+        el.backingSample.hidden = false;
+        el.backingSample.play().catch(() => { /* they can press play */ });
+        el.backingSampleNote.textContent = got.technique === 'centre'
+          ? 'Centred voices cancelled.' : 'Speech range cut.';
+      } finally {
+        el.backingPreview.disabled = false;
+      }
+    };
+
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearSample();
+      el.backingStrength.removeEventListener('input', onStrength);
+      el.backingMode.removeEventListener('click', onMode);
+      el.backingPreview.removeEventListener('click', onPreview);
+      el.backingGo.removeEventListener('click', onGo);
+      el.backingCancel.removeEventListener('click', onCancel);
+      el.backingDialog.removeEventListener('close', onClose);
+      el.backingDialog.close();
+      resolve(value);
+    };
+
+    function onGo() { finish({ mode, strength: strength() }); }
+    function onCancel() { finish(null); }
+    function onClose() { if (!staleClose(el.backingDialog)) finish(null); }
+
+    el.backingStrength.addEventListener('input', onStrength);
+    el.backingMode.addEventListener('click', onMode);
+    el.backingPreview.addEventListener('click', onPreview);
+    el.backingGo.addEventListener('click', onGo);
+    el.backingCancel.addEventListener('click', onCancel);
+    el.backingDialog.addEventListener('close', onClose);
+    el.backingDialog.showModal();
   });
 }
 

@@ -120,12 +120,15 @@ export const EDITOR_KEYS = [
 ];
 
 export class PackEditor {
-  constructor(root, api, toast, ask) {
+  constructor(root, api, toast, ask, askBacking) {
     this.root = root;
     this.api = api;
     this.toast = toast;
     // Asking questions is the app's job, not the operating system's.
     this.ask = ask;
+    // Building a backing track has its own dialog, because it has a setting
+    // worth hearing before it is committed to.
+    this.askBacking = askBacking;
     this.pack = null;
     this.onClose = null;
     this.onChanged = null;
@@ -951,24 +954,19 @@ export class PackEditor {
     }
 
     const replacing = Boolean(pack.backingPath);
-    const answer = await this.ask({
-      title: replacing ? 'Replace the backing track?' : 'Build a backing track?',
-      detail: `The video's own audio is used, quietened under each of the ${clips.length} lines `
-        + 'so your dub sits in front of it.\n\n'
-        + 'MUFFLE removes the original voices and leaves the music. Where the audio is properly '
-        + 'stereo it cancels whatever sits dead centre, which is where dialogue is mixed, so the '
-        + 'music around it comes through nearly untouched. Where both channels are the same '
-        + 'signal there is no centre to cancel, so it cuts the speech range instead and the '
-        + 'music is duller for it. This is almost always what you want.\n\n'
-        + 'SILENCE cuts it to nothing under each line. Cleaner, but the scene drops away every '
-        + 'time somebody speaks, which can sound like the audio broke.\n\n'
-        + 'Muffle cannot tell a singer from a speaker, so a song with vocals in it loses those '
-        + 'along with the dialogue.'
-        + (replacing ? '\n\nThe current backing track is overwritten.' : ''),
-      buttons: ['Muffle (recommended)', 'Silence', 'Cancel'],
-      mark: '♪',
+    const ranges = clips.map((c) => ({ start: c.time, duration: c.duration }));
+
+    // The sample is cut around the longest line, which is the one that gives
+    // the ear the most to judge.
+    const longest = [...ranges].sort((a, b) => b.duration - a.duration)[0];
+
+    const chosen = await this.askBacking({
+      videoPath: pack.videoPath,
+      ranges,
+      replacing,
+      lineAt: longest ? longest.start : 0,
     });
-    if (answer !== 0 && answer !== 1) return;
+    if (!chosen) return;
 
     // Let go of the existing track before it is overwritten. The lane keeps an
     // <audio> element pointed at the file, and Windows will not let anything
@@ -981,8 +979,9 @@ export class PackEditor {
         jobId,
         packDir: pack.dir,
         videoPath: pack.videoPath,
-        ranges: clips.map((c) => ({ start: c.time, duration: c.duration })),
-        mode: answer === 1 ? 'silence' : 'muffle',
+        ranges,
+        mode: chosen.mode,
+        strength: chosen.strength,
       }));
 
     if (result.cancelled) return;

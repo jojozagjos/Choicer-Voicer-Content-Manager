@@ -109,6 +109,10 @@ and those packs sound duller underneath a line. This is usually the better optio
 
 **Silence** removes it completely, which is cleaner but can sound like the audio dropped out.
 
+How well any of this works depends on how the scene was mixed, so building a backing track asks
+how hard to press and plays a few seconds of the real result before committing to it. A sample
+takes a second or two; the whole track takes minutes.
+
 *Muffle cannot tell a singer from a speaker, so a song with vocals loses those along with the
 dialogue. Separating them properly needs a trained model far too large to ship in an app like this.*
 

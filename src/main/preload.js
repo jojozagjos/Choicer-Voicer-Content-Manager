@@ -88,6 +88,8 @@ contextBridge.exposeInMainWorld('api', {
     clipDurations: (packDir) => ipcRenderer.invoke('content:clipDurations', packDir),
     packFiles: (packDir) => ipcRenderer.invoke('content:packFiles', packDir),
     buildBacking: (payload) => ipcRenderer.invoke('content:buildBacking', payload),
+    // A few seconds of the same treatment, for choosing a setting by ear.
+    previewBacking: (payload) => ipcRenderer.invoke('content:previewBacking', payload),
     trimVideo: (payload) => ipcRenderer.invoke('content:trimVideo', payload),
     // Stops a trim or a backing track build that nothing is waiting for.
     cancelJob: (jobId) => ipcRenderer.invoke('content:cancelJob', jobId),

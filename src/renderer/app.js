@@ -32,7 +32,6 @@ const el = {
   aboutUpdate: $('#about-update'),
   btnAboutClose: $('#btn-about-close'),
   btnAboutPage: $('#btn-about-page'),
-  btnAboutDiscord: $('#btn-about-discord'),
   btnAboutRepo: $('#btn-about-repo'),
   btnAboutDonate: $('#btn-about-donate'),
   donateBlurb: $('#donate-blurb'),
@@ -5453,6 +5452,36 @@ function staleClose(dialog = el.confirmDialog) {
   return dialog.open;
 }
 
+/**
+ * Holds a button shut for a few seconds, counting down on its own label.
+ *
+ * For the one or two questions whose answer changes something outside this
+ * app, where being read a moment too fast means somebody finds an account of
+ * theirs altered and has to work out why. The seconds are on the button rather
+ * than beside it so there is no doubt about what is waiting.
+ *
+ * Returns the interval so the caller can stop it if the dialog goes first,
+ * which it will if somebody cancels or presses Esc.
+ */
+function holdButton(button, label, seconds) {
+  let left = Math.max(1, Math.ceil(seconds));
+  button.disabled = true;
+  button.textContent = `${label} (${left})`;
+
+  const ticking = setInterval(() => {
+    left -= 1;
+    if (left > 0) {
+      button.textContent = `${label} (${left})`;
+      return;
+    }
+    clearInterval(ticking);
+    button.disabled = false;
+    button.textContent = label;
+  }, 1000);
+
+  return ticking;
+}
+
 function askConfirm({
   title, detail, buttons, mark = '?', danger = false, cancelIndex = -1, code = null,
   // Seconds to hold the way forward shut for. For the few dialogs that change
@@ -5502,23 +5531,7 @@ function askConfirm({
     // countdown never traps anybody in a dialog they have already decided
     // against, which would make it an obstacle rather than a pause.
     const go = el.confirmButtons.querySelector('button');
-    if (holdFor > 0 && go) {
-      const label = buttons[0];
-      let left = Math.ceil(holdFor);
-      go.disabled = true;
-      go.textContent = `${label} (${left})`;
-      ticking = setInterval(() => {
-        left -= 1;
-        if (left > 0) {
-          go.textContent = `${label} (${left})`;
-          return;
-        }
-        clearInterval(ticking);
-        ticking = null;
-        go.disabled = false;
-        go.textContent = label;
-      }, 1000);
-    }
+    if (holdFor > 0 && go) ticking = holdButton(go, buttons[0], holdFor);
 
     el.confirmDialog.addEventListener('close', onClose);
     el.confirmDialog.showModal();
@@ -6734,7 +6747,6 @@ function wireEvents() {
   const leaveFor = (url, what) => () => openOutside(url, what);
 
   el.btnAboutPage.addEventListener('click', leaveFor(links.game, 'the game on itch.io'));
-  el.btnAboutDiscord.addEventListener('click', leaveFor(links.discord, "jojozagjos's Discord"));
   el.btnAboutRepo.addEventListener('click', leaveFor(links.releases, 'the updates page on GitHub'));
 
   // Donation links stay hidden entirely until a page is configured.

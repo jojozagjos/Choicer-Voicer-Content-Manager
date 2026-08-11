@@ -263,7 +263,6 @@ function cancelJob(jobId) {
 }
 
 const GITHUB_REPO = 'jojozagjos/Choicer-Voicer-Content-Manager';
-const DISCORD_URL = 'https://discord.com/users/jojozagjos';
 
 // While this is null the app hides every donation prompt rather than showing
 // a dead link.
@@ -1513,7 +1512,9 @@ function runSmokeTest(win) {
         characterVolumeNote:
           (document.getElementById('character-volume-note') || {}).textContent || '',
         footIsSunken: getComputedStyle(document.querySelector('#export-dialog .dialog-foot')).backgroundColor,
-        discordButtonGone: !document.getElementById('btn-discord'),
+        // Checked by what it is rather than by one id. The old check named an id
+        // that had never existed, so it reported success whatever was on screen.
+        discordLinkGone: !document.querySelector('[id*="discord" i]'),
         donateVisible: !document.getElementById('btn-about-donate').hidden,
         creditStrip: document.querySelector('.app-credit') ? document.querySelector('.app-credit').textContent.replace(/\s+/g, ' ').trim() : null,
         // Being a fan tool has to be visible without opening anything, so it
@@ -3887,7 +3888,6 @@ function registerIpc() {
     contentFlags: CONTENT_FLAGS,
     licences: LICENCE_CHOICES,
     links: {
-      discord: DISCORD_URL,
       releases: `https://github.com/${GITHUB_REPO}/releases`,
       game: 'https://yeahmaybe.itch.io/the-choicer-voicer',
       donate: DONATE_URL,

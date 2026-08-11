@@ -226,7 +226,7 @@ size limit on their own; deleting either only costs the time to rebuild a previe
 | **No packs listed** | The game folder is wrong, or you have not recorded a dub yet. Check **Settings**. |
 | **A pack says "no dubs yet"** | It is installed, but you have not recorded for it. Do that in the game first. |
 | **A pack will not open** | It is still converting. Its panel says so and shows how far along it is. |
-| **The preview is black** | Switch packs and back to rebuild it. If it keeps happening, say so on Discord. |
+| **The preview is black** | Switch packs and back to rebuild it. If it keeps happening, use **Report Bugs** in the app. |
 | **Export failed** | Usually a full disk or a folder you cannot write to. Try your Videos folder. |
 
 There is a **Help** button in the app covering all of this in more detail, including what every
@@ -234,7 +234,7 @@ file in every pack type is for.
 
 ## Credits
 
-Made by **[@jojozagjos](https://discord.com/users/jojozagjos)**.
+Made by **[@jojozagjos](https://github.com/jojozagjos)**.
 
 **This is an unofficial fan tool.** It is not made by, affiliated with, endorsed by or supported by
 **Yeah Maybe**, who made *The Choicer Voicer*. Please report problems here rather than to them.

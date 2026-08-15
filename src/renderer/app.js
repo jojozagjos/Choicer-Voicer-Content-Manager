@@ -5566,28 +5566,38 @@ function strengthWords(value) {
  *
  * Resolves with `{ mode, strength }`, or null if it was declined.
  */
-function askBackingSettings({ videoPath, ranges, replacing, lineAt }) {
+function askBackingSettings({ videoPath, ranges, replacing, lineAt, aiStatus }) {
   return new Promise((resolve) => {
-    let mode = 'muffle';
+    const canUseAi = Boolean(aiStatus && aiStatus.supported);
+    let mode = canUseAi ? 'ai' : 'muffle';
     let settled = false;
+    let previewJobId = null;
 
     el.backingDialog.querySelector('#backing-title').textContent = replacing
       ? 'Replace the backing track?' : 'Build a backing track';
-    el.backingDetail.textContent = `The video's own audio is used, with the original voices `
-      + `taken out under each of the ${ranges.length} lines so your dub sits in front of them.`;
+    el.backingDetail.textContent = 'Choose true vocal separation for the cleanest result, or keep '
+      + 'the lightweight options for a faster build.';
+
+    const aiButton = el.backingMode.querySelector('[data-mode="ai"]');
+    aiButton.disabled = !canUseAi;
+    aiButton.title = canUseAi ? '' : ((aiStatus && aiStatus.reason) || 'AI separation is unavailable.');
 
     const showMode = () => {
       for (const button of el.backingMode.querySelectorAll('[data-mode]')) {
         button.classList.toggle('on', button.dataset.mode === mode);
       }
-      // Silence has nothing to tune: it is zero everywhere under a line.
       el.backingStrengthRow.hidden = mode !== 'muffle';
-      el.backingTechnique.hidden = mode !== 'muffle';
-      el.backingTechnique.textContent = mode === 'muffle'
-        ? 'Where the audio is properly stereo the centred voices are cancelled, which barely '
+      el.backingTechnique.hidden = mode === 'silence';
+      el.backingTechnique.textContent = mode === 'ai'
+        ? 'Actually separates vocals from drums, bass and other sounds across the whole track. '
+          + ((aiStatus.installed && aiStatus.modelInstalled)
+            ? 'The local engine and model are ready.'
+            : 'First use downloads about 95 MB, then everything runs locally. This can take several minutes.')
+        : mode === 'muffle'
+          ? 'Fast and lightweight. Where the audio is properly stereo the centred voices are cancelled, which barely '
           + 'touches the music. Where both channels are the same signal there is no centre to '
           + 'cancel and the speech range is cut instead, which costs a little more music.'
-        : '';
+          : '';
     };
 
     const strength = () => Number(el.backingStrength.value) / 100;
@@ -5598,6 +5608,7 @@ function askBackingSettings({ videoPath, ranges, replacing, lineAt }) {
     const clearSample = () => {
       el.backingSample.pause();
       el.backingSample.removeAttribute('src');
+      el.backingSample.load();
       el.backingSample.hidden = true;
       el.backingSampleNote.textContent = '';
     };
@@ -5608,37 +5619,50 @@ function askBackingSettings({ videoPath, ranges, replacing, lineAt }) {
 
     const onStrength = () => { showStrength(); clearSample(); };
     const onMode = (event) => {
-      const picked = event.target.dataset.mode;
-      if (!picked) return;
+      const button = event.target.closest('[data-mode]');
+      const picked = button && button.dataset.mode;
+      if (!picked || button.disabled) return;
       mode = picked;
       showMode();
       clearSample();
     };
 
     const onPreview = async () => {
+      clearSample();
       el.backingPreview.disabled = true;
-      el.backingSampleNote.textContent = 'Building a few seconds…';
+      el.backingSampleNote.textContent = mode === 'ai'
+        ? 'Separating a local AI sample… first use also downloads the engine and model.'
+        : 'Building a few seconds…';
       try {
+        const jobId = `backing-preview-${Date.now()}`;
+        previewJobId = jobId;
         const got = await window.api.content.previewBacking({
-          videoPath, ranges, mode, strength: strength(), at: lineAt,
+          videoPath, ranges, mode, strength: strength(), at: lineAt, jobId,
         });
+        if (settled) return;
         if (!got || !got.ok) {
-          el.backingSampleNote.textContent = (got && got.error) || 'Could not build a sample.';
+          el.backingSampleNote.textContent = got && got.cancelled
+            ? '' : ((got && got.error) || 'Could not build a sample.');
           return;
         }
         el.backingSample.src = got.url;
         el.backingSample.hidden = false;
         el.backingSample.play().catch(() => { /* they can press play */ });
-        el.backingSampleNote.textContent = got.technique === 'centre'
-          ? 'Centred voices cancelled.' : 'Speech range cut.';
+        el.backingSampleNote.textContent = got.technique === 'ai'
+          ? 'Vocal stem removed.'
+          : got.technique === 'centre' ? 'Centred voices cancelled.' : 'Speech range cut.';
+      } catch (err) {
+        if (!settled) el.backingSampleNote.textContent = err.message || 'Could not build a sample.';
       } finally {
-        el.backingPreview.disabled = false;
+        previewJobId = null;
+        if (!settled) el.backingPreview.disabled = false;
       }
     };
 
     const finish = (value) => {
       if (settled) return;
       settled = true;
+      if (previewJobId) window.api.content.cancelJob(previewJobId).catch(() => {});
       clearSample();
       el.backingStrength.removeEventListener('input', onStrength);
       el.backingMode.removeEventListener('click', onMode);

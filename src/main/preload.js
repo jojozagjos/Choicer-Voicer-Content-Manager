@@ -87,6 +87,7 @@ contextBridge.exposeInMainWorld('api', {
     forget: () => ipcRenderer.invoke('content:forget'),
     clipDurations: (packDir) => ipcRenderer.invoke('content:clipDurations', packDir),
     packFiles: (packDir) => ipcRenderer.invoke('content:packFiles', packDir),
+    aiBackingStatus: () => ipcRenderer.invoke('content:aiBackingStatus'),
     buildBacking: (payload) => ipcRenderer.invoke('content:buildBacking', payload),
     // A few seconds of the same treatment, for choosing a setting by ear.
     previewBacking: (payload) => ipcRenderer.invoke('content:previewBacking', payload),

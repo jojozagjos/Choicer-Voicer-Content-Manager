@@ -21,6 +21,7 @@ const {
   writeIniSections, identifyPack,
 } = require('./create');
 const convert = require('./convert');
+const demucs = require('./demucs');
 const {
   validateRecord, validateIndex, checkArchiveShape, CONTENT_FLAGS, LICENCE_CHOICES,
   ALLOWED_HOSTS,
@@ -2348,6 +2349,19 @@ function runSmokeTest(win) {
           }
         }
 
+        if (out.clipRows) {
+          q('[data-act="backing"]').click();
+          const backingDialog = document.getElementById('backing-dialog');
+          for (let i = 0; i < 20 && !backingDialog.open; i++) await wait(100);
+          out.backingDialogOpened = backingDialog.open;
+          out.backingModes = [...backingDialog.querySelectorAll('[data-mode]')]
+            .map((button) => button.dataset.mode);
+          out.aiBackingEnabled = !backingDialog.querySelector('[data-mode="ai"]').disabled;
+          out.aiBackingSelected = backingDialog.querySelector('[data-mode="ai"]').classList.contains('on');
+          backingDialog.querySelector('#backing-cancel').click();
+          await wait(100);
+        }
+
         // Volume actually reaches the element.
         const vol = q('[data-role="volume"]');
         vol.value = '0.35';
@@ -2556,6 +2570,18 @@ function runSmokeTest(win) {
         if (!toolsCheck.volumeApplied) errors.push('volume slider does not reach the video');
         if (!toolsCheck.hasCaptionToggle) errors.push('editor has no caption toggle');
         if (!toolsCheck.hasBackingButton) errors.push('editor has no backing track button');
+        if (toolsCheck.clipRows && !toolsCheck.backingDialogOpened) {
+          errors.push('backing track settings did not open');
+        }
+        if (toolsCheck.clipRows && JSON.stringify(toolsCheck.backingModes) !== '["ai","muffle","silence"]') {
+          errors.push('backing track settings do not offer AI, muffle and silence');
+        }
+        if (toolsCheck.clipRows && !toolsCheck.aiBackingEnabled) {
+          errors.push('AI backing track mode is not enabled on 64-bit Windows');
+        }
+        if (toolsCheck.clipRows && !toolsCheck.aiBackingSelected) {
+          errors.push('AI backing track mode is not the default on supported Windows');
+        }
         if (!toolsCheck.trimOpened) errors.push('trim overlay did not open');
         if (!toolsCheck.trimClosed) errors.push('trim overlay did not close');
         if (toolsCheck.playedWhileTrimming) errors.push('video played under the trim overlay');
@@ -4478,11 +4504,9 @@ function registerIpc() {
     }
   });
 
-  /**
-   * Builds a backing track by ducking the video's own audio under every line.
-   * See convert.buildBackingTrack for why this is done from the clip times
-   * rather than by trying to separate the voice out.
-   */
+  ipcMain.handle('content:aiBackingStatus', () =>
+    demucs.status(path.join(app.getPath('userData'), 'ai-separation')));
+
   /**
    * A few seconds of what the backing track would sound like.
    *
@@ -4495,7 +4519,7 @@ function registerIpc() {
    * Written outside the pack, because a half-judged sample is not something
    * the game folder should ever contain.
    */
-  ipcMain.handle('content:previewBacking', async (_e, { videoPath, ranges, mode, strength, at }) => {
+  ipcMain.handle('content:previewBacking', async (_e, { videoPath, ranges, mode, strength, at, jobId }) => {
     if (!videoPath || !fs.existsSync(videoPath)) {
       return { ok: false, error: 'This pack has no video to work from.' };
     }
@@ -4510,15 +4534,19 @@ function registerIpc() {
     const lead = 1.2;
     const from = Math.max(0, (Number(at) || 0) - lead);
     const seconds = 6;
+    const job = startJob(jobId);
 
     try {
+      const safeMode = ['ai', 'muffle', 'silence'].includes(mode) ? mode : 'muffle';
       const built = await convert.buildBackingTrack(videoPath, ranges || [], root, {
-        mode: mode === 'silence' ? 'silence' : 'muffle',
+        mode: safeMode,
         strength: Number.isFinite(strength) ? strength : 0.5,
         baseName: `sample-${Date.now()}`,
         audioFormat: 'wav',
         sampleFrom: from,
         sampleFor: seconds,
+        aiRoot: path.join(app.getPath('userData'), 'ai-separation'),
+        signal: job.signal,
       });
       return {
         ok: true,
@@ -4529,22 +4557,24 @@ function registerIpc() {
         seconds,
       };
     } catch (err) {
-      return { ok: false, error: err.message };
+      return { ok: false, error: err.message, cancelled: Boolean(err.cancelled) };
+    } finally {
+      endJob(jobId);
     }
   });
 
   handleWrite('content:buildBacking', (p) => p.packDir, async (event, { packDir, videoPath, ranges, level, mode, strength, jobId }) => {
     if (!isAllowed(packDir)) return { ok: false, error: 'That folder is outside the game folder' };
 
-    // Which of muffle or silence was chosen is decided in the app, where the
-    // difference can be explained properly.
     const job = startJob(jobId);
     try {
+      const safeMode = ['ai', 'muffle', 'silence'].includes(mode) ? mode : 'muffle';
       const result = await convert.buildBackingTrack(videoPath, ranges || [], packDir, {
-        mode: mode === 'silence' ? 'silence' : 'muffle',
+        mode: safeMode,
         level: Number.isFinite(level) ? level : null,
         strength: Number.isFinite(strength) ? strength : 0.5,
         signal: job.signal,
+        aiRoot: path.join(app.getPath('userData'), 'ai-separation'),
         onProgress: ({ percent }) => {
           if (!event.sender.isDestroyed()) {
             event.sender.send('import:progress', { dir: packDir, phase: 'backing', percent, jobId });

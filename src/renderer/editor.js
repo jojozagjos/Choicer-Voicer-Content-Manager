@@ -1710,7 +1710,10 @@ export class PackEditor {
       characterInput.value = clip.character || '';
       this.attachCharacterList(
         row.querySelector('.character-field'), characterInput, known,
-        () => characterInput.dispatchEvent(new Event('change', { bubbles: true }))
+        () => {
+          remember();
+          characterInput.dispatchEvent(new Event('change', { bubbles: true }));
+        }
       );
 
       row.querySelector('.line-time').addEventListener('click', () => {

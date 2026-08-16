@@ -135,6 +135,22 @@ function probeStereoWidth(file, { seconds = 60 } = {}) {
   }
 }
 
+function probeAudioRms(file, { seconds = 60 } = {}) {
+  try {
+    const res = spawnSync(ffmpegPath(), [
+      '-v', 'info', '-t', String(seconds), '-i', file,
+      '-af', 'astats=metadata=1:reset=0',
+      '-f', 'null', '-',
+    ], { encoding: 'utf8', windowsHide: true, maxBuffer: 32 * 1024 * 1024 });
+    const found = (res.stderr || '').match(/RMS level dB:\s*(-?[\d.]+|-inf)/g);
+    if (!found) return null;
+    const value = found[found.length - 1].split(':')[1].trim();
+    return value === '-inf' ? -120 : parseFloat(value);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * When the video stream starts presenting, in seconds, or null if unreadable.
  *
@@ -294,6 +310,7 @@ module.exports = {
   ffprobePath,
   probeDuration,
   probeStereoWidth,
+  probeAudioRms,
   probeVideo,
   probeStartTime,
   probeFirstFrameDecodes,

@@ -97,12 +97,17 @@ the clip and its timestamp come out together.
 
 ### Backing tracks, built from the video
 
-A dub pack wants the scene's music and atmosphere without the original voices. The pack already
-knows exactly when every line speaks, so the video's own audio is taken and quietened across those
-ranges.
+A dub pack wants the scene's music and atmosphere without the original voices. There are now three
+ways to build that backing track.
 
-**Muffle** removes the original voices and leaves the music. Dialogue is mixed dead centre in
-almost everything, so where the audio is properly stereo it subtracts one channel from the other,
+**AI separate** uses [demucs-rs](https://github.com/nikhilunni/demucs-rs) and HTDemucs to split the
+whole soundtrack into vocals, drums, bass and other, then rebuilds it without the vocal stem. This
+is the cleanest option. The first use downloads a pinned, verified native engine and model totaling
+about 95 MB; audio is processed locally and is never uploaded. It currently needs 64-bit Windows,
+a Vulkan-capable graphics card and roughly 16 GB of memory.
+
+**Quick muffle** keeps the original no-download method for lower-end computers. Dialogue is mixed
+dead centre in almost everything, so where the audio is properly stereo it subtracts one channel from the other,
 which cancels whatever is centred and leaves the music spread around it. Where both channels carry
 the same signal there is no centre to cancel, so it falls back to cutting the range speech occupies
 and those packs sound duller underneath a line. This is usually the better option.
@@ -110,11 +115,11 @@ and those packs sound duller underneath a line. This is usually the better optio
 **Silence** removes it completely, which is cleaner but can sound like the audio dropped out.
 
 How well any of this works depends on how the scene was mixed, so building a backing track asks
-how hard to press and plays a few seconds of the real result before committing to it. A sample
-takes a second or two; the whole track takes minutes.
+how hard to press and plays a few seconds of the real result before committing to it. AI separation
+takes longer than the lightweight modes, especially on its first run.
 
-*Muffle cannot tell a singer from a speaker, so a song with vocals loses those along with the
-dialogue. Separating them properly needs a trained model far too large to ship in an app like this.*
+*AI separation removes singing as well as dialogue because both belong to the vocal stem. Quick
+muffle only changes audio underneath the pack's timed lines.*
 
 ### Every other pack type
 

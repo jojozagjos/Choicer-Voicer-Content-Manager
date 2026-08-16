@@ -16,11 +16,13 @@
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const {
-  runFfmpeg, probeVideo, probeDuration, probeStereoWidth,
+  runFfmpeg, probeVideo, probeDuration, probeStereoWidth, probeAudioRms,
   probeStartTime, probeFirstFrameDecodes, probeKeyframesNear,
 } = require('./ffmpeg');
+const demucs = require('./demucs');
 
 const OK_VIDEO = ['.ogv'];
 const OK_AUDIO = ['.wav', '.mp3', '.ogg'];
@@ -395,6 +397,7 @@ async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
     baseName = '_backing_track',
     signal,
     onProgress,
+    aiRoot,
   } = options;
 
   if (!ranges || !ranges.length) throw new Error('This pack has no clips to work from');
@@ -402,6 +405,12 @@ async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
   fs.mkdirSync(destDir, { recursive: true });
   const target = path.join(destDir, `${baseName}.${audioFormat}`);
   const partial = partialPath(target, 'part', audioFormat);
+
+  if (mode === 'ai') {
+    return buildAiBackingTrack(videoPath, ranges, target, partial, {
+      audioFormat, sampleFrom, sampleFor, signal, onProgress, aiRoot,
+    });
+  }
 
   // One enable window per line, widened slightly so the ramp sits outside the
   // speech rather than clipping its first syllable.
@@ -591,6 +600,96 @@ async function buildBackingTrack(videoPath, ranges, destDir, options = {}) {
     strength: press,
     sample: sampling,
   };
+}
+
+async function buildAiBackingTrack(videoPath, ranges, target, partial, options) {
+  const {
+    audioFormat, sampleFrom, sampleFor, signal, onProgress, aiRoot,
+  } = options;
+  if (!aiRoot) throw new Error('The AI separator has no storage folder');
+
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'choicer-voicer-ai-'));
+  const input = path.join(scratch, 'input.wav');
+  const stems = path.join(scratch, 'stems');
+  const sampling = Number.isFinite(sampleFrom) && sampleFor > 0;
+  const duration = sampling ? sampleFor : probeDuration(videoPath);
+  let lastPercent = -1;
+  const report = (percent) => {
+    const next = Math.max(lastPercent, Math.min(100, percent));
+    if (onProgress && next > lastPercent) onProgress({ percent: next });
+    lastPercent = next;
+  };
+
+  try {
+    report(1);
+    const extractArgs = [];
+    if (sampling) extractArgs.push('-ss', String(Math.max(0, sampleFrom)), '-t', String(sampleFor));
+    extractArgs.push(
+      '-i', videoPath, '-vn', '-ac', '2', '-ar', '44100',
+      '-c:a', 'pcm_f32le', '-f', 'wav', '-y', input
+    );
+    await runFfmpeg(extractArgs, { signal });
+    report(5);
+
+    const binary = await demucs.ensureBinary(aiRoot, {
+      signal,
+      onProgress: ({ percent }) => report(5 + percent * 0.07),
+      onStage: ({ percent }) => report(percent),
+    });
+    await demucs.verifyModel();
+    await demucs.separate(binary, input, stems, {
+      signal,
+      onStage: ({ percent }) => report(percent),
+    });
+    await demucs.verifyModel();
+
+    const files = ['drums.wav', 'bass.wav', 'other.wav', 'vocals.wav']
+      .map((name) => path.join(stems, name));
+    if (files.some((file) => !fs.existsSync(file))) {
+      throw new Error('The AI separator did not produce all four audio stems. Use Quick muffle on this computer.');
+    }
+
+    const inputRms = probeAudioRms(input);
+    const loudestStem = Math.max(...files.map((file) => probeAudioRms(file) ?? -120));
+    if (inputRms != null && inputRms > -70 && loudestStem < inputRms - 30) {
+      throw new Error('The AI separator returned silent audio on this graphics hardware. Use Quick muffle instead.');
+    }
+
+    const args = [
+      '-i', files[0], '-i', files[1], '-i', files[2],
+      '-filter_complex', '[0:a][1:a][2:a]amix=inputs=3:normalize=0,alimiter=limit=0.98:level=0[out]',
+      '-map', '[out]',
+    ];
+    if (audioFormat === 'wav') args.push('-c:a', 'pcm_s16le', '-ar', '48000', '-f', 'wav');
+    else if (audioFormat === 'mp3') args.push('-c:a', 'libmp3lame', '-q:a', '2', '-f', 'mp3');
+    else args.push('-c:a', 'libvorbis', '-q:a', '5', '-f', 'ogg');
+    args.push('-y', partial);
+
+    await runFfmpeg(args, {
+      signal,
+      onProgress: (seconds) => {
+        if (duration) report(90 + Math.min(10, (seconds / duration) * 10));
+      },
+    });
+    await replaceFile(partial, target);
+    report(100);
+
+    return {
+      path: target,
+      ducked: ranges.length,
+      mode: 'ai',
+      gain: 1,
+      technique: 'ai',
+      spread: null,
+      strength: null,
+      sample: sampling,
+    };
+  } catch (err) {
+    try { fs.unlinkSync(partial); } catch { }
+    throw err;
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
 }
 
 /**

@@ -938,11 +938,6 @@ export class PackEditor {
 
   // Backing track
 
-  /**
-   * Builds the pack's backing track from the video by quietening it under every
-   * line. See convert.buildBackingTrack for why it works this way rather than
-   * trying to separate the voice out.
-   */
   async makeBackingTrack() {
     const pack = this.pack;
     const clips = (pack.clips || []).filter((c) => Number.isFinite(c.time) && c.duration > 0);
@@ -959,12 +954,15 @@ export class PackEditor {
     // The sample is cut around the longest line, which is the one that gives
     // the ear the most to judge.
     const longest = [...ranges].sort((a, b) => b.duration - a.duration)[0];
+    const aiStatus = await this.api.content.aiBackingStatus()
+      .catch(() => ({ supported: false, reason: 'AI separation could not be checked.' }));
 
     const chosen = await this.askBacking({
       videoPath: pack.videoPath,
       ranges,
       replacing,
       lineAt: longest ? longest.start : 0,
+      aiStatus,
     });
     if (!chosen) return;
 
@@ -974,7 +972,9 @@ export class PackEditor {
     // straight after a first one failed with a permission error.
     this.releaseBackingAudio();
 
-    const result = await this.run('Building the backing track…', (jobId) =>
+    const result = await this.run(
+      chosen.mode === 'ai' ? 'Separating vocals from the backing track…' : 'Building the backing track…',
+      (jobId) =>
       this.api.content.buildBacking({
         jobId,
         packDir: pack.dir,
@@ -989,11 +989,15 @@ export class PackEditor {
       this.toast(`Could not build it: ${result.error}`, 'error', 8000);
       return;
     }
-    this.toast(
-      `Backing track ${result.mode === 'silence' ? 'built, silent' : 'built, muffled'} under `
-      + `${result.ducked} line${result.ducked === 1 ? '' : 's'}.`,
-      'ok', 6000
-    );
+    if (result.mode === 'ai') {
+      this.toast('Backing track built from the instrumental stems. The vocal stem was removed.', 'ok', 6000);
+    } else {
+      this.toast(
+        `Backing track ${result.mode === 'silence' ? 'built, silent' : 'built, muffled'} under `
+        + `${result.ducked} line${result.ducked === 1 ? '' : 's'}.`,
+        'ok', 6000
+      );
+    }
 
     if (this.onChanged) await this.onChanged(pack.id, { keepEditor: true });
 

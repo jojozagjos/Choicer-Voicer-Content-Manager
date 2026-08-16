@@ -719,7 +719,8 @@
       <div class="field-row">
         <span class="field-label">What to do with the original voices</span>
         <div class="segmented" role="group" id="backing-mode">
-          <button type="button" data-mode="muffle" class="on">Remove them</button>
+          <button type="button" data-mode="ai" class="on">AI separate (best)</button>
+          <button type="button" data-mode="muffle">Quick muffle</button>
           <button type="button" data-mode="silence">Silence everything</button>
         </div>
       </div>
@@ -933,15 +934,18 @@
            track sits in the game is set there, and on export by the Music slider.</p>
 
         <h4>About the backing track</h4>
-        <p>Properly separating a voice from music needs a trained model far too large to ship
-           inside an app like this. Instead, this uses two things it can work out for itself:
-           exactly when every line speaks, and where in the stereo picture the voice is sitting.</p>
+        <p>You can properly separate the vocal and instrumental stems with a local AI model, or
+           use the original lightweight filter on a lower-end computer.</p>
         <ul class="bullets">
-          <li><b>Muffle</b> removes the original voices and leaves the music. Dialogue is mixed
+          <li><b>AI separate</b> uses HTDemucs to split the whole soundtrack into vocals, drums,
+              bass and other, then rebuilds the backing track without the vocal stem. The first
+              use downloads about 95 MB. Audio stays on your computer. It needs 64-bit Windows,
+              a Vulkan-capable graphics card and roughly 16 GB of memory.</li>
+          <li><b>Quick muffle</b> removes the original voices and leaves the music. Dialogue is mixed
               dead centre in almost everything, so where the audio is properly stereo it
               subtracts one channel from the other, which cancels whatever is centred and leaves
-              the music spread around it nearly untouched. This is typically the better
-              option.</li>
+              the music spread around it nearly untouched. It is instant, needs no download and
+              stays available for lower-end computers.</li>
           <li>Where both channels carry the same signal there is no centre to cancel, so it falls
               back to cutting the range speech occupies, roughly 220 Hz to 7 kHz. That works on
               anything but takes some of the music with it, so those packs sound duller
@@ -949,9 +953,8 @@
           <li><b>Silence</b> removes it completely, which is cleaner but can sound like the audio
               dropped out.</li>
         </ul>
-        <p class="muted small">Muffle cannot tell a singer from a speaker. A song with vocals in
-           it loses those along with the dialogue, and that is the limit of doing this without a
-           model.</p>
+        <p class="muted small">AI separation removes singing as well as dialogue because both are
+           part of the vocal stem. Quick muffle only changes audio underneath the pack's lines.</p>
 
         <h4>Pictures</h4>
         <p>Every line in the list has three buttons beside its picture:</p>

@@ -62,6 +62,16 @@ of some encoders.
 FFmpeg project's own terms still apply to the `ffprobe` binary itself on the same
 basis as above.
 
+## demucs-rs and HTDemucs — optional downloads
+
+AI backing-track separation downloads [`demucs-rs`][demucs-rs] v0.3.4 on first
+use. It is licensed under Apache License 2.0. The standard HTDemucs model is
+downloaded separately from the [`audio_separation`][audio-separation] model
+repository and is licensed under MIT. Neither is included in the app installer.
+
+The app pins and verifies both downloads before accepting their output. Media is
+processed locally and is not sent to either project.
+
 ## Electron — MIT, plus Chromium and Node
 
 The app runs on [Electron][electron] 33, MIT licensed. Electron embeds Chromium
@@ -81,3 +91,5 @@ them. Check with a pack's author before publishing videos built from their work.
 [ffmpeg-static]: https://github.com/eugeneware/ffmpeg-static
 [ffprobe-static]: https://github.com/joshwnj/ffprobe-static
 [electron]: https://github.com/electron/electron
+[demucs-rs]: https://github.com/nikhilunni/demucs-rs
+[audio-separation]: https://huggingface.co/set-soft/audio_separation

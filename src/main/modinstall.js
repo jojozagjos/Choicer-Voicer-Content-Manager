@@ -585,7 +585,11 @@ async function buildSharePackage(packDir, outDir, details) {
       fs.rmSync(scratchParent, {
         recursive: true, force: true, maxRetries: 5, retryDelay: 100,
       });
-    } catch { }
+    } catch {
+      // A scratch folder left in the system temp directory is untidy and
+      // nothing more, and the operating system clears it eventually. Failing
+      // the packaging over it would throw away a zip that is already built.
+    }
   }
 
   const sum = await checksum(zipPath);

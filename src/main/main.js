@@ -2321,6 +2321,33 @@ function runSmokeTest(win) {
             / Math.max(1, root.querySelectorAll('.clip-row').length),
         };
 
+        const characterRow = root.querySelector('.clip-row');
+        const characterInput = characterRow
+          && characterRow.querySelector('[data-field="character"]');
+        const originalCharacter = characterInput && characterInput.value;
+        if (characterInput && originalCharacter) {
+          const base = characterRow.dataset.base;
+          characterInput.focus();
+          characterInput.value = '__smoke_temporary_speaker';
+          characterInput.dispatchEvent(new Event('input', { bubbles: true }));
+          characterInput.dispatchEvent(new Event('change', { bubbles: true }));
+          await wait(150);
+          characterInput.blur();
+          const option = [...document.querySelectorAll('.character-list button')]
+            .find((item) => item.dataset.name === originalCharacter);
+          if (option) {
+            option.click();
+            await wait(150);
+            characterRow.querySelector('.line-time').click();
+            const refreshed = [...root.querySelectorAll('.clip-row')]
+              .find((item) => item.dataset.base === base);
+            out.characterPickPersisted = Boolean(refreshed
+              && refreshed.querySelector('[data-field="character"]').value === originalCharacter);
+          } else {
+            out.characterPickPersisted = false;
+          }
+        }
+
         // Volume actually reaches the element.
         const vol = q('[data-role="volume"]');
         vol.value = '0.35';
@@ -2581,6 +2608,9 @@ function runSmokeTest(win) {
           }
           if (toolsCheck.characterArrows > 1) {
             errors.push('the character field draws more than one dropdown arrow');
+          }
+          if (toolsCheck.characterPickPersisted === false) {
+            errors.push('choosing a character from the list did not save it');
           }
         }
       }

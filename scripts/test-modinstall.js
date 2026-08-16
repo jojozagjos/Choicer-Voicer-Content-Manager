@@ -17,7 +17,7 @@ const path = require('path');
 const zlib = require('zlib');
 
 const {
-  extractInto, listEntries, checksum, availableZipPath, existsReally,
+  extractInto, listEntries, checksum, availableZipPath, existsReally, packForSharing,
 } = require('../src/main/modinstall');
 
 let failures = 0;
@@ -234,6 +234,31 @@ async function tryExtract(name, entries) {
     check('existsReally says no for a missing file',
       !existsReally(path.join(dir, 'nope.zip')));
 
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  console.log('\nPackaging the same pack twice');
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'share-race-'));
+    const pack = path.join(dir, 'Test Pack');
+    const out = path.join(dir, 'Shared packs');
+    fs.mkdirSync(pack);
+    fs.writeFileSync(path.join(pack, 'pack.ini'), 'title=Test Pack\n');
+    const details = {
+      type: 'voice', title: 'Test Pack', author: 'coah80',
+      licence: 'unstated', tags: [], reuse: false,
+    };
+    const results = await Promise.allSettled([
+      packForSharing(pack, out, details),
+      packForSharing(pack, out, details),
+    ]);
+    check('both overlapping requests finish',
+      results.every((result) => result.status === 'fulfilled'),
+      results.filter((result) => result.status === 'rejected')
+        .map((result) => result.reason.message).join('\n'));
+    check('the finished zip exists', fs.existsSync(path.join(out, 'Test Pack.zip')));
+    check('no staging folder is left in Shared packs',
+      fs.readdirSync(out).every((name) => !name.endsWith('.stage.part')));
     fs.rmSync(dir, { recursive: true, force: true });
   }
 

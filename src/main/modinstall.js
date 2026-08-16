@@ -487,7 +487,7 @@ function zipFolder(sourceDir, zipPath) {
  * The record comes back with the download address left blank, since only the
  * author knows where they are about to upload it.
  */
-async function packForSharing(packDir, outDir, details) {
+async function buildSharePackage(packDir, outDir, details) {
   const { validateRecord } = require('./directory');
 
   const folderName = path.basename(packDir);
@@ -530,13 +530,10 @@ async function packForSharing(packDir, outDir, details) {
   // author's own pack folder is never written to, so there has to be somewhere
   // else to assemble it even when nothing is being shrunk.
   //
-  // The staged copy sits *inside* a scratch parent under its real name, because
-  // the zip takes its top-level folder name from this directory. Zipping the
-  // scratch folder itself would name the pack something like
-  // ".Superman.stage.part", which is what it would then install as.
-  const scratchParent = path.join(outDir, `.${folderName}.stage.part`);
+  // The staged copy sits inside a scratch parent under its real name, because
+  // the zip takes its top-level folder name from this directory.
+  const scratchParent = fs.mkdtempSync(path.join(os.tmpdir(), 'choicer-voicer-share-'));
   const scratch = path.join(scratchParent, folderName);
-  fs.rmSync(scratchParent, { recursive: true, force: true });
   let shrunk = null;
 
   try {
@@ -584,7 +581,11 @@ async function packForSharing(packDir, outDir, details) {
       throw new Error('Could not make a zip of that pack on this machine');
     }
   } finally {
-    fs.rmSync(scratchParent, { recursive: true, force: true });
+    try {
+      fs.rmSync(scratchParent, {
+        recursive: true, force: true, maxRetries: 5, retryDelay: 100,
+      });
+    } catch { }
   }
 
   const sum = await checksum(zipPath);
@@ -648,6 +649,23 @@ async function packForSharing(packDir, outDir, details) {
     shrunk,
     problems: dryRun.ok ? [] : dryRun.problems,
   };
+}
+
+const packagingJobs = new Map();
+
+async function packForSharing(packDir, outDir, details) {
+  const rawKey = `${path.resolve(packDir)}\n${path.resolve(outDir)}`;
+  const key = process.platform === 'win32' ? rawKey.toLowerCase() : rawKey;
+  const previous = packagingJobs.get(key) || Promise.resolve();
+  const current = previous.catch(() => {}).then(() =>
+    buildSharePackage(packDir, outDir, details));
+  packagingJobs.set(key, current);
+
+  try {
+    return await current;
+  } finally {
+    if (packagingJobs.get(key) === current) packagingJobs.delete(key);
+  }
 }
 
 module.exports = {

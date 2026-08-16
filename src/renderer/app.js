@@ -155,6 +155,7 @@ const el = {
   backingStrengthRow: $('#backing-strength-row'),
   backingStrengthNote: $('#backing-strength-note'),
   backingTechnique: $('#backing-technique'),
+  backingNote: $('#backing-note'),
   backingPreview: $('#backing-preview'),
   backingSample: $('#backing-sample'),
   backingSampleNote: $('#backing-sample-note'),
@@ -5588,11 +5589,19 @@ function askBackingSettings({ videoPath, ranges, replacing, lineAt, aiStatus }) 
       }
       el.backingStrengthRow.hidden = mode !== 'muffle';
       el.backingTechnique.hidden = mode === 'silence';
+      // What it costs is said on its own line, in bold, rather than trailing a
+      // paragraph about how the separation works. Somebody skimming for the
+      // download size should not have to read a description to find it.
+      const ready = aiStatus && aiStatus.installed && aiStatus.modelInstalled;
+      el.backingNote.hidden = mode !== 'ai' || ready;
+      el.backingNote.textContent = mode === 'ai' && !ready
+        ? 'First use downloads about 95 MB, then everything runs locally.' : '';
+
       el.backingTechnique.textContent = mode === 'ai'
         ? 'Actually separates vocals from drums, bass and other sounds across the whole track. '
-          + ((aiStatus.installed && aiStatus.modelInstalled)
+          + (ready
             ? 'The local engine and model are ready.'
-            : 'First use downloads about 95 MB, then everything runs locally. This can take several minutes.')
+            : 'This can take several minutes.')
         : mode === 'muffle'
           ? 'Fast and lightweight. Where the audio is properly stereo the centred voices are cancelled, which barely '
           + 'touches the music. Where both channels are the same signal there is no centre to '

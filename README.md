@@ -110,7 +110,7 @@ a Vulkan-capable graphics card and roughly 16 GB of memory.
 dead centre in almost everything, so where the audio is properly stereo it subtracts one channel from the other,
 which cancels whatever is centred and leaves the music spread around it. Where both channels carry
 the same signal there is no centre to cancel, so it falls back to cutting the range speech occupies
-and those packs sound duller underneath a line. This is usually the better option.
+and those packs sound duller underneath a line. It is instant and stays available everywhere.
 
 **Silence** removes it completely, which is cleaner but can sound like the audio dropped out.
 

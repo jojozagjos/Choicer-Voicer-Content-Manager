@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.1.1
+
+Backing tracks that actually separate the voice, and two fixes from a
+contributor.
+
+### Backing tracks
+
+- **AI separate** is a new option, and the first one that genuinely tells a
+  voice from music rather than guessing from frequency and stereo position. It
+  splits the soundtrack into vocals, drums, bass and other, and rebuilds the
+  backing track from everything except the vocals. The engine and model are
+  fetched on first use, about 95 MB, and everything runs on the machine: no
+  audio is sent anywhere. It needs 64-bit Windows, a Vulkan-capable graphics
+  card and roughly 16 GB of memory, and says so rather than offering itself on a
+  machine that cannot run it.
+- **Quick muffle** is unchanged and stays the default where the model cannot
+  run. It is instant and needs no download.
+- Building either one asks how hard to press and plays a few seconds of the real
+  result first. A sample takes a second or two against several minutes for the
+  whole track.
+- The muffle's cut starts at 90 Hz rather than 220 Hz. The old figure was chosen
+  to protect the bass a track is built on, which is also where a deep voice
+  keeps its fundamental, so packs with a low lead voice were losing 8 dB of
+  dialogue where higher voices lost 25.
+- Centre cancellation is now used only on files with genuinely wide stereo. A
+  file that was nearly mono could slip past the old threshold and come out
+  barely touched.
+- The playhead can be moved by pressing the backing track lane, and dragged
+  along it.
+
+### Fixes
+
+- A speaker chosen from the dropdown is saved. Clicking a name settled the edit
+  and cleared the baseline it was about to be compared against, so the change
+  that followed found nothing to write.
+- Packaging the same pack twice at once no longer has the two runs delete each
+  other's work, and no longer leaves a staging folder beside the finished zips.
+- The question about creating a repository on a GitHub account waits five
+  seconds before it will take yes. Cancelling stays available throughout.
+- Reporting a bug or asking for something is a button in the top bar, which
+  opens an issue without leaving the app.
+
 ## 1.1.0
 
 Sharing packs, and working with a pack that has been recorded several times over.

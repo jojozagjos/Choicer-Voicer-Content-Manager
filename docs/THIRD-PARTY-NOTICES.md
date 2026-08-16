@@ -74,7 +74,7 @@ processed locally and is not sent to either project.
 
 ## Electron — MIT, plus Chromium and Node
 
-The app runs on [Electron][electron] 33, MIT licensed. Electron embeds Chromium
+The app runs on [Electron][electron] 43, MIT licensed. Electron embeds Chromium
 and Node.js, which carry a large collection of their own licences. Electron ships
 the full set as `LICENSES.chromium.html`; that file is included in the build
 folder as Electron itself places it.

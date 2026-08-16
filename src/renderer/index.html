@@ -45,7 +45,7 @@
     <button id="btn-settings" class="btn btn-ghost">Settings</button>
     <button id="btn-about" class="btn btn-ghost" title="About, setup and credits">Help</button>
     <button id="version-badge" class="version-badge" title="Which version this is. Click for help and credits.">
-      v<span id="version-number">1.1.0</span>
+      v<span id="version-number">1.1.1</span>
     </button>
   </div>
 </header>
@@ -718,10 +718,13 @@
     <div class="backing-settings">
       <div class="field-row">
         <span class="field-label">What to do with the original voices</span>
-        <div class="segmented" role="group" id="backing-mode">
-          <button type="button" data-mode="ai" class="on">AI separate (best)</button>
-          <button type="button" data-mode="muffle">Quick muffle</button>
-          <button type="button" data-mode="silence">Silence everything</button>
+        <!-- Three separate buttons rather than one joined control. These are
+             three different ways of doing the job, not three positions of one
+             setting, and a joined control read as a slider between them. -->
+        <div class="mode-choice" role="group" id="backing-mode">
+          <button type="button" class="btn on" data-mode="ai">AI separate (best)</button>
+          <button type="button" class="btn" data-mode="muffle">Quick muffle</button>
+          <button type="button" class="btn" data-mode="silence">Silence everything</button>
         </div>
       </div>
 
@@ -733,11 +736,22 @@
       </label>
 
       <p class="muted small" id="backing-technique"></p>
+      <!-- The download, on its own and in bold. It is the one thing on this
+           dialog that costs the reader something they have not agreed to yet,
+           and it was the tail of a paragraph about how separation works. Its
+           own element rather than markup inside that paragraph, because the
+           paragraph is set as text and should stay that way. -->
+      <p class="backing-warn" id="backing-note" hidden></p>
 
       <div class="backing-try">
-        <button type="button" class="btn btn-small" id="backing-preview">Hear a few seconds</button>
+        <!-- The button gets its own row. Sharing one with the player and its
+             note put the thing to press and the thing to listen to side by
+             side, which read as one control that had lost half of itself. -->
+        <div class="backing-try-top">
+          <button type="button" class="btn btn-small" id="backing-preview">Hear a few seconds</button>
+          <span class="muted small" id="backing-sample-note"></span>
+        </div>
         <audio id="backing-sample" controls preload="none" hidden></audio>
-        <span class="muted small" id="backing-sample-note"></span>
       </div>
     </div>
 
@@ -820,7 +834,7 @@
       <div class="about-lines">
         <h2>Choicer Voicer Content Manager</h2>
         <span class="muted small">
-          Version <b id="about-version">1.1.0</b>
+          Version <b id="about-version">1.1.1</b>
           <span id="about-update" class="update-note"></span>
         </span>
       </div>
@@ -947,7 +961,7 @@
               the music spread around it nearly untouched. It is instant, needs no download and
               stays available for lower-end computers.</li>
           <li>Where both channels carry the same signal there is no centre to cancel, so it falls
-              back to cutting the range speech occupies, roughly 220 Hz to 7 kHz. That works on
+              back to cutting the range speech occupies, roughly 90 Hz to 7 kHz. That works on
               anything but takes some of the music with it, so those packs sound duller
               underneath a line.</li>
           <li><b>Silence</b> removes it completely, which is cleaner but can sound like the audio

@@ -3738,16 +3738,40 @@ input[type="range"]::-webkit-slider-thumb {
 .backing-settings .scrub { width: 100%; }
 
 .backing-try {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+  display: grid;
+  gap: 10px;
   padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 11px;
   background: var(--bg-sunken);
 }
-.backing-try audio { flex: 1; min-width: 220px; height: 34px; }
+/* Three ways of doing the job, each its own button. */
+.mode-choice { display: flex; gap: 8px; flex-wrap: wrap; }
+.mode-choice .btn {
+  flex: 1 1 auto;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 650;
+}
+.mode-choice .btn.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text);
+}
+/* A choice this machine cannot carry out says so by looking unavailable,
+   rather than by failing several minutes after being pressed. */
+.mode-choice .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.backing-try-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.backing-try audio { width: 100%; height: 34px; }
+
+/* What the choice costs, said once and plainly. */
+.backing-warn {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--warn, #d29922);
+}
 
 /* A name that behaves like a link without being one. */
 .linklike {

@@ -3015,6 +3015,9 @@ function drawInboxDetail() {
  */
 async function refreshMods({ force = false } = {}) {
   if (state.mods && !force) {
+    // Cheap after the first time, and the cards cannot say whether a pack has
+    // an update until it has been read.
+    await loadInstalled().catch(() => {});
     renderModTypes();
     renderMods();
     return;
@@ -3022,6 +3025,7 @@ async function refreshMods({ force = false } = {}) {
 
   el.modsSubtitle.textContent = 'Looking…';
   await loadDirectory({ force });
+  await loadInstalled().catch(() => {});
 
   // Same reason as the submissions list: this can finish after somebody has
   // moved to the other tab, and painting the directory over their submissions
@@ -3268,12 +3272,28 @@ function contentFlagsHtml(content) {
   ).join('')}</div>`;
 }
 
+/**
+ * Where a listed pack stands against this machine: new, installed, or
+ * installed but since changed by its author.
+ *
+ * The installed list is the authority, because it was recorded at install time
+ * and knows the exact copy that landed. Matching by title only says a pack of
+ * that name exists, which cannot tell a current copy from an old one.
+ */
+function standingOfPack(pack) {
+  const mine = (state.installed || []).find((p) => p.id === pack.id);
+  if (mine) return mine.hasUpdate ? 'update' : 'installed';
+  // Nothing recorded, so fall back to the name. Covers a pack installed before
+  // any of this was tracked, and one unzipped in by hand.
+  return isModInstalled(pack) ? 'installed' : 'new';
+}
+
 /** One pack in the grid. */
 function modCard(pack) {
   const card = document.createElement('article');
   card.className = 'mod-card';
 
-  const installed = isModInstalled(pack);
+  const standing = standingOfPack(pack);
   card.innerHTML = `
     <div class="mod-card-head">
       <span class="mod-icon">${typeIcon(pack.type)}</span>
@@ -3291,8 +3311,8 @@ function modCard(pack) {
         <span class="mod-status muted small"></span>
         <button class="btn btn-small mod-report" title="Report this pack"
                 aria-label="Report this pack">!</button>
-        <button class="btn btn-small mod-install ${installed ? '' : 'btn-primary'}">
-          ${installed ? 'Installed' : 'Install'}
+        <button class="btn btn-small mod-install ${standing === 'installed' ? '' : 'btn-primary'}">
+          ${standing === 'update' ? 'Update' : standing === 'installed' ? 'Installed' : 'Install'}
         </button>
       </span>
     </div>`;
@@ -3303,8 +3323,18 @@ function modCard(pack) {
   // does not look like a break.
   const button = card.querySelector('.mod-install');
   const status = card.querySelector('.mod-status');
-  if (installed) button.disabled = true;
-  else button.addEventListener('click', () => installMod(pack, button, status));
+  // Only a pack that is both installed and current has nothing to press for.
+  if (standing === 'installed') button.disabled = true;
+  else {
+    button.addEventListener('click', async () => {
+      await installMod(pack, button, status);
+      // The installed list decided this button's label, so it has to be read
+      // again before the grid is redrawn or the card would still say Update.
+      state.installed = null;
+      await markUpdates();
+      renderMods();
+    });
+  }
 
   card.querySelector('[data-author]')
     .addEventListener('click', () => showPublisher(pack.author));

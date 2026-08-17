@@ -332,7 +332,7 @@ function extractInto(zipPath, targetDir) {
  * trusted merely for being local.
  */
 async function installFromRecord(record, gameDir, {
-  onStage, onProgress, signal, cachedZip,
+  onStage, onProgress, signal, cachedZip, replaceDir = null,
 } = {}) {
   const stage = (name) => { if (onStage) onStage(name); };
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'cvmod-'));
@@ -363,6 +363,9 @@ async function installFromRecord(record, gameDir, {
       expectType: record.type,
       describeSource: 'listing',
       onStage,
+      // Set when this pack is already installed, so an update lands on top of
+      // the copy it replaces rather than beside it.
+      replaceDir,
     });
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
@@ -378,7 +381,9 @@ async function installFromRecord(record, gameDir, {
  * zip handed over by a friend has had no review at all, so it is the case that
  * needs them most, not least.
  */
-async function unpackAndInstall(zipPath, gameDir, { expectType, describeSource, onStage } = {}) {
+async function unpackAndInstall(zipPath, gameDir, {
+  expectType, describeSource, onStage, replaceDir = null,
+} = {}) {
   const stage = (name) => { if (onStage) onStage(name); };
   const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'cvunpack-'));
 
@@ -427,7 +432,7 @@ async function unpackAndInstall(zipPath, gameDir, { expectType, describeSource, 
 
     stage('installing');
     const { installPack } = require('./create');
-    const installed = installPack(gameDir, packRoot);
+    const installed = installPack(gameDir, packRoot, { replaceDir });
     return { ok: true, type: actualType, record: embedded, ...installed };
   } finally {
     fs.rmSync(staging, { recursive: true, force: true });

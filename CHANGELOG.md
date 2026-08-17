@@ -32,6 +32,12 @@ contributor.
 
 ### Fixes
 
+- Updating a pack replaces the copy already installed. It used to land beside
+  it under a numbered name, leaving both versions in the library with nothing
+  saying which was which. Recordings are kept outside a pack, so nothing that
+  was dubbed against it is lost.
+- A pack in Browse with an update waiting says **Update** rather than
+  **Installed**, and can be pressed.
 - A speaker chosen from the dropdown is saved. Clicking a name settled the edit
   and cleared the baseline it was about to be compared against, so the change
   that followed found nothing to write.

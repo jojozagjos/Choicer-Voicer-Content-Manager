@@ -399,7 +399,7 @@ function identifyPack(dir) {
  * Copies a pack folder into the right place. Refuses anything it cannot
  * identify rather than dumping a stray folder the game will ignore.
  */
-function installPack(gameDir, sourceDir) {
+function installPack(gameDir, sourceDir, { replaceDir = null } = {}) {
   const stat = fs.statSync(sourceDir);
   if (!stat.isDirectory()) throw new Error('Drop the unzipped folder, not a file');
 
@@ -411,9 +411,36 @@ function installPack(gameDir, sourceDir) {
   const parent = path.join(gameDir, TYPE_DIRS[type]);
   fs.mkdirSync(parent, { recursive: true });
 
+  // Updating a pack replaces the folder it is already in.
+  //
+  // Without this the new copy landed beside the old one as "Pack 2", because
+  // the name was taken, and the library ended up holding both versions with
+  // nothing saying which was which. The game would load whichever it found.
+  //
+  // Only ever a folder inside the game folder's own type directory, checked
+  // here rather than trusted from the caller: this deletes a directory tree,
+  // and the one thing it must never be talked into is deleting one somewhere
+  // else. Recordings are not kept inside a pack, so replacing the folder does
+  // not touch anybody's takes.
+  const replacing = replaceDir && fs.existsSync(replaceDir)
+    && path.resolve(path.dirname(replaceDir)).toLowerCase() === path.resolve(parent).toLowerCase()
+    ? path.resolve(replaceDir)
+    : null;
+
+  if (replacing) {
+    // Into place through a scratch name, so a failure part way through leaves
+    // the old pack rather than nothing at all.
+    const holding = `${replacing}.replacing`;
+    fs.rmSync(holding, { recursive: true, force: true });
+    fs.cpSync(sourceDir, holding, { recursive: true });
+    fs.rmSync(replacing, { recursive: true, force: true });
+    fs.renameSync(holding, replacing);
+    return { type, dir: replacing, name: path.basename(replacing), replaced: true };
+  }
+
   const target = uniqueDir(parent, safeFolderName(path.basename(sourceDir)));
   fs.cpSync(sourceDir, target, { recursive: true });
-  return { type, dir: target, name: path.basename(target) };
+  return { type, dir: target, name: path.basename(target), replaced: false };
 }
 
 /**

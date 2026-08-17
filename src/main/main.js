@@ -2821,6 +2821,31 @@ function originOf(packDir) {
 }
 
 /**
+ * Where a listed pack is already installed, if it is.
+ *
+ * Read from what was recorded at install time rather than by matching titles,
+ * because a title can be changed by whoever owns the folder and two packs are
+ * allowed to share one. The id is the thing that says "this is that pack
+ * again".
+ *
+ * Only ever answers with a folder inside the game folder currently in use, so
+ * a leftover entry pointing at a library that has since moved cannot send an
+ * update somewhere unexpected.
+ */
+function installedDirFor(packId, gameDir) {
+  if (!packId || !gameDir) return null;
+  const root = path.resolve(gameDir).toLowerCase();
+
+  for (const [dir, origin] of Object.entries(readOrigins())) {
+    if (!origin || origin.id !== packId || origin.dropped) continue;
+    if (!path.resolve(dir).toLowerCase().startsWith(root)) continue;
+    if (!fs.existsSync(dir)) continue;
+    return dir;
+  }
+  return null;
+}
+
+/**
  * One copy of every pack file this app has fetched, kept by its checksum.
  *
  * The directory has no server, so how many times a pack has been downloaded is
@@ -3885,6 +3910,10 @@ function registerModsIpc() {
         // assumed: installFromRecord checks it against the record's checksum
         // and downloads afresh if it does not match.
         cachedZip: cachedPackPath(checked.record.sha256),
+        // Where this pack already lives, if it does. Updating replaces that
+        // folder; without it the new copy landed beside the old one under a
+        // numbered name and the library held both.
+        replaceDir: installedDirFor(checked.record.id, gameDir),
         onStage: (name) => {
           if (!event.sender.isDestroyed()) event.sender.send('mods:progress', { stage: name });
         },

@@ -11,6 +11,9 @@
  * in this file, not an afterthought.
  */
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { scanPack } = require('../src/main/packscan');
 
 let failures = 0;
@@ -120,5 +123,62 @@ console.log('\nOrdering and shape');
     said.findings[0].detail);
 }
 
-console.log(`\n${checks - failures}/${checks} passed`);
+// ---------------------------------------------------------------------------
+
+console.log('\nUpdating a pack replaces it rather than installing a second copy');
+{
+  const { installPack } = require('../src/main/create');
+  const game = fs.mkdtempSync(path.join(os.tmpdir(), 'cv-replace-'));
+  const made = fs.mkdtempSync(path.join(os.tmpdir(), 'cv-src-'));
+
+  // Two versions of the same pack, told apart by a file only the second has.
+  const build = (where, marker) => {
+    const dir = path.join(where, 'Some Pack');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, '_pack_info.ini'), 'title=Some Pack\n');
+    fs.writeFileSync(path.join(dir, 'dub_video.ogv'), 'not really a video');
+    fs.writeFileSync(path.join(dir, marker), 'x');
+    return dir;
+  };
+
+  const first = installPack(game, build(made, 'version-one.txt'));
+  const parent = path.dirname(first.dir);
+  check('the first install lands', fs.existsSync(first.dir));
+
+  const second = fs.mkdtempSync(path.join(os.tmpdir(), 'cv-src2-'));
+  const updated = installPack(game, build(second, 'version-two.txt'), { replaceDir: first.dir });
+
+  check('an update stays in the same folder', updated.dir === first.dir,
+    `went to ${updated.dir}`);
+  check('it says it replaced something', updated.replaced === true);
+  check('only one copy of the pack exists',
+    fs.readdirSync(parent).filter((n) => n.startsWith('Some Pack')).length === 1,
+    `found ${fs.readdirSync(parent).join(', ')}`);
+  check('the new version is what is there', fs.existsSync(path.join(updated.dir, 'version-two.txt')));
+  check('the old version is gone', !fs.existsSync(path.join(updated.dir, 'version-one.txt')));
+  check('no scratch folder is left behind',
+    fs.readdirSync(parent).every((n) => !n.endsWith('.replacing')));
+
+  // Without the hint the old behaviour stands, which is what a fresh install
+  // of a differently named pack still needs.
+  const third = fs.mkdtempSync(path.join(os.tmpdir(), 'cv-src3-'));
+  const beside = installPack(game, build(third, 'version-three.txt'));
+  check('a plain install still avoids the name it finds taken', beside.dir !== first.dir);
+  check('and reports that it replaced nothing', beside.replaced === false);
+
+  // A folder outside the game folder is never deleted, whatever is asked for.
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'cv-outside-'));
+  fs.writeFileSync(path.join(outside, 'precious.txt'), 'do not delete me');
+  const fourth = fs.mkdtempSync(path.join(os.tmpdir(), 'cv-src4-'));
+  installPack(game, build(fourth, 'version-four.txt'), { replaceDir: outside });
+  check('a replace target outside the game folder is refused',
+    fs.existsSync(path.join(outside, 'precious.txt')));
+
+  for (const dir of [game, made, second, third, fourth, outside]) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+console.log(`
+${checks - failures}/${checks} passed`);
 process.exit(failures ? 1 : 0);

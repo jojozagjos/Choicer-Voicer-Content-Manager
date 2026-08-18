@@ -280,6 +280,10 @@ const state = {
   modsType: 'all',
   modsSort: 'downloads',
   modsShow: 'browse',
+  // Which part of the app put the message on the alert strip. There is one
+  // strip and several things want it, so clearing it has to be something
+  // only its owner can do.
+  alertOwner: null,
   // The pack whose own page is open, if one is, and which list it was opened
   // from so that list stays lit and is where going back goes.
   listing: null,
@@ -878,7 +882,7 @@ async function switchTab(tab) {
   // place for it, so arriving here dismisses it directly rather than waiting
   // for the next rescan to notice.
   if (tab === 'content' && state.dubAlertActive) {
-    hideAlert();
+    hideAlert('scan');
     state.dubAlertActive = false;
   }
 
@@ -4725,7 +4729,8 @@ async function maybeAskForDonation() {
     () => {
       window.api.shell.openExternalConfirmed(url, 'the donation page');
       hideAlert();
-    }
+    },
+    'donate'
   );
 
   // A second button so dismissing is as easy as accepting.
@@ -4819,7 +4824,8 @@ async function checkForUpdate() {
   showAlert(
     `Version ${result.latest} is out. You have ${result.current}.`,
     'Get it',
-    () => openUpdatePage()
+    () => openUpdatePage(),
+    'update'
   );
 }
 
@@ -4835,7 +4841,8 @@ function openUpdatePage() {
  * path, which mean nothing to most people. Status now only appears when
  * something actually needs attention, with a button that fixes it.
  */
-function showAlert(message, actionLabel, onAction) {
+function showAlert(message, actionLabel, onAction, owner = 'app') {
+  state.alertOwner = owner;
   clearExtraAlertButtons();
   el.alertText.textContent = message;
   el.alertBar.hidden = false;
@@ -4853,7 +4860,21 @@ function clearExtraAlertButtons() {
   }
 }
 
-function hideAlert() {
+/**
+ * Takes the strip down, if it is still showing what the caller put there.
+ *
+ * There is one alert strip and several things want it, so whoever clears it
+ * has to say what they are clearing. Rescanning called this with no argument
+ * whenever the library looked healthy, which is true the moment an export
+ * finishes: the new file lands, the folder watcher notices, a rescan runs, and
+ * the donation note that had just gone up came straight back down.
+ *
+ * Called with nothing it still clears whatever is there, which is what the
+ * strip's own buttons want.
+ */
+function hideAlert(owner = null) {
+  if (owner && state.alertOwner && state.alertOwner !== owner) return;
+  state.alertOwner = null;
   el.alertBar.hidden = true;
   el.alertAction.onclick = null;
   clearExtraAlertButtons();
@@ -4866,7 +4887,8 @@ function renderFfmpegStatus() {
     : 'ffmpeg was not found. Exporting will not work until it is installed or located here.';
 
   if (!ffmpeg.ok) {
-    showAlert('Video tools are missing, so exporting will not work.', 'Fix in Settings', openSettings);
+    showAlert('Video tools are missing, so exporting will not work.', 'Fix in Settings',
+      openSettings, 'ffmpeg');
   }
 }
 
@@ -4886,26 +4908,28 @@ async function rescan(dir) {
     // alert kept nagging about dub recordings while someone was in the middle
     // of building an unrelated pack, or inside the pack editor.
     if (state.tab === 'content') {
-      if (state.dubAlertActive) { hideAlert(); state.dubAlertActive = false; }
+      if (state.dubAlertActive) { hideAlert('scan'); state.dubAlertActive = false; }
     } else if (!state.model.packs.length) {
       state.dubAlertActive = true;
-      showAlert('No voice packs found in that folder.', 'Choose folder', pickGameDir);
+      showAlert('No voice packs found in that folder.', 'Choose folder', pickGameDir, 'scan');
     } else if (!withRecordings.length) {
       state.dubAlertActive = true;
       showAlert(
         'Packs found, but you have not recorded any dubs yet. Record one in the game first.',
         'How it works',
-        () => openHelpTab('start')
+        () => openHelpTab('start'),
+        'scan'
       );
     } else if (state.info.ffmpeg.ok) {
       state.dubAlertActive = false;
-      hideAlert();
+      hideAlert('scan');
     }
   } catch (err) {
     showAlert(
       'Could not find The Choicer Voicer’s files. Point the app at your game folder.',
       'Choose folder',
-      pickGameDir
+      pickGameDir,
+      'scan'
     );
     console.warn(err.message);
   }

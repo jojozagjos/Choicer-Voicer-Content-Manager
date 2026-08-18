@@ -18,13 +18,19 @@
 const fs = require('fs');
 const path = require('path');
 
+// Line endings normalised on the way in. This file is stored with LF in the
+// repository and checked out with CRLF on Windows, and cutting a function out
+// by looking for a newline, a closing brace and a newline finds nothing in the
+// second case. The test then fails for a reason that has nothing to do with
+// the code it is meant to be checking.
 const source = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'renderer', 'app.js'), 'utf8'
-);
+).split('\r\n').join('\n');
 
 const start = source.indexOf('function holdButton(');
 if (start < 0) throw new Error('holdButton is not in app.js any more');
 const end = source.indexOf('\n}\n', start);
+if (end < 0) throw new Error('could not find the end of holdButton in app.js');
 const holdButton = new Function(
   'setInterval', 'clearInterval',
   `${source.slice(start, end + 3)}\n  return holdButton;`

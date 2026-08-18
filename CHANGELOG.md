@@ -38,6 +38,10 @@ contributor.
   was dubbed against it is lost.
 - A pack in Browse with an update waiting says **Update** rather than
   **Installed**, and can be pressed.
+- The donation note stays up. Rescanning the game folder cleared the alert
+  strip whenever the library looked healthy, which is true the moment an
+  export finishes, so the note appeared and was gone again within seconds of
+  the export that prompted it. The same applied to the update notice.
 - A speaker chosen from the dropdown is saved. Clicking a name settled the edit
   and cleared the baseline it was about to be compared against, so the change
   that followed found nothing to write.

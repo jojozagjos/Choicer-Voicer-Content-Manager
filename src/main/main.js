@@ -1295,6 +1295,45 @@ async function runScreenshots(win) {
     true;
   `).catch(() => {});
 
+  /**
+   * Takes the name of this computer out of the picture.
+   *
+   * The editor shows a pack's full path under its title, which on Windows
+   * begins with the account name. These screenshots go in the README of a
+   * public repository, so that is somebody's name published as a side effect
+   * of documenting an unrelated feature.
+   *
+   * Done to the page rather than to the finished image: the text is still
+   * text at this point, so it can be replaced with something that looks like
+   * what it replaced instead of being blurred or covered over.
+   *
+   * Every path is rewritten, not just the one known about today, because the
+   * next thing to display one will not come with a reminder.
+   */
+  const hidePaths = async () => {
+    await win.webContents.executeJavaScript(`
+      (() => {
+        const home = ${JSON.stringify(app.getPath('home'))};
+        const shown = 'C:\\\\Users\\\\you';
+        const swap = (text) => text.split(home).join(shown);
+        let hits = 0;
+
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          if (node.nodeValue.includes(home)) { node.nodeValue = swap(node.nodeValue); hits++; }
+        }
+        // Tooltips and form values carry them too.
+        for (const el of document.querySelectorAll('[title], input, textarea')) {
+          if (el.title && el.title.includes(home)) el.title = swap(el.title);
+          if (typeof el.value === 'string' && el.value.includes(home)) el.value = swap(el.value);
+        }
+        return { home, hits };
+      })()
+    `).then((r) => {
+      if (r && r.hits) console.log(`  hid ${r.hits} path`);
+    }).catch((err) => console.log(`  path hiding failed: ${err.message}`));
+  };
+
   for (const shot of SHOTS) {
     let skipped = null;
     try {
@@ -1312,6 +1351,13 @@ async function runScreenshots(win) {
       continue;
     }
 
+    // Before the settle rather than after it. The window is never shown, so
+    // it only composites a new frame when something makes it; changing a text
+    // node on its own does not, and capturePage was handing back the frame
+    // from before the change. Doing it first means the settle covers the
+    // repaint, and invalidate asks for one rather than hoping.
+    await hidePaths();
+    win.webContents.invalidate();
     await new Promise((r) => setTimeout(r, shot.settle));
     const image = await win.webContents.capturePage();
     const file = path.join(OUT, `${shot.name}.png`);

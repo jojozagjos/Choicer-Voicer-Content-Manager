@@ -4184,7 +4184,7 @@ function renderContentDetail(pack) {
               title="${pack.iconPath || pack.iconUrl
     ? 'Package this pack, to publish to Packs or send to somebody'
     : 'This pack needs an icon first. Set one in Edit this pack, under Pack details.'
-}">${actionIcon('export')}<span>Share</span></button>
+}">${actionIcon('export')}<span>Upload</span></button>
       <button type="button" class="btn icon-action" id="btn-detail-open"
               title="Open this pack's folder">${actionIcon('folder')}<span>Open folder</span></button>
       <button type="button" class="btn btn-danger icon-action" id="btn-detail-delete"

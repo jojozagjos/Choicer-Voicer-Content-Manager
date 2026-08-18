@@ -139,6 +139,21 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
 }
 .alert-bar span { flex: 1; min-width: 0; }
 
+/* Putting the strip away. Plain rather than a button, because it is the least
+   important thing on a row whose whole point is the message. */
+.alert-close {
+  flex: none;
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.alert-close:hover { color: var(--text); background: rgba(255, 255, 255, 0.07); }
+
 .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
 
 .brand-mark {
@@ -1526,6 +1541,8 @@ input[type="range"]::-webkit-slider-thumb {
   gap: 8px;
   z-index: 70;
   max-width: min(420px, calc(100vw - 32px));
+  /* The column ignores the pointer so the page behind it stays usable; each
+     note takes it back for itself. */
   pointer-events: none;
 }
 
@@ -1541,15 +1558,34 @@ input[type="range"]::-webkit-slider-thumb {
   backdrop-filter: blur(10px);
   font-size: 13px;
   line-height: 1.45;
-  pointer-events: none;
+  /* Reachable, so it can be dismissed and so the notes that offer an action
+     when clicked actually do. They were unreachable, which quietly made the
+     export note's "Click to show it" a lie. */
+  pointer-events: auto;
   opacity: 0;
   transform: translateY(10px) scale(0.97);
   transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1);
 }
 .toast.in { opacity: 1; transform: none; }
-/* Reaching one with the pointer gets it out of the way without waiting for it
-   to time out. Enough is left to see that something is still there. */
-.toast.in.faded { opacity: 0.12; }
+
+/* The cross. Quiet until the note is under the pointer, because it is on every
+   note and a column of them should read as messages rather than as controls. */
+.toast-close {
+  flex: none;
+  margin: -2px -6px 0 2px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.4;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+.toast:hover .toast-close, .toast-close:focus-visible { opacity: 1; }
+.toast-close:hover { color: var(--text); }
 
 /* A round mark carrying the colour, which reads faster than a coloured edge and
    survives the message wrapping onto two lines. */

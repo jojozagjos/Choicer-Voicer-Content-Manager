@@ -53,6 +53,10 @@
 <div id="alert-bar" class="alert-bar" hidden>
   <span id="alert-text"></span>
   <button id="alert-action" class="btn btn-small"></button>
+  <!-- Every message on this strip can be put away. Some of them describe a
+       condition that will come back on the next scan, which is correct: it is
+       still true, and the strip is where that is said. -->
+  <button id="alert-close" class="alert-close" type="button" aria-label="Dismiss">×</button>
 </div>
 
 <main class="layout">

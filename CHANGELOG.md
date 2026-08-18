@@ -38,6 +38,14 @@ contributor.
   was dubbed against it is lost.
 - A pack in Browse with an update waiting says **Update** rather than
   **Installed**, and can be pressed.
+- Notifications stay until they are dismissed. The messages in the corner used
+  to disappear after a few seconds, which is fine for "saved" and wrong for an
+  error explaining why something failed. Each one carries a cross now, and six
+  can stack before the oldest is let go.
+- Those messages can be clicked. They ignored the pointer entirely, which had
+  quietly made the note offering to show a finished export unclickable despite
+  saying "Click to show it".
+- The strip along the top can be put away by hand.
 - The donation note stays up. Rescanning the game folder cleared the alert
   strip whenever the library looked healthy, which is true the moment an
   export finishes, so the note appeared and was gone again within seconds of

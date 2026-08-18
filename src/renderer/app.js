@@ -41,6 +41,7 @@ const el = {
   alertBar: $('#alert-bar'),
   alertText: $('#alert-text'),
   alertAction: $('#alert-action'),
+  alertClose: $('#alert-close'),
 
   btnCaptionReset: $('#btn-caption-reset'),
   captionPreview: $('#caption-preview'),
@@ -340,56 +341,59 @@ function sanitizeFilename(name) {
 
 const TOAST_MARKS = { ok: '✓', warn: '!', error: '✕', info: 'i' };
 
+// Messages used to fade out from under the pointer, tracked by a mousemove
+// listener that measured their boxes, because they took no pointer events and
+// so could never receive a hover of their own. That existed only because a
+// note could not be reached or dismissed and getting one out of the way meant
+// waiting for it. Both are now untrue: they take the pointer, and each has a
+// cross.
+
+// How many notes may stack up before the oldest is let go.
+//
+// They no longer time out, so without this a long session of installing packs
+// would end with the screen behind them unreachable. Six is enough to hold a
+// short burst, and the one at the bottom is always the oldest.
+const MOST_TOASTS = 6;
+
 /**
- * Fades the messages out of the way when the pointer reaches them.
+ * Says something in the corner, and leaves it there.
  *
- * They sit in the corner over the buttons at the foot of the pack details, and
- * take no pointer events, so a click goes straight through to whatever is
- * underneath. That also means they never receive a hover, and CSS :hover can
- * never fire on them, so the pointer is tested against their boxes instead.
+ * These used to disappear after a few seconds, which is fine for "saved" and
+ * wrong for everything else: the note thanking somebody for exporting, an
+ * error explaining why a publish failed, anything worth reading twice. Nothing
+ * here goes on its own now, and each carries a cross.
  *
- * The listener only runs while something is on screen.
+ * The third argument used to be how long to wait before removing it. It is
+ * accepted and ignored rather than removed, because fifty-odd call sites pass
+ * it and none of them are wrong about what they meant: a bigger number was
+ * always "this one matters more", which is now true of all of them.
  */
-let toastWatch = null;
-function watchToastHover() {
-  if (toastWatch) return;
-  toastWatch = (event) => {
-    const notes = el.toasts.children;
-    if (!notes.length) { stopToastHover(); return; }
-    for (const note of notes) {
-      const box = note.getBoundingClientRect();
-      const over = event.clientX >= box.left && event.clientX <= box.right
-        && event.clientY >= box.top && event.clientY <= box.bottom;
-      note.classList.toggle('faded', over);
-    }
-  };
-  document.addEventListener('mousemove', toastWatch);
-}
-
-function stopToastHover() {
-  if (!toastWatch) return;
-  document.removeEventListener('mousemove', toastWatch);
-  toastWatch = null;
-}
-
-function toast(message, kind = 'info', timeout = 4200) {
+function toast(message, kind = 'info', _wasTimeout = 0) {
   const node = document.createElement('div');
   node.className = `toast toast-${kind}`;
   node.innerHTML = `<b class="toast-mark">${TOAST_MARKS[kind] || TOAST_MARKS.info}</b>
-    <span class="toast-text"></span>`;
+    <span class="toast-text"></span>
+    <button type="button" class="toast-close" aria-label="Dismiss">×</button>`;
   node.querySelector('.toast-text').textContent = message;
+
+  const close = () => {
+    node.classList.remove('in');
+    setTimeout(() => node.remove(), 220);
+  };
+
+  node.querySelector('.toast-close').addEventListener('click', (event) => {
+    // Some notes carry a click of their own, like the one offering to show an
+    // exported file. Dismissing is not that.
+    event.stopPropagation();
+    close();
+  });
 
   el.toasts.append(node);
   requestAnimationFrame(() => node.classList.add('in'));
-  watchToastHover();
 
-  setTimeout(() => {
-    node.classList.remove('in');
-    setTimeout(() => {
-      node.remove();
-      if (!el.toasts.children.length) stopToastHover();
-    }, 220);
-  }, timeout);
+  // Oldest first, so the note just added is never the one taken away.
+  while (el.toasts.children.length > MOST_TOASTS) el.toasts.firstElementChild.remove();
+
   return node;
 }
 
@@ -4856,7 +4860,9 @@ function showAlert(message, actionLabel, onAction, owner = 'app') {
 /** Removes buttons a previous alert appended beyond the built-in one. */
 function clearExtraAlertButtons() {
   for (const extra of [...el.alertBar.querySelectorAll('button')]) {
-    if (extra !== el.alertAction) extra.remove();
+    // The action and the cross belong to the strip itself. Anything else was
+    // appended by whatever put the current message there.
+    if (extra !== el.alertAction && extra !== el.alertClose) extra.remove();
   }
 }
 
@@ -6963,6 +6969,9 @@ function wireEvents() {
 
   el.btnSettings.addEventListener('click', openSettings);
   el.btnReport.addEventListener('click', reportIssue);
+  // Put away by hand, whoever put it there. Nothing on this strip goes on its
+  // own any more, so there has to be a way to say "yes, I have read it".
+  el.alertClose.addEventListener('click', () => hideAlert());
 
   for (const button of el.tabButtons) {
     button.addEventListener('click', () => switchTab(button.dataset.tab));

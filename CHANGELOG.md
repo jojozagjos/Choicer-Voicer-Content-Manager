@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.1.2
+
+### Exporting
+
+- There is no longer a limit on how many lines a pack can have. Every take was
+  named on one command line, and Windows stops accepting one at about 32,767
+  characters, so a long pack failed with nothing but "spawn ENAMETOOLONG". On a
+  pack of 220 lines that line came to just over 50,000 characters.
+- Packs past that size have their takes mixed in batches first, and the batches
+  mixed together, as many rounds as it takes, so the export is handed one piece
+  of audio. Each take keeps its own levelling, volume and timing. Shorter packs
+  still go the direct way with nothing written in between.
+- The instructions ffmpeg is given travel in a file rather than on the command
+  line, which is where the other half of the length was.
+
+### Notifications
+
+- The same message arriving several times over shows once with a count beside
+  it, rather than as a stack of identical notes burying everything else.
+
 ## 1.1.1
 
 Backing tracks that actually separate the voice, and two fixes from a

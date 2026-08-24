@@ -1570,6 +1570,18 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* The cross. Quiet until the note is under the pointer, because it is on every
    note and a column of them should read as messages rather than as controls. */
+/* How many times the same thing has been said. */
+.toast-tally {
+  flex: none;
+  align-self: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .toast-close {
   flex: none;
   margin: -2px -6px 0 2px;

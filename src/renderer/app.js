@@ -388,6 +388,30 @@ function toast(message, kind = 'info', _wasTimeout = 0) {
     close();
   });
 
+  // The same thing said twice is worth saying once with a number on it.
+  //
+  // Nothing expires any more, so a fault that fires per item in a queue used
+  // to leave five identical notes stacked up, burying whatever else was on
+  // screen and saying nothing the first one had not.
+  const twin = [...el.toasts.children].find((other) =>
+    other.dataset.said === message && other.classList.contains(`toast-${kind}`));
+
+  if (twin) {
+    const seen = Number(twin.dataset.seen || 1) + 1;
+    twin.dataset.seen = String(seen);
+    let tally = twin.querySelector('.toast-tally');
+    if (!tally) {
+      tally = document.createElement('b');
+      tally.className = 'toast-tally';
+      twin.querySelector('.toast-close').before(tally);
+    }
+    tally.textContent = `×${seen}`;
+    // Moved to the end so a repeat is not buried under newer notes.
+    el.toasts.append(twin);
+    return twin;
+  }
+
+  node.dataset.said = message;
   el.toasts.append(node);
   requestAnimationFrame(() => node.classList.add('in'));
 

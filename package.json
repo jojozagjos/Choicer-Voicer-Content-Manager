@@ -1,6 +1,6 @@
 {
   "name": "choicer-voicer-content-manager",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Unofficial fan tool for The Choicer Voicer: export your dubs as video and manage custom content packs",
   "productName": "Choicer Voicer Content Manager",
   "main": "src/main/main.js",
@@ -22,7 +22,7 @@
     "build:zip": "node scripts/build.js --zip",
     "icon": "electron scripts/make-icon.js",
     "shots": "node scripts/make-screenshots.js",
-    "test": "node scripts/test-directory.js && node scripts/test-modinstall.js && node scripts/test-linkhealth.js && node scripts/test-shrink.js && node scripts/test-packscan.js && node scripts/test-review.js && node scripts/test-dialogs.js && node scripts/test-escape.js && node scripts/test-counts.js && node scripts/test-hold.js && node scripts/test-alerts.js"
+    "test": "node scripts/test-directory.js && node scripts/test-modinstall.js && node scripts/test-linkhealth.js && node scripts/test-shrink.js && node scripts/test-packscan.js && node scripts/test-review.js && node scripts/test-dialogs.js && node scripts/test-escape.js && node scripts/test-counts.js && node scripts/test-hold.js && node scripts/test-alerts.js && node scripts/test-export-scale.js"
   },
   "devDependencies": {
     "@electron/packager": "^20.0.4",

@@ -22,6 +22,24 @@ const { runFfmpeg, probeVideo } = require('./ffmpeg');
 
 const SAMPLE_RATE = 48000;
 
+// The filter graph, written beside the job rather than passed as an argument.
+const GRAPH_FILE = 'graph.txt';
+
+/**
+ * What Windows will accept as a command line, with room to spare.
+ *
+ * The real ceiling is about 32,767 characters. Staying well under it leaves
+ * room for the quoting the operating system adds and for a path longer than
+ * any seen while testing, because the length of somebody's game folder is not
+ * something this can know in advance.
+ */
+const COMMAND_BUDGET = 24000;
+
+/** Roughly what the operating system sees, including quotes around arguments. */
+function commandLength(args) {
+  return args.reduce((n, a) => n + String(a).length + 3, 0);
+}
+
 // Subtitles
 
 function assTime(seconds) {
@@ -192,6 +210,37 @@ function audioCodecArgs(format, quality) {
  * `tracks` are absolute placements on the video timeline; `trim` (optional)
  * re-bases everything so a single line can be exported as its own clip.
  */
+/**
+ * Which takes land in the export, where each one starts, and how far into it
+ * to begin.
+ *
+ * Worked out in one place because two things need the same answer: the export
+ * itself, and the premix that stands in for it when a pack has more lines than
+ * one command line can name. Two copies of this would drift, and the symptom
+ * would be a dub sitting a fraction of a second out on long packs only.
+ *
+ * A take that begins before the trim window but runs into it is seeked into
+ * rather than dropped, so a clip export does not lose mid-line audio.
+ */
+function planTakes(tracks, trimStart, trimEnd) {
+  const takes = [];
+  for (const track of tracks || []) {
+    if (!track.path || track.enabled === false) continue;
+    const start = (track.time || 0) + (track.offset || 0);
+    const end = start + (track.duration || 0);
+    if (trimEnd != null && start >= trimEnd) continue;
+    if (end > 0 && end <= trimStart) continue;
+
+    takes.push({
+      path: track.path,
+      seek: Math.max(0, trimStart - start),
+      delay: Math.max(0, Math.round((start - trimStart) * 1000)),
+      volume: track.volume == null ? 1 : track.volume,
+    });
+  }
+  return takes;
+}
+
 function buildArgs(job, workDir) {
   const {
     videoPath,
@@ -241,21 +290,10 @@ function buildArgs(job, workDir) {
   // A take that begins before the trim window but runs into it is seeked into
   // rather than dropped, so a clip export doesn't lose mid-line audio.
   const placements = [];
-  for (const track of tracks) {
-    if (!track.path || track.enabled === false) continue;
-    const start = (track.time || 0) + (track.offset || 0);
-    const end = start + (track.duration || 0);
-    if (trimEnd != null && start >= trimEnd) continue;
-    if (end > 0 && end <= trimStart) continue;
-
-    const seek = Math.max(0, trimStart - start);
-    if (seek > 0) args.push('-ss', String(seek));
-    args.push('-i', track.path);
-    placements.push({
-      index: inputs.length,
-      delay: Math.max(0, Math.round((start - trimStart) * 1000)),
-      volume: track.volume == null ? 1 : track.volume,
-    });
+  for (const take of planTakes(tracks, trimStart, trimEnd)) {
+    if (take.seek > 0) args.push('-ss', String(take.seek));
+    args.push('-i', take.path);
+    placements.push({ index: inputs.length, delay: take.delay, volume: take.volume });
     inputs.push('take');
   }
 
@@ -368,7 +406,18 @@ function buildArgs(job, workDir) {
     }
   }
 
-  if (filters.length) args.push('-filter_complex', filters.join(';'));
+  // Written to a file rather than passed as an argument.
+  //
+  // Windows refuses to start a process whose whole command line runs past
+  // about 32,767 characters, and the graph grows with every line in the pack.
+  // A file has no such limit, and ffmpeg reads one with -filter_complex_script.
+  // The name is bare because the command runs with its working directory set
+  // to workDir; a Windows drive letter inside a filtergraph needs painful
+  // escaping and this sidesteps it, the same way the subtitles file does.
+  if (filters.length) {
+    fs.writeFileSync(path.join(workDir, GRAPH_FILE), filters.join(';\n'), 'utf8');
+    args.push('-filter_complex_script', GRAPH_FILE);
+  }
 
   args.push('-map', filters.some((f) => f.includes('[vout]')) ? '[vout]' : '0:v:0');
   if (audioOut) args.push('-map', `[${audioOut}]`);
@@ -397,6 +446,115 @@ function shapeForPreset(preset, source) {
 }
 
 /** Runs one export job end to end. */
+/**
+ * Mixes a batch of takes down to one file, keeping each where it belongs.
+ *
+ * Every take keeps its own levelling, volume and start time, so the result is
+ * the same audio the export would have built, only already assembled. Delays
+ * are absolute against the trimmed timeline, which is what lets the results of
+ * several batches be laid on top of each other afterwards with nothing further
+ * to line up.
+ */
+async function mixBatch(takes, outFile, { normalizeDub, signal, workDir }) {
+  const args = [];
+  const labels = [];
+
+  takes.forEach((take, i) => {
+    if (take.seek > 0) args.push('-ss', String(take.seek));
+    args.push('-i', take.path);
+  });
+
+  const graph = takes.map((take, i) => {
+    const chain = [`aresample=${SAMPLE_RATE}`];
+    // Per take, for the same reason as in the export itself: run over a
+    // finished mix, levelling lifts everything to one loudness and leaves the
+    // difference between lines exactly as it was.
+    if (normalizeDub) chain.push('loudnorm=I=-16:TP=-1.5:LRA=11');
+    if (take.volume !== 1) chain.push(`volume=${take.volume.toFixed(3)}`);
+    if (take.delay > 0) chain.push(`adelay=${take.delay}:all=1`);
+    labels.push(`t${i}`);
+    return `[${i}:a]${chain.join(',')}[t${i}]`;
+  });
+
+  if (labels.length === 1) {
+    graph.push(`[${labels[0]}]aformat=channel_layouts=stereo[mixed]`);
+  } else {
+    graph.push(`${labels.map((l) => `[${l}]`).join('')}`
+      + `amix=inputs=${labels.length}:normalize=0:dropout_transition=0,`
+      + 'aformat=channel_layouts=stereo[mixed]');
+  }
+
+  // The graph goes to a file here too. A batch is sized by its inputs, and
+  // without this the graph would be the thing that put it over the limit.
+  const graphName = `batch-${path.basename(outFile, '.wav')}.txt`;
+  fs.writeFileSync(path.join(workDir, graphName), graph.join(';\n'), 'utf8');
+
+  args.push(
+    '-filter_complex_script', graphName,
+    '-map', '[mixed]',
+    // Kept lossless between passes so nothing is given away to compression on
+    // the way to the real export.
+    '-c:a', 'pcm_s16le', '-ar', String(SAMPLE_RATE), '-f', 'wav',
+    '-y', outFile
+  );
+
+  await runFfmpeg(args, { cwd: workDir, signal });
+}
+
+/**
+ * Reduces any number of takes to a single audio file.
+ *
+ * The export names every take on one command line, and Windows stops accepting
+ * one at about 32,767 characters. A pack with enough lines went past that and
+ * failed with nothing but "spawn ENAMETOOLONG", which says nothing about packs
+ * or lines to whoever is reading it.
+ *
+ * Rather than capping the number of lines, the takes are mixed in batches and
+ * the batches are then mixed together, as many rounds as it takes. Each round
+ * divides the count by the batch size, so two rounds cover thousands of lines
+ * and three cover more than anyone will record.
+ *
+ * The batch size is worked out from the actual paths rather than fixed, since
+ * how much of the budget each take costs depends on how deep somebody's game
+ * folder is.
+ */
+async function premixTakes(takes, { normalizeDub, signal, workDir, onStage }) {
+  const longest = takes.reduce((n, t) => Math.max(n, t.path.length), 0);
+  // Each input costs its path, the -i, quoting, and the odd -ss.
+  const perTake = longest + 24;
+  const batchSize = Math.max(2, Math.min(60, Math.floor(COMMAND_BUDGET / perTake)));
+
+  let round = 0;
+  let current = takes;
+
+  while (current.length > 1) {
+    const batches = [];
+    for (let i = 0; i < current.length; i += batchSize) {
+      batches.push(current.slice(i, i + batchSize));
+    }
+
+    if (onStage) onStage({ round: round + 1, batches: batches.length });
+
+    const results = [];
+    for (let i = 0; i < batches.length; i++) {
+      const out = path.join(workDir, `premix-${round}-${i}.wav`);
+      await mixBatch(batches[i], out, { normalizeDub, signal, workDir });
+      // Everything after the first round is already levelled, positioned and
+      // balanced, so later rounds only lay the results on top of each other.
+      results.push({ path: out, seek: 0, delay: 0, volume: 1 });
+    }
+
+    current = results;
+    normalizeDub = false;
+    round++;
+
+    // A single batch means this round produced the finished mix.
+    if (batches.length === 1) break;
+  }
+
+  return current[0].path;
+}
+
 async function runExport(job, { onProgress, signal } = {}) {
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cvexport-'));
 
@@ -408,7 +566,46 @@ async function runExport(job, { onProgress, signal } = {}) {
   try {
     fs.mkdirSync(path.dirname(job.outputPath), { recursive: true });
 
-    const { args, duration } = buildArgs(job, workDir);
+    let ready = job;
+    let built = buildArgs(ready, workDir);
+
+    // Too many lines to name on one command line. The takes are mixed down
+    // first and the export is handed the one file, which is the same audio by
+    // a different route rather than a smaller version of the job.
+    if (commandLength(built.args) > COMMAND_BUDGET) {
+      const trimStart = job.options && job.options.trim ? Math.max(0, job.options.trim.start) : 0;
+      const trimEnd = job.options && job.options.trim ? job.options.trim.end : null;
+      const takes = planTakes(job.tracks, trimStart, trimEnd);
+
+      if (takes.length > 1) {
+        if (onProgress) onProgress({ stage: 'Preparing the dub', percent: null });
+        const mixed = await premixTakes(takes, {
+          normalizeDub: Boolean(job.options && job.options.normalizeDub),
+          signal,
+          workDir,
+        });
+
+        ready = {
+          ...job,
+          tracks: [{
+            path: mixed,
+            time: trimStart,
+            offset: 0,
+            // Long enough that the trim window never discards it. The real
+            // length is whatever the file is; this only has to survive the
+            // check that drops takes ending before the window starts.
+            duration: Number.MAX_SAFE_INTEGER / 1000,
+            volume: 1,
+            enabled: true,
+          }],
+          // Already levelled, take by take, during the premix.
+          options: { ...job.options, normalizeDub: false },
+        };
+        built = buildArgs(ready, workDir);
+      }
+    }
+
+    const { args, duration } = built;
     await runFfmpeg(args, {
       cwd: workDir,
       signal,

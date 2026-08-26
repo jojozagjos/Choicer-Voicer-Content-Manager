@@ -35,7 +35,7 @@ contributor.
   audio is sent anywhere. It needs 64-bit Windows, a Vulkan-capable graphics
   card and roughly 16 GB of memory, and says so rather than offering itself on a
   machine that cannot run it.
-- **Quick muffle** is unchanged and stays the default where the model cannot
+- **Muffle** is unchanged and stays the default where the model cannot
   run. It is instant and needs no download.
 - Building either one asks how hard to press and plays a few seconds of the real
   result first. A sample takes a second or two against several minutes for the

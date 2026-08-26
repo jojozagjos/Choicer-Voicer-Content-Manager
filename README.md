@@ -106,7 +106,7 @@ is the cleanest option. The first use downloads a pinned, verified native engine
 about 95 MB; audio is processed locally and is never uploaded. It currently needs 64-bit Windows,
 a Vulkan-capable graphics card and roughly 16 GB of memory.
 
-**Quick muffle** keeps the original no-download method for lower-end computers. Dialogue is mixed
+**Muffle** keeps the original no-download method for lower-end computers. Dialogue is mixed
 dead centre in almost everything, so where the audio is properly stereo it subtracts one channel from the other,
 which cancels whatever is centred and leaves the music spread around it. Where both channels carry
 the same signal there is no centre to cancel, so it falls back to cutting the range speech occupies
@@ -118,8 +118,8 @@ How well any of this works depends on how the scene was mixed, so building a bac
 how hard to press and plays a few seconds of the real result before committing to it. AI separation
 takes longer than the lightweight modes, especially on its first run.
 
-*AI separation removes singing as well as dialogue because both belong to the vocal stem. Quick
-muffle only changes audio underneath the pack's timed lines.*
+*AI separation removes singing as well as dialogue because both belong to the vocal stem. Muffle
+only changes audio underneath the pack's timed lines.*
 
 ### Every other pack type
 

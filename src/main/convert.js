@@ -646,13 +646,13 @@ async function buildAiBackingTrack(videoPath, ranges, target, partial, options) 
     const files = ['drums.wav', 'bass.wav', 'other.wav', 'vocals.wav']
       .map((name) => path.join(stems, name));
     if (files.some((file) => !fs.existsSync(file))) {
-      throw new Error('The AI separator did not produce all four audio stems. Use Quick muffle on this computer.');
+      throw new Error('The AI separator did not produce all four audio stems. Use Muffle on this computer.');
     }
 
     const inputRms = probeAudioRms(input);
     const loudestStem = Math.max(...files.map((file) => probeAudioRms(file) ?? -120));
     if (inputRms != null && inputRms > -70 && loudestStem < inputRms - 30) {
-      throw new Error('The AI separator returned silent audio on this graphics hardware. Use Quick muffle instead.');
+      throw new Error('The AI separator returned silent audio on this graphics hardware. Use Muffle instead.');
     }
 
     const args = [

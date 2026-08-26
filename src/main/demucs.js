@@ -88,7 +88,7 @@ function extractBinary(zip, target) {
 }
 
 async function ensureBinary(root, { signal, onProgress, onStage } = {}) {
-  if (!supported()) throw new Error('AI separation currently needs 64-bit Windows. Use Quick muffle on this computer.');
+  if (!supported()) throw new Error('AI separation currently needs 64-bit Windows. Use Muffle on this computer.');
 
   const target = binaryPath(root);
   if (fs.existsSync(target)) {

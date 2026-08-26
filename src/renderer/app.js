@@ -5689,7 +5689,7 @@ function askBackingSettings({ videoPath, ranges, replacing, lineAt, aiStatus }) 
         : mode === 'muffle'
           ? 'Fast and lightweight. Where the audio is properly stereo the centred voices are cancelled, which barely '
           + 'touches the music. Where both channels are the same signal there is no centre to '
-          + 'cancel and the speech range is cut instead, which costs a little more music.'
+          + 'cancel and the speech range is cut instead.'
           : '';
     };
 

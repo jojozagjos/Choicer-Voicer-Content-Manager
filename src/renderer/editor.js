@@ -162,6 +162,13 @@ export class PackEditor {
     this._keyHandler = (e) => this._onKey(e);
   }
 
+  updateSettings(settings) {
+    this.settings = settings;
+    if (!this.timeline) return;
+    this.timeline.maxClip = this.clipSeconds();
+    this.timeline.draw();
+  }
+
   close() {
     this.root.hidden = true;
     this.cancelJobs();

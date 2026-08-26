@@ -4333,7 +4333,7 @@ async function openEditorFor(pack) {
 
   // The editor reads the caption toggle and the character colours from here,
   // so they match what the export draws.
-  editor.settings = state.settings;
+  editor.updateSettings(state.settings);
   editor.open(pack);
 
   editor.onClose = async () => {
@@ -6901,6 +6901,7 @@ function wireEvents() {
     const seconds = Number.isFinite(asked) && asked > 0 ? Math.min(60, Math.max(1, asked)) : 6;
     el.setClipSeconds.value = String(seconds);
     state.settings = await window.api.settings.set({ maxClipSeconds: seconds });
+    editor.updateSettings(state.settings);
   });
   el.setSplash.addEventListener('change', async () => {
     state.settings = await window.api.settings.set({ showSplash: el.setSplash.checked });

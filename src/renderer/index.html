@@ -69,7 +69,8 @@
           <h1>Choicer Voicer Content Manager</h1>
           <span class="chip chip-plain">Unofficial fan tool</span>
         </div>
-        <p class="muted">Build packs for The Choicer Voicer and export your dub recordings.</p>
+        <p class="muted">Turn the dubs you record into videos, and build the packs you record them
+           with. Nothing here changes the game; it only reads and writes the files beside it.</p>
         <p class="muted small">Made by <b>@jojozagjos</b>. Not made by, affiliated with, or endorsed
            by <b>Yeah Maybe</b>, who made <em>The Choicer Voicer</em>.</p>
       </header>
@@ -86,7 +87,7 @@
           <span class="home-card-icon"><img class="type-icon" src="../../assets/glyphs/star.png" alt="" /></span>
           <span class="home-card-body">
             <strong>Make something new</strong>
-            <em>Create a voice, player, host, judge pack, etc.</em>
+            <em>Start a voice pack, player, host, judge panel and more.</em>
           </span>
         </button>
         <button class="home-card" id="card-manage">
@@ -125,7 +126,7 @@
     <div id="empty-state" class="empty-state">
       <div class="empty-art"><img class="type-icon" src="../../assets/glyphs/video.png" alt="" /></div>
       <h2>Pick a pack to get started</h2>
-      <p>This app mainly finds the dubs you recorded in <b>The Choicer Voicer</b>, plays them back over the
+      <p>This app finds the dubs you recorded in <b>The Choicer Voicer</b>, plays them back over the
          original video, and exports the result as a video file you can upload or share.</p>
       <p class="muted small">Choose a pack on the left, pick which recording session to use, press
          play to check it, then hit <b>Export video</b>. New to this? Open <b>Help</b> in the top
@@ -227,7 +228,9 @@
       </header>
 
       <p class="drop-hint">
-        <b>Got a pack someone sent you?</b> Unzip it and drag the folder anywhere on this list.</p>
+        <b>Got a pack someone sent you?</b> Unzip it and drag the folder anywhere on this list.
+        It works out what kind it is and installs it for you.
+      </p>
 
       <!-- Recordings whose pack is gone. They sit outside the pack folders, so
            nothing else in the app would ever mention them. -->
@@ -853,140 +856,240 @@
     <div class="dialog-scroll">
 
       <section class="help-panel" data-help-panel="start">
-        <p class="help-lead">This app lets you create and export modpacks for The Choicer Voicer, duh.</p>
+        <p class="help-lead">This app does two jobs: it turns dubs you have already recorded into
+           video files, and it builds the packs you record them with.</p>
 
-        <h4>Exporting a dub</h4>
+        <h4>Turning a dub into a video</h4>
         <ol class="steps">
-          <li><b>Open Export</b> and pick a pack. It takes longer to open the first time.</li>
+          <li><b>Record in the game first.</b> Play a voice pack and record your lines. Nothing
+              appears here until you have done that at least once.</li>
+          <li><b>Open Export</b> and pick a pack. The first time, it spends a moment preparing the
+              video for preview. That happens once per pack.</li>
           <li><b>Choose a recording session</b> if you dubbed the same pack more than once.</li>
-          <li><b>Press play</b>, adjust anything, then <b>Export video</b>.</li>
+          <li><b>Press play</b>, adjust anything that sounds off, then <b>Export video</b>.</li>
         </ol>
 
         <h4>Building a pack</h4>
         <ol class="steps">
-          <li>Click <b>Content</b>, then on the sidebar choose which type of pack. Click <b>Create new</b>.</li>
-          <li>Fill it with content. Dub packs get the full timeline editor.
-              Click <b>The Editor</b> tab to learn more.</li>
+          <li>Click <b>Content</b>, then <b>Create new</b>.</li>
+          <li>Open up the dub and fill it with content. Dub packs get the full timeline editor.
+              Go to <b>The Editor</b> tab to learn more.</li>
         </ol>
 
         <p class="help-tip"><b>Already have a pack someone sent you?</b> Unzip it and drop the
-           folder straight onto the Content tab. The app works out what kind it is and installs it.</p>
+           folder straight onto the Content list. It works out what kind it is and installs it.</p>
       </section>
 
       <section class="help-panel" data-help-panel="editor" hidden>
-        <p class="help-lead">Dub packs open in a timeline editor.</p>
+        <p class="help-lead">Dub packs open in a timeline editor. The official way to build one is
+           to cut audio in a separate program and type timestamps in by hand. Here the clip and its
+           timestamp come out of the video together.</p>
 
         <h4>Working the timeline</h4>
         <ul class="bullets">
           <li><b>Click</b> a clip to select it. Clicking empty space moves the playhead there and
-              clears the selection. Dragging along the ruler at the top scrubs the playback.</li>
-          <li><b>Click in place for a moment, then drag</b> to cut a new clip in the video.</li>
-          <li><b>Drag the bar</b>, along the top of a clip to move it.</li>
-          <li><b>Drag a clip's edge</b> to adjust the start and stop times.</li>
-          <li><b>Right or middle drag to pan.</b></li>
-          <li><b>Scroll</b> to zoom and <b>shift and scroll</b> to pan.</li>
-          <li><b>Space</b> plays and pauses the video. <b>← →</b> steps two seconds,
-              <b>shift + ← →</b> steps a single frame.</li>
+              clears the selection. Dragging along the ruler at the top scrubs.</li>
+          <li><b>Hold still, then drag</b> across empty space to cut a new clip out of the video.
+              The pause is short, and it is what keeps an ordinary click from making a clip.</li>
+          <li><b>Drag the grip</b>, the ribbed bar along the top of a clip, to move it.</li>
+          <li><b>Drag a clip's edge</b> to change where it starts or ends. The audio is recut.</li>
+          <li><b>Right or middle drag</b> to pan. Left dragging never moves the view, so you cannot
+              knock a clip out of time by accident.</li>
+          <li><b>Scroll</b> to zoom, <b>shift and scroll</b> to pan, <b>double click</b> to fit.</li>
+          <li><b>Space</b> plays and pauses. <b>← →</b> step two seconds,
+              <b>shift + ← →</b> step a single frame, for lining a line up exactly.</li>
+          <li>Lines that overlap are stacked in their own lanes rather than hidden behind each
+              other, so two people talking at once are both reachable.</li>
         </ul>
 
         <h4>The buttons</h4>
         <ul class="bullets">
-          <li><b>Caption here</b> creates a new clip to caption at the playhead.</li>
-          <li><b>Captions</b> toggles captions during playback in the editor only.</li>
+          <li><b>+ Caption here</b> cuts a clip at the playhead and puts the cursor straight in its
+              caption box. Its length runs to the next line.</li>
+          <li><b>Captions</b> draws the script over the video as it plays. There is a setting for
+              whether this starts on.</li>
           <li><b>Trim video</b> cuts the video down to a range. See below.</li>
-          <li><b>Backing track</b> lets you create a backing track for the clips to go on top of. Highly recommended.</li>
-          <li><b>Fit</b> zooms the timeline back out to the whole video.</li>
-          <li>The <b>volume slider</b> is for listening in the editor only. It changes
-              nothing in the pack nor export.<li>
+          <li><b>Backing track</b> builds the music and atmosphere track from the video's own audio
+              by quietening it under each line.</li>
+          <li><b>Fit</b> zooms the timeline back out to the whole video. <b>F</b> does the same.</li>
+          <li>The <b>volume slider</b> beside the clock is for listening here only. It changes
+              nothing in the pack, and nothing about an export.</li>
         </ul>
 
         <h4>Trimming the video</h4>
-        <p>Clicking <b>Trim Video</b> opens a panel to trim the video. You can drag the two handles, type the times into <b>From</b> and <b>To</b>, or
+        <p>A panel opens along the bottom of the picture, so you can watch the frame you are cutting
+           on. Drag the two handles, or type into <b>From</b> and <b>To</b>, or scrub the video and
            press <b>Use playhead</b> for either end.</p>
         <ul class="bullets">
-          <li>Trimming the video so that clips fall on the outside of the selection automatically moves the clips to the closest edge.</li>
-          <li>Both <b>Undo</b> and <b>Redo</b> work for undoing a trim.</li>
+          <li>Every clip shifts with the picture, so a line stays against the frame it belongs to.
+              A line that falls outside the part you kept is moved to the nearest edge rather than
+              deleted, and you are told how many.</li>
+          <li>The cut lands on the nearest whole frame at or just before where you asked, never
+              after it, so it cannot take a moment you meant to keep.</li>
+          <li>Most videos trim in a couple of seconds, because the picture is copied rather than
+              re-encoded. A video that cannot be cut that way is re-encoded instead and takes
+              longer, with a percentage while it works.</li>
+          <li>Both <b>Undo</b> and <b>Redo</b> cover it. The video from before the trim is kept
+              aside, not overwritten.</li>
         </ul>
 
-        <h4>Backing Track</h4>
+        <h4>The backing track lane</h4>
         <p>Once a pack has a backing track, a second lane appears under the timeline showing its
-           waveform against the same stretch of time.</p>
+           waveform against the same stretch of time. It appears as soon as the track is built,
+           without having to leave the pack and come back.</p>
         <ul class="bullets">
-          <li><b>Listening to</b> switches between the two. <b>Video</b> plays the original audio
-            <b>Backing track</b> plays the backing track by itself. Only one
-              is ever audible in the editor. These buttons do not affect the export</li>
+          <li>The waveform lines up with the clips above it, so you can see the dip under each
+              line and check the ducking landed where you meant.</li>
+          <li><b>Listening to</b> switches between the two. <b>Video</b> plays the original audio as
+              it came; <b>Backing track</b> mutes the video and plays the track by itself. Only one
+              is ever audible.</li>
+          <li>They are not played together on purpose. With both running, the original dialogue
+              underneath made a track sound fine when it was not, which is the one thing you are
+              listening for.</li>
+        </ul>
+        <p class="muted small">Neither choice changes anything in the pack. How loud the backing
+           track sits in the game is set there, and on export by the Music slider.</p>
+
+        <h4>About the backing track</h4>
+        <p>You can properly separate the vocal and instrumental stems with a local AI model, or
+           use the original lightweight filter on a lower-end computer.</p>
+        <ul class="bullets">
           <li><b>AI separate</b> uses HTDemucs to split the whole soundtrack into vocals, drums,
               bass and other, then rebuilds the backing track without the vocal stem. The first
-              use downloads about 95 MB. Audio stays on your computer. It requires 64-bit Windows and
-              a Vulkan-capable graphics card.</li>
-          <li><b>Muffle</b> muffles the clip. It needs no download and
+              use downloads about 95 MB. Audio stays on your computer. It needs 64-bit Windows,
+              a Vulkan-capable graphics card and roughly 16 GB of memory.</li>
+          <li><b>Muffle</b> removes the original voices and leaves the music. Dialogue is mixed
+              dead centre in almost everything, so where the audio is properly stereo it
+              subtracts one channel from the other, which cancels whatever is centred and leaves
+              the music spread around it nearly untouched. It is instant, needs no download and
               stays available for lower-end computers.</li>
-          <li><b>Silence</b> removes it completely, which is cleaner but sounds like the audio
-              dropped out outside of clips.</li>
+          <li>Where both channels carry the same signal there is no centre to cancel, so it falls
+              back to cutting the range speech occupies, roughly 90 Hz to 7 kHz. That works on
+              anything but takes some of the music with it, so those packs sound duller
+              underneath a line.</li>
+          <li><b>Silence</b> removes it completely, which is cleaner but can sound like the audio
+              dropped out.</li>
         </ul>
-        <p class="muted small">AI separation removes singing as well as dialogue.</p>
+        <p class="muted small">AI separation removes singing as well as dialogue because both are
+           part of the vocal stem. Muffle only changes audio underneath the pack's lines.</p>
 
         <h4>Pictures</h4>
-        <p>For each clip, an image appears alongside it in the dubbing gamemode.</p>
+        <p>Every line in the list has three buttons beside its picture:</p>
         <ul class="bullets">
-          <li><b>Grab frame</b> takes the video frame showing right now in the timeline.</li>
-          <li><b>Upload</b> picks a picture file from your computer.</li>
-          <li><b>Reuse</b> reuses a photo.</li>
+          <li><b>Grab frame</b> takes the video frame showing right now. Scrub to the moment you
+              want, then press it.</li>
+          <li><b>Upload</b> picks a picture file from your computer, converted to PNG on the way
+              in.</li>
+          <li><b>Reuse</b> lists the pictures already in this pack and points the line at one of
+              them. The line shares that file rather than getting a copy, so editing the picture
+              later changes every line using it.</li>
         </ul>
-        <p class="muted small">Lines are never given each other's pictures automatically, even with the same character.
-           Reuse is always something you choose.</p>
+        <p>Click any picture, anywhere in the app, to see it full size.</p>
+        <p class="muted small">Lines are never given each other's pictures automatically, even when
+           the character name matches, since two characters can share a name and look nothing
+           alike. Reuse is always something you choose.</p>
+        <p class="muted small">To cover a lot of lines at once, put a picture called
+           <code>_pack_filler_image</code> in the pack folder. The game uses it for every clip with
+           no picture of its own, and lines using it are marked with a dashed edge here. It covers
+           the folder it sits in, so a pack sorted into subfolders wants one in each.</p>
+
+        <h4>Undo and redo</h4>
+        <p>The <b>Undo</b> and <b>Redo</b> buttons sit at the top of the editor, next to the pack
+           name, and are greyed out when there is nothing to do. <b>Ctrl + Z</b> and
+           <b>Ctrl + Y</b> do the same.</p>
+        <ul class="bullets">
+          <li>Everything is covered: moving, retiming, captions, characters, pictures, deleting a
+              clip, and trimming the video.</li>
+          <li>Deleted clips are moved aside rather than removed, and a trimmed video is kept, so
+              both can be put back.</li>
+          <li>Undoing something that takes real work, like a trim, shows the same overlay the
+              original did rather than appearing to freeze. If a step cannot be carried out it stays
+              on the button, so it can be tried again.</li>
+        </ul>
+
+        <h4>While it is working</h4>
+        <p>Building a backing track or trimming a video takes a moment, and an overlay covers the
+           editor while it does.</p>
+        <ul class="bullets">
+          <li>The video will not play behind that overlay, or while the trim panel is open. The file
+              it would be playing is the one being rewritten, and the trim panel is there to pick a
+              still frame.</li>
+          <li>Leaving the editor, or switching tabs, stops the work rather than letting it finish
+              out of sight. Nothing in the pack is changed by a job that was called off.</li>
+        </ul>
       </section>
 
       <section class="help-panel" data-help-panel="packs" hidden>
-        <p class="help-lead">The app knows what each pack should contain and tells you when something
-           is missing.</p>
-        <p>The game reads seven kinds of packs, each from its respective folder in the game files.</p>
+        <p class="help-lead">Reference, not required reading. You do not need any of this for
+           general use: the app knows what each pack should contain and tells you when something
+           is missing. It is here for anyone who wants to know what the files mean.</p>
+        <p>The game reads seven kinds of pack, each from its own folder.</p>
         <dl class="help-defs">
           <div><dt><span class="type-icon-wrap"><img class="type-icon" src="../../assets/glyphs/video.png" alt="" /></span>Voice and dub packs</dt>
-               <dd><code>packs_voice</code>. A video and its dubbing clips. Can either be a normal voice pack or a dub voice pack.</dd></div>
+               <dd><code>packs_voice</code>. A video plus the lines to dub over it. With a video it
+                   is a dub pack; without one it is a plain voice pack. This is the type with the
+                   full editor.</dd></div>
           <div><dt><span class="type-icon-wrap"><img class="type-icon" src="../../assets/glyphs/players.png" alt="" /></span>Players</dt>
-               <dd><code>packs_player</code>. Includes a picture, color pair, and up to nine reaction
-                   sounds.</dd></div>
+               <dd><code>packs_player</code>. A picture, a colour pair, and up to nine reaction
+                   sounds. You can record those straight into the app.</dd></div>
           <div><dt><span class="type-icon-wrap"><img class="type-icon" src="../../assets/glyphs/host.png" alt="" /></span>Hosts</dt>
                <dd><code>packs_host</code>. The presenter's voice lines and portrait.</dd></div>
           <div><dt><span class="type-icon-wrap"><img class="type-icon" src="../../assets/glyphs/judge.png" alt="" /></span>Judges</dt>
                <dd><code>packs_judges</code>. The judging panel's pictures and lines.</dd></div>
           <div><dt><span class="type-icon-wrap"><img class="type-icon" src="../../assets/glyphs/studios.png" alt="" /></span>Studios</dt>
-               <dd><code>packs_studio</code>. The 3D environment for the studio mode, as a <code>.glb</code> model.</dd></div>
+               <dd><code>packs_studio</code>. The 3D set, as a <code>.glb</code> model.</dd></div>
           <div><dt><span class="type-icon-wrap"><img class="type-icon" src="../../assets/glyphs/menu.png" alt="" /></span>Menus</dt>
                <dd><code>packs_menu</code>. Backgrounds, music and styling for the game's menus.</dd></div>
           <div><dt><span class="type-icon-wrap"><img class="type-icon" src="../../assets/glyphs/chatter.png" alt="" /></span>Chatter</dt>
-               <dd><code>packs_chatter</code>. Sounds triggered by twitch chat.</dd></div>
+               <dd><code>packs_chatter</code>. Crowd lines that play between rounds.</dd></div>
         </dl>
-        <p class="muted small">Every pack you open is checked if it has all the required parts. A red mark means the
-           game will not use it as intended and orange is a warning.</p>
+        <p class="muted small">Every pack you open is checked against what the game actually
+           accepts, and anything wrong is listed with what to do about it. A red mark means the
+           game will not use it as intended; amber is worth a look; grey is a note.</p>
       </section>
 
       <section class="help-panel" data-help-panel="export" hidden>
         <p class="help-lead">Every line has its own controls in the list on the right: which take to
            use, how loud it is, and how far to nudge its timing.</p>
         <ul class="bullets">
+          <li><b>MP4</b> works everywhere. Use WebM only if you specifically need it.</li>
+          <li><b>Vertical 9:16</b> reformats for Shorts, TikTok and Reels, filling the sides with a
+              blurred copy of the video instead of black bars.</li>
           <li><b>Burn captions</b> draws the script onto the video permanently. Leave it off and tick
               the <code>.srt</code> box instead if you would rather add captions in an editor.</li>
           <li><b>Normalise dub loudness</b> evens out lines recorded too quietly or too loudly.</li>
           <li><b>Selected line only</b> exports a single line as a short clip. Click a line first.</li>
         </ul>
-        <p class="muted small">Exports can be queued.</p>
+        <p class="muted small">Exports run one at a time. Queue as many as you like and they will
+           work through in order.</p>
       </section>
 
       <section class="help-panel" data-help-panel="trouble" hidden>
         <ul class="bullets">
-          <li><b>No packs listed.</b> Check Settings to see if the manager is finding the game folder.</li>
-          <li><b>A pack shows "no dubs yet".</b> You have not recorded dubs yet. Do that in the game first.</li>
-          <li><b>A pack will not open.</b> It is still converting.</li>
-          <li><b>Preview is black.</b> Leave the preview and go back in. If it continues, use <b>Report Bug/Suggestions</b> in the app.</li>
-          <li><b>Export failed.</b> Usually a full disk or a folder you cannot write to.</li>
+          <li><b>No packs listed.</b> The game folder is wrong, or you have not recorded a dub yet.
+              Check the folder in Settings.</li>
+          <li><b>A pack shows "no dubs yet".</b> That pack is installed but you have not recorded for
+              it. Do that in the game first.</li>
+          <li><b>A pack will not open.</b> If it is still converting, it stays locked until that
+              finishes. The tile shows a progress bar while it works.</li>
+          <li><b>Export button is greyed out.</b> The pack is still loading. Wait for it to finish.</li>
+          <li><b>Preview is black.</b> Switch packs and back again to rebuild the preview. If it keeps
+              happening, use <b>Report Bugs</b> in the top bar.</li>
+          <li><b>Export failed.</b> Usually a full disk or a folder you do not have permission to write
+              to. Try exporting somewhere like your Videos folder.</li>
+          <li><b>Windows warned about the app on first run.</b> That is because the app is not signed
+              with a paid certificate. Click <i>More info</i> then <i>Run anyway</i>.
+              <br />
+              Two things about this app look suspicious to Windows on their own: it reads files it
+              was not obviously given permission to read, and it writes files it was not obviously
+              given permission to write. That is the whole job, since the packs and recordings it
+              works on belong to the game rather than to it. Nothing leaves your computer.</li>
         </ul>
       </section>
 
       <section class="help-panel" data-help-panel="whatsnew" hidden>
-        <p class="help-lead">The installed version is marked below and
-           shown in the top-right corner of the window. This is where you can find update logs.</p>
+        <p class="help-lead">What changed, newest first. The installed version is marked below and
+           shown in the corner of the window.</p>
         <div id="changelog-body" class="changelog">
           <p class="muted small">Loading…</p>
         </div>
@@ -1000,19 +1103,30 @@
           is wrong, it is my fault, not theirs.
         </div>
 
-        <p id="donate-blurb" class="help-lead" hidden>
+        <p id="donate-blurb" class="muted small" hidden>
           This app is free and always will be. If it saved you some time, a donation helps me keep
-          working on it, but nothing here is locked behind a paywall.
+          working on it, but nothing here is locked behind one.
         </p>
 
-        <h4>Ownership</h4>
+        <h4>What belongs to whom</h4>
         <p class="muted small">
           <em>The Choicer Voicer</em>, its name and its artwork belong to <b>Yeah Maybe</b>. No part
           of the game is included in or redistributed by this app.
         </p>
         <p class="muted small">
+          Content packs, and the audio, art and captions inside them, belong to whoever made them.
+          Check with a pack's author before publishing videos built from their work, and credit them
+          when you do.
+        </p>
+        <p class="muted small">
+          Whatever you record is yours. This app only reads and writes files beside the game on your
+          own computer. It does not modify the game, its files, or your recordings, and it sends
+          nothing anywhere. The one time it uses the network is to ask GitHub whether a newer
+          version of this app exists.
+        </p>
+        <p class="muted small">
           The app itself is MIT licensed. The download also carries <b>FFmpeg</b>, which does the
-          video and audio work and is licensed under the <b>GPL v3</b>. Its license text, and a
+          video and audio work and is licensed under the <b>GPL v3</b>. Its licence text, and a
           written offer for its source, are in the <code>licenses</code> folder next to the app.
         </p>
         <p class="muted small">
@@ -1026,8 +1140,8 @@
 
     <menu class="dialog-actions dialog-foot">
       <button type="button" id="btn-about-donate" class="btn btn-ghost" hidden>Donate</button>
-      <button type="button" id="btn-about-repo" class="btn btn-ghost">GitHub Updates</button>
-      <button type="button" id="btn-about-page" class="btn btn-ghost">The Game</button>
+      <button type="button" id="btn-about-repo" class="btn btn-ghost">GitHub updates</button>
+      <button type="button" id="btn-about-page" class="btn btn-ghost">The game</button>
       <span class="grow"></span>
       <button type="button" id="btn-about-close" class="btn btn-primary">Close</button>
     </menu>

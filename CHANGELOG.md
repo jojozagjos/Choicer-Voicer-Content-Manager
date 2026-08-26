@@ -7,10 +7,6 @@
   to fifteen carried on cutting at six until the editor was closed and opened
   again, which made the larger setting look broken. The open timeline takes the
   new limit and redraws. Thanks to @coah80.
-- Nothing is laid over the window at startup any more. Capping how tall a
-  question could be also made every one of them visible from the moment the app
-  opened, so Help and several others were covering the window before anything
-  had been clicked.
 - The Installed list shows what a pack is called now rather than what it was
   called on the day it was installed.
 - Fitting the timeline is the Fit button. It was also on the F key and on a
@@ -18,13 +14,6 @@
   clips, which threw the view away in the middle of an edit.
 - Showing captions while editing is the button in the editor and nothing else.
   The same choice was also in Settings, saying the same thing twice.
-- Help fades out at the foot of a page that carries on, so it is clear there is
-  more to read. Each page has a scrollbar of its own inside the window, which is
-  easy to miss.
-- Questions no longer scroll. A long one grew past the bottom of the screen and
-  took its buttons with it, so the thing being asked was visible and the way to
-  answer it was not. Long addresses and folder paths wrap rather than pushing
-  the edges out.
 - Notifications go away on their own again, and how long one stays depends on
   what it is: an error explaining why something failed lingers, while an
   acknowledgement does not. Reaching one with the pointer stops the clock, so

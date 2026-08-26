@@ -1600,6 +1600,22 @@ function runSmokeTest(win) {
         // Checked by what it is rather than by one id. The old check named an id
         // that had never existed, so it reported success whatever was on screen.
         discordLinkGone: !document.querySelector('[id*="discord" i]'),
+        // Anything laid over the window before a single thing has been
+        // clicked. A dialog is hidden by the browser's own rule for one that
+        // is not open, and any display given to the class outright beats it,
+        // which put every dialog in the app on screen at startup. Nothing here
+        // noticed, because every check looked at what was inside the window
+        // rather than at what was covering it.
+        dialogsOpen: [...document.querySelectorAll('dialog')]
+          .filter((d) => d.open || getComputedStyle(d).display !== 'none')
+          .map((d) => d.id || '(unnamed)'),
+        // The same mistake in the other direction: a view that should be put
+        // away by its hidden attribute but is being drawn anyway.
+        viewsShowing: ['content-view', 'mods-view', 'editor-view']
+          .filter((id) => {
+            const node = document.getElementById(id);
+            return node && node.hidden && getComputedStyle(node).display !== 'none';
+          }),
         donateVisible: !document.getElementById('btn-about-donate').hidden,
         creditStrip: document.querySelector('.app-credit') ? document.querySelector('.app-credit').textContent.replace(/\s+/g, ' ').trim() : null,
         // Being a fan tool has to be visible without opening anything, so it
@@ -1631,6 +1647,14 @@ function runSmokeTest(win) {
         ['the credits in Help', report.unofficialInHelp],
       ]) {
         if (!seen) errors.push(`no unofficial notice on ${where}`);
+      }
+
+      // Nothing may be covering the window before anything has been clicked.
+      if (report.dialogsOpen && report.dialogsOpen.length) {
+        errors.push(`these were open over the window at startup: ${report.dialogsOpen.join(', ')}`);
+      }
+      if (report.viewsShowing && report.viewsShowing.length) {
+        errors.push(`hidden but drawn anyway: ${report.viewsShowing.join(', ')}`);
       }
 
       if (!report.characterVolumeToggle) {

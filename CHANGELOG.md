@@ -4,10 +4,8 @@
 
 ### The editor
 
-- How long a clip may be is a setting, in seconds, and starts at six. Six is
-  where the game stops playing one, so it is the useful answer for anybody
-  building for it, and anything longer only makes sense for a game that reads
-  them differently. Clips already cut are left alone.
+- How long a clip may be is a setting, in seconds, and starts at six, which is
+  where the game stops playing one. Clips already cut are left alone.
 - Fitting the timeline is the Fit button. It was also on the F key and on a
   double click, and a double click is easy to make by accident while placing
   clips, which threw the view away in the middle of an edit.

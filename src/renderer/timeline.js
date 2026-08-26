@@ -640,11 +640,9 @@ export class Timeline {
       else this.zoomAt(e.offsetX, e.deltaY > 0 ? 1.2 : 1 / 1.2);
     }, { passive: false });
 
-    canvas.addEventListener('dblclick', () => {
-      this.viewStart = 0;
-      this.viewEnd = this.duration;
-      this.draw();
-    });
+    // Fitting the view is the Fit button and nothing else. It was also on the
+    // F key and on a double click, and a double click is very easy to make by
+    // accident while placing clips, which threw the view away mid-edit.
   }
 }
 

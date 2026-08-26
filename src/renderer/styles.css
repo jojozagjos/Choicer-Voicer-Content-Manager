@@ -1243,6 +1243,27 @@ input[type="range"]::-webkit-slider-thumb {
   padding: 0;
   width: min(620px, 92vw);
   box-shadow: var(--shadow);
+  /* Never taller than the window. Without this a long question grew past the
+     bottom of the screen and the browser put a scrollbar on the dialog itself,
+     which puts the buttons below the fold: the thing being asked about is
+     visible and the way to answer it is not. */
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* A question long enough to need the room gives it up from the text rather
+   than from the dialog, so the buttons stay where they are. */
+.dialog-body { min-height: 0; }
+.confirm-head { min-height: 0; }
+#confirm-detail {
+  min-height: 0;
+  overflow: hidden;
+  /* Addresses and Windows paths have no spaces to break at, and one of those
+     was what pushed these past the edge in the first place. */
+  overflow-wrap: anywhere;
+  /* Shrinks a little on a short screen instead of overflowing it. */
+  font-size: clamp(11px, 1.55vh, 12.5px);
 }
 .dialog::backdrop { background: rgba(4, 14, 22, 0.66); backdrop-filter: blur(2px); }
 
@@ -1395,6 +1416,17 @@ input[type="range"]::-webkit-slider-thumb {
    under the pointer and the tab strip moved away from where it had just been
    clicked. Every panel now occupies the same box and scrolls inside it. */
 .help-panel { height: 46vh; overflow-y: auto; padding-right: 4px; }
+
+/* Says there is more below without taking any room to say it.
+   Applied to the panel itself as a mask rather than a block of colour laid
+   over it, so it fades whatever is actually there and needs no guessing about
+   the background behind it. The class is put on by whatever scrolls it, and
+   taken off at the bottom, so the fade is never sitting under the last line
+   of a panel that has already been read to the end. */
+.help-panel.has-more {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 46px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 46px), transparent 100%);
+}
 .help-panel p + p, .help-panel p + ul, .help-panel p + ol { margin-top: 10px; }
 
 .steps, .bullets { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 7px; }
@@ -4191,3 +4223,7 @@ input[type="range"]::-webkit-slider-thumb {
   padding: 0 12px 8px;
 }
 .admin-sort .select { flex: 1; min-width: 0; padding: 4px 8px; font-size: 12px; }
+
+/* A number box for a setting that takes one, sized for two digits rather than
+   stretching to the width of a text field. */
+.input.tiny-number { width: 82px; }

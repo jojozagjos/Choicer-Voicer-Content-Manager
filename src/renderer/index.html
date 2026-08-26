@@ -583,11 +583,13 @@
           </span>
         </label>
         <label class="option-row">
-          <input type="checkbox" id="set-editor-captions" />
+          <input type="number" id="set-clip-seconds" class="input tiny-number"
+                 min="1" max="60" step="1" />
           <span>
-            <b>Show captions while editing</b>
-            <em>Draws each line over the video in the dub editor as it plays, so you can check
-                the wording and timing without leaving the editor.</em>
+            <b>Longest a clip may be</b>
+            <em>In seconds. The game itself stops playing a dub clip after six, so six is the
+                default and anything longer is only useful if you know the game you are building
+                for reads them differently. Clips already cut are left alone.</em>
           </span>
         </label>
       </section>
@@ -1025,7 +1027,7 @@
     </div>
 
     <menu class="dialog-actions dialog-foot">
-      <button type="button" id="btn-about-donate" class="btn btn-ghost" hidden>Donate</button>
+      <button type="button" id="btn-about-donate" class="btn btn-ghost" hidden><img class="btn-icon-glyph" src="../../assets/glyphs/heart.png" alt="" />Donate</button>
       <button type="button" id="btn-about-repo" class="btn btn-ghost">GitHub Updates</button>
       <button type="button" id="btn-about-page" class="btn btn-ghost">The Game</button>
       <span class="grow"></span>

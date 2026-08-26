@@ -151,6 +151,7 @@ Sexual content and nudity are not allowed to be listed at all.
 
 ## Choicer Voicer Game Folder
 
+|-|-|
 |OS|Path|
 |-|-|
 |Windows|`%APPDATA%\YeahMaybe\ChoicerVoicer\game`|

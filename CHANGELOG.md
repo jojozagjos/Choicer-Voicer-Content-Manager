@@ -11,20 +11,8 @@
   question could be also made every one of them visible from the moment the app
   opened, so Help and several others were covering the window before anything
   had been clicked.
-- A listing that the app refuses is named, with the reason. It used to say only
-  how many had been dropped, and each of those is a pack somebody published and
-  cannot see listed.
-- A pack whose author renamed their GitHub account is listed again. Following
-  the rename moved the download address and left the pack's picture on the old
-  name, and a listing whose two addresses disagree is refused outright, so three
-  packs went missing from the directory. Every address on a listing now moves
-  together, and one left half moved repairs itself.
 - The Installed list shows what a pack is called now rather than what it was
   called on the day it was installed.
-- The setting for clip length is laid out as a number rather than as a
-  checkbox, and says what it does in one line.
-- How long a clip may be is a setting, in seconds, and starts at six, which is
-  where the game stops playing one. Clips already cut are left alone.
 - Fitting the timeline is the Fit button. It was also on the F key and on a
   double click, and a double click is easy to make by accident while placing
   clips, which threw the view away in the middle of an edit.
@@ -37,22 +25,16 @@
   took its buttons with it, so the thing being asked was visible and the way to
   answer it was not. Long addresses and folder paths wrap rather than pushing
   the edges out.
-- The donate button has a heart on it.
-- A repository created for publishing describes itself as holding packs for the
-  Content Manager rather than for the game.
 - Notifications go away on their own again, and how long one stays depends on
-  what it is: an error explaining why something failed lingers, an acknowledgement does
-  not. Reaching one with the pointer stops the clock, so nothing disappears
-  mid-sentence, and each still carries a cross for putting it away sooner.
+  what it is: an error explaining why something failed lingers, while an
+  acknowledgement does not. Reaching one with the pointer stops the clock, so
+  nothing disappears mid-sentence, and each still carries a cross for putting it
+  away sooner.
 - An author who renames their GitHub account is followed. Their listings, the
   address their packs download from and the picture beside their name all move
   to the new one within a few hours. GitHub keeps the old links working, so
   nothing broke, but every listing carried on crediting a name that no longer
   existed.
-- Settings says whether the signed-in account can moderate, and what GitHub
-  answered if it cannot. An invitation that has been sent but not accepted
-  counts as no access, which is worth being told rather than left to guess at
-  from a tab that is not there.
 
 ## 1.1.2
 

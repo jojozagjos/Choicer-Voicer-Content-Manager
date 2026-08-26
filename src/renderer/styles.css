@@ -1248,6 +1248,16 @@ input[type="range"]::-webkit-slider-thumb {
      which puts the buttons below the fold: the thing being asked about is
      visible and the way to answer it is not. */
   max-height: 92vh;
+}
+
+/* Only while it is open.
+ *
+ * A dialog is hidden by the browser's own `dialog:not([open]) { display: none }`,
+ * and any display given to `.dialog` outright beats that rule and puts every
+ * dialog in the app on screen at once, from the moment it starts. Which is
+ * exactly what happened: Help and several others were laid over the window
+ * before anything had been clicked. */
+.dialog[open] {
   display: flex;
   flex-direction: column;
 }
@@ -4226,4 +4236,18 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* A number box for a setting that takes one, sized for two digits rather than
    stretching to the width of a text field. */
-.input.tiny-number { width: 82px; }
+/* A setting that takes a number rather than a yes or no. The rows here are
+   built for a checkbox, which is 15 pixels square, and a number box given that
+   size shows about one digit. */
+.option-row.number-row { align-items: center; cursor: default; }
+.option-row.number-row > span:first-child { flex: 1; }
+.number-field { display: flex; align-items: center; gap: 7px; flex: none; }
+.number-field .input {
+  width: 68px;
+  padding: 6px 8px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  margin: 0;
+  height: auto;
+}
+.number-field em { font-style: normal; font-size: 12px; color: var(--muted); }

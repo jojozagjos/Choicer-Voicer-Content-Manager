@@ -582,14 +582,15 @@
                 drawn onto an exported video is set in the export window.</em>
           </span>
         </label>
-        <label class="option-row">
-          <input type="number" id="set-clip-seconds" class="input tiny-number"
-                 min="1" max="60" step="1" />
+        <label class="option-row number-row">
           <span>
             <b>Longest a clip may be</b>
-            <em>In seconds. The game itself stops playing a dub clip after six, so six is the
-                default and anything longer is only useful if you know the game you are building
-                for reads them differently. Clips already cut are left alone.</em>
+            <em>The game stops playing a dub clip after six seconds.</em>
+          </span>
+          <span class="number-field">
+            <input type="number" id="set-clip-seconds" class="input"
+                   min="1" max="60" step="1" />
+            <em>seconds</em>
           </span>
         </label>
       </section>

@@ -295,12 +295,14 @@ const cacheFile = () => path.join(app.getPath('userData'), 'duration-cache.json'
 const DEFAULT_SETTINGS = {
   gameDir: null,
   outputDir: null,
+  // How long a dub clip may be, in seconds. Six is what the game plays before
+  // it cuts one off, so six is the useful answer for anybody building for it.
+  maxClipSeconds: 6,
   ffmpegPath: null,
   ffprobePath: null,
   theme: 'system', // 'system' | 'dark' | 'light'
   showSplash: true,
   showPreviewCaptions: true,
-  showEditorCaptions: true,
   // Set once the help has been shown after a successful first setup.
   seenHelp: false,
   captionStyle: {},

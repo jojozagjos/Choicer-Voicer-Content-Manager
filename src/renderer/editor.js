@@ -126,6 +126,12 @@ export class PackEditor {
     this.toast = toast;
     // Asking questions is the app's job, not the operating system's.
     this.ask = ask;
+    // How long a clip may be, read from settings when asked rather than held,
+    // so changing it in Settings applies to the next cut without reopening.
+    this.clipSeconds = () => {
+      const set = this.settings && Number(this.settings.maxClipSeconds);
+      return Number.isFinite(set) && set > 0 ? Math.min(60, Math.max(1, set)) : 6;
+    };
     // Building a backing track has its own dialog, because it has a setting
     // worth hearing before it is committed to.
     this.askBacking = askBacking;
@@ -417,10 +423,6 @@ export class PackEditor {
       video.currentTime = Math.max(0, video.currentTime - (event.shiftKey ? 1 / 30 : 2));
     } else if (key === 'arrowright' && video) {
       video.currentTime += event.shiftKey ? 1 / 30 : 2;
-    } else if (key === 'f' && timeline) {
-      timeline.viewStart = 0;
-      timeline.viewEnd = timeline.duration;
-      timeline.draw();
     } else if ((key === '+' || key === '=') && timeline) {
       timeline.zoomAt(timeline.canvas.getBoundingClientRect().width / 2, 1 / 1.3);
     } else if ((key === '-' || key === '_') && timeline) {
@@ -655,7 +657,7 @@ export class PackEditor {
     const clipList = clipPanel.querySelector('[data-role="clips"]');
 
     const timeline = new Timeline(q('timeline'), {
-      maxClip: 6,
+      maxClip: this.clipSeconds(),
       // Only a real colour is passed on. `characterColour` answers with a CSS
       // variable when a character has none set, and canvas cannot read those —
       // it would paint every unnamed clip transparent.
@@ -697,7 +699,9 @@ export class PackEditor {
         timeline.draw();
       } else if (act === 'captions') {
         this.setCaptionsVisible(this.captionsOn === false);
-        this.api.settings.set({ showEditorCaptions: this.captionsOn });
+        // Not remembered between sessions. It is a button on the editor and
+        // nothing outside it needs to know, which is why the same choice was
+        // also sitting in Settings saying the same thing twice.
       } else if (act === 'caption-here') {
         this.addCaptionAtPlayhead(video);
       } else if (act === 'trim') {
@@ -777,7 +781,7 @@ export class PackEditor {
     }
     showState();
 
-    this.setCaptionsVisible(!this.settings || this.settings.showEditorCaptions !== false);
+    this.setCaptionsVisible(true);
     this.renderClipList(clipList);
   }
 
@@ -1185,7 +1189,7 @@ export class PackEditor {
    */
   async addCaptionAtPlayhead(video) {
     const start = video.currentTime;
-    const max = (this.timeline && this.timeline.maxClip) || 6;
+    const max = (this.timeline && this.timeline.maxClip) || this.clipSeconds();
 
     const next = (this.pack.clips || [])
       .map((c) => c.time)

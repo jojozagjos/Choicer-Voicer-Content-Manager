@@ -23,7 +23,7 @@ const el = {
   setTheme: $('#set-theme'),
   setSplash: $('#set-splash'),
   setPreviewCaptions: $('#set-preview-captions'),
-  setEditorCaptions: $('#set-editor-captions'),
+  setClipSeconds: $('#set-clip-seconds'),
   btnAbout: $('#btn-about'),
   aboutDialog: $('#about-dialog'),
   aboutVersion: $('#about-version'),
@@ -317,6 +317,20 @@ function formatTime(seconds) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+/**
+ * The longest a dub clip may be, in seconds.
+ *
+ * Six by default, which is where the game stops playing one. Kept in one
+ * function because three separate places decide a clip's length — cutting one
+ * in the editor, importing audio into a pack, and recording a take — and three
+ * copies of a number are three chances for a clip to be cut longer than the
+ * thing that plays it.
+ */
+function clipSeconds() {
+  const set = state.settings && Number(state.settings.maxClipSeconds);
+  return Number.isFinite(set) && set > 0 ? Math.min(60, Math.max(1, set)) : 6;
+}
+
 function formatBytes(bytes) {
   if (!bytes) return '';
   const units = ['B', 'KB', 'MB', 'GB'];
@@ -353,7 +367,7 @@ const TOAST_MARKS = { ok: '✓', warn: '!', error: '✕', info: 'i' };
 // They no longer time out, so without this a long session of installing packs
 // would end with the screen behind them unreachable. Six is enough to hold a
 // short burst, and the one at the bottom is always the oldest.
-const MOST_TOASTS = 6;
+const MOST_TOASTS = 5;
 
 /**
  * Says something in the corner, and leaves it there.
@@ -368,31 +382,29 @@ const MOST_TOASTS = 6;
  * it and none of them are wrong about what they meant: a bigger number was
  * always "this one matters more", which is now true of all of them.
  */
-function toast(message, kind = 'info', _wasTimeout = 0) {
-  const node = document.createElement('div');
-  node.className = `toast toast-${kind}`;
-  node.innerHTML = `<b class="toast-mark">${TOAST_MARKS[kind] || TOAST_MARKS.info}</b>
-    <span class="toast-text"></span>
-    <button type="button" class="toast-close" aria-label="Dismiss">×</button>`;
-  node.querySelector('.toast-text').textContent = message;
-
-  const close = () => {
-    node.classList.remove('in');
-    setTimeout(() => node.remove(), 220);
-  };
-
-  node.querySelector('.toast-close').addEventListener('click', (event) => {
-    // Some notes carry a click of their own, like the one offering to show an
-    // exported file. Dismissing is not that.
-    event.stopPropagation();
-    close();
-  });
+/**
+ * Says something in the corner.
+ *
+ * These go on their own after a while, which is what anybody expects of a
+ * message in a corner, and the wait is longer the more the message matters:
+ * an error explaining why a publish failed is worth reading twice, "saved" is
+ * not. Reaching one with the pointer stops the clock, so a note never
+ * disappears out from under somebody in the middle of reading it, and each
+ * carries a cross for putting it away sooner.
+ */
+function toast(message, kind = 'info', timeout = null) {
+  // How long each kind stays, when the caller has not said. Errors linger
+  // because they usually need acting on; plain notes are acknowledgements.
+  const HOW_LONG = { error: 14000, warn: 9000, ok: 6000, info: 6000 };
+  const stays = Number.isFinite(timeout) && timeout > 0
+    ? timeout : (HOW_LONG[kind] || HOW_LONG.info);
 
   // The same thing said twice is worth saying once with a number on it.
   //
-  // Nothing expires any more, so a fault that fires per item in a queue used
-  // to leave five identical notes stacked up, burying whatever else was on
-  // screen and saying nothing the first one had not.
+  // A fault that fires once per item in a queue used to leave a stack of
+  // identical notes, burying whatever else was on screen and saying nothing
+  // the first one had not. A repeat restarts the clock, since it is news that
+  // it is still happening.
   const twin = [...el.toasts.children].find((other) =>
     other.dataset.said === message && other.classList.contains(`toast-${kind}`));
 
@@ -408,12 +420,46 @@ function toast(message, kind = 'info', _wasTimeout = 0) {
     tally.textContent = `×${seen}`;
     // Moved to the end so a repeat is not buried under newer notes.
     el.toasts.append(twin);
+    if (twin.restart) twin.restart();
     return twin;
   }
 
+  const node = document.createElement('div');
+  node.className = `toast toast-${kind}`;
+  node.innerHTML = `<b class="toast-mark">${TOAST_MARKS[kind] || TOAST_MARKS.info}</b>
+    <span class="toast-text"></span>
+    <button type="button" class="toast-close" aria-label="Dismiss">×</button>`;
+  node.querySelector('.toast-text').textContent = message;
   node.dataset.said = message;
+
+  let timer = null;
+  const close = () => {
+    if (timer) clearTimeout(timer);
+    node.classList.remove('in');
+    setTimeout(() => node.remove(), 220);
+  };
+  const start = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(close, stays);
+  };
+
+  // Hovering holds it. Reading a long message takes longer than the time it
+  // was given, and having it vanish mid-sentence is the whole reason people
+  // ask for notifications that do not.
+  node.addEventListener('mouseenter', () => { if (timer) clearTimeout(timer); timer = null; });
+  node.addEventListener('mouseleave', start);
+  node.restart = start;
+
+  node.querySelector('.toast-close').addEventListener('click', (event) => {
+    // Some notes carry a click of their own, like the one offering to show an
+    // exported file. Dismissing is not that.
+    event.stopPropagation();
+    close();
+  });
+
   el.toasts.append(node);
   requestAnimationFrame(() => node.classList.add('in'));
+  start();
 
   // Oldest first, so the note just added is never the one taken away.
   while (el.toasts.children.length > MOST_TOASTS) el.toasts.firstElementChild.remove();
@@ -932,6 +978,8 @@ async function switchTab(tab) {
     await showMods(back);
   }
   if (tab === 'admin') await showAdmin(state.adminShow || 'reports');
+  // Cheap, and the moment somebody would notice the tab missing.
+  if (tab === 'mods') refreshAdminAccess();
 }
 
 // Home
@@ -1130,6 +1178,11 @@ async function refreshAdminAccess() {
   const allowed = Boolean(said && said.ok && said.moderator);
   el.tabAdmin.hidden = !allowed;
   state.moderator = allowed;
+  // Kept so Settings can say why the tab is not there. Being told "you are not
+  // a moderator" is useful; a tab silently missing is not, and the usual cause
+  // is an invitation that has been sent and not yet accepted, which nothing
+  // about this app can show on its own.
+  state.moderatorSaid = said || null;
   return allowed;
 }
 
@@ -3682,6 +3735,21 @@ async function renderGithubLink() {
         + 'so they are not listed anywhere, but the address works.';
     el.btnGithubLink.textContent = 'Link a different account';
     el.btnGithubUnlink.hidden = false;
+
+    // Asked again here rather than trusted from startup: an invitation to
+    // moderate is usually accepted after the app is already open, and until
+    // this is checked again the tab stays missing with nothing to explain it.
+    await refreshAdminAccess();
+    const said = state.moderatorSaid;
+    if (state.moderator) {
+      el.githubNote.textContent += ' You can moderate the directory, so the Admin tab is shown.';
+    } else if (said && said.ok && said.level && said.level !== 'none') {
+      el.githubNote.textContent += ` GitHub gives this account "${said.level}" on the directory, `
+        + 'which is not enough to moderate.';
+    } else if (said && said.ok) {
+      el.githubNote.textContent += ' This account cannot moderate the directory. An invitation '
+        + 'that has been sent but not accepted on github.com counts as no access until it is.';
+    }
   } else {
     el.githubStatus.textContent = 'Not linked.';
     el.githubNote.textContent = 'Link a GitHub account to publish packs. Packs go on your own '
@@ -4703,7 +4771,9 @@ function importTargetName(typeId, file, all) {
     if (typeId === 'studio') return { base: 'music_studio' };
     if (typeId === 'menu') return { base: 'music_menu' };
     // Dub clips are capped at six seconds by the game.
-    if (typeId === 'voice') return { base: baseName(file.name), audioFormat: 'wav', maxSeconds: 6 };
+    if (typeId === 'voice') {
+      return { base: baseName(file.name), audioFormat: 'wav', maxSeconds: clipSeconds() };
+    }
     return { base: baseName(file.name), audioFormat: 'wav' };
   }
   return { base: baseName(file.name) };
@@ -5016,11 +5086,30 @@ function escapeHtml(text) {
 
 // The What's New tab
 
+/**
+ * Marks the visible Help panel when there is more of it below.
+ *
+ * Each panel is a fixed height with a scrollbar of its own, and a scrollbar
+ * inside a dialog is easy to miss, so a panel that carried on simply looked as
+ * though it ended. The mark drives a fade at the foot, which is taken off once
+ * the bottom is reached so it is never sitting under text already read.
+ */
+function markHelpOverflow() {
+  for (const panel of document.querySelectorAll('[data-help-panel]')) {
+    if (panel.hidden) { panel.classList.remove('has-more'); continue; }
+    const left = panel.scrollHeight - panel.clientHeight - panel.scrollTop;
+    panel.classList.toggle('has-more', left > 8);
+  }
+}
+
 /** Opens the help dialog with one particular tab selected. */
 function openHelpTab(which) {
   const tab = document.querySelector(`.help-tabs [data-help="${which}"]`);
   if (tab) tab.click();
   if (!el.aboutDialog.open) el.aboutDialog.showModal();
+  // After the dialog is up: a panel inside a closed dialog has no height,
+  // so measuring any earlier reports nothing to fade.
+  requestAnimationFrame(markHelpOverflow);
 }
 
 /**
@@ -6746,7 +6835,7 @@ function openSettings() {
   el.setTheme.value = state.settings.theme || 'system';
   el.setSplash.checked = state.settings.showSplash !== false;
   el.setPreviewCaptions.checked = state.settings.showPreviewCaptions !== false;
-  el.setEditorCaptions.checked = state.settings.showEditorCaptions !== false;
+  el.setClipSeconds.value = String(clipSeconds());
   renderFfmpegStatus();
   el.settingsDialog.showModal();
 }
@@ -6804,9 +6893,14 @@ function wireEvents() {
   el.setPreviewCaptions.addEventListener('change', async () => {
     state.settings = await window.api.settings.set({ showPreviewCaptions: el.setPreviewCaptions.checked });
   });
-  el.setEditorCaptions.addEventListener('change', async () => {
-    state.settings = await window.api.settings.set({ showEditorCaptions: el.setEditorCaptions.checked });
-    if (editor) editor.setCaptionsVisible(el.setEditorCaptions.checked);
+  el.setClipSeconds.addEventListener('change', async () => {
+    // Kept inside what the game will actually play, and inside what the
+    // editor can draw. A blank box means the default rather than zero, which
+    // would make every clip impossible to cut.
+    const asked = Math.round(Number(el.setClipSeconds.value));
+    const seconds = Number.isFinite(asked) && asked > 0 ? Math.min(60, Math.max(1, asked)) : 6;
+    el.setClipSeconds.value = String(seconds);
+    state.settings = await window.api.settings.set({ maxClipSeconds: seconds });
   });
   el.setSplash.addEventListener('change', async () => {
     state.settings = await window.api.settings.set({ showSplash: el.setSplash.checked });
@@ -6880,8 +6974,17 @@ function wireEvents() {
         panel.hidden = panel.dataset.helpPanel !== tab.dataset.help;
       }
       if (tab.dataset.help === 'whatsnew') loadChangelog();
+      // A panel that has just been shown has never been measured, and one that
+      // was measured while hidden reports nothing useful.
+      markHelpOverflow();
     });
   }
+
+  // Whether each panel of Help has more below the fold.
+  for (const panel of document.querySelectorAll('[data-help-panel]')) {
+    panel.addEventListener('scroll', () => markHelpOverflow());
+  }
+  window.addEventListener('resize', () => markHelpOverflow());
 
   // Caption appearance lives on the export dialog's Captions tab, since it
   // only affects what an export looks like.

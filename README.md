@@ -151,9 +151,10 @@ Sexual content and nudity are not allowed to be listed at all.
 
 ## Choicer Voicer Game Folder
 
-|OS|Path|
-|-|-|
-|Windows|`%APPDATA%\YeahMaybe\ChoicerVoicer\game`|
+<table width="100%">
+<tr><th align="left">OS</th><th align="left">Path</th></tr>
+<tr><td>Windows</td><td><code>%APPDATA%\YeahMaybe\ChoicerVoicer\game</code></td></tr>
+</table>
 
 If your game folder is somewhere else, (a portable install or a copied save folder) direct the app to it in **Settings**.
 Your settings, preview cache and undo bin live in your own user profile, not in the app folder, so
@@ -162,13 +163,13 @@ size limit on their own.
 
 ## If something goes wrong
 
-|||
-|-|-|
-|**No packs listed**|Check **Settings** to see if the manager is finding the game folder.|
-|**A pack says "no dubs yet"**|You have not recorded dubs yet. Do that in the game first.|
-|**A pack will not open**|It is still converting.|
-|**The preview is black**|Leave the preview and go back in. If it continues, use **Report Bug/Suggestions** in the app.|
-|**Export failed**|Usually a full disk or a folder you cannot write to.|
+<table width="100%">
+<tr><td><b>No packs listed</b></td><td>Check <b>Settings</b> to see if the manager is finding the game folder.</td></tr>
+<tr><td><b>A pack says "no dubs yet"</b></td><td>You have not recorded dubs yet. Do that in the game first.</td></tr>
+<tr><td><b>A pack will not open</b></td><td>It is still converting.</td></tr>
+<tr><td><b>The preview is black</b></td><td>Leave the preview and go back in. If it continues, use <b>Report Bug/Suggestions</b> in the app.</td></tr>
+<tr><td><b>Export failed</b></td><td>Usually a full disk or a folder you cannot write to.</td></tr>
+</table>
 
 There is a **Help** button in the app covering all of this in more detail, including what every
 file in every pack type is for.

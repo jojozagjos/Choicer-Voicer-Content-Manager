@@ -402,7 +402,7 @@ async function ensureRepo(token, login) {
       method: 'POST',
       body: JSON.stringify({
         name: PACK_REPO,
-        description: 'Packs I have shared for The Choicer Voicer.',
+        description: 'Packs I have shared for The Choicer Voicer Content Manager.',
         homepage: '',
         private: false,
         has_issues: false,

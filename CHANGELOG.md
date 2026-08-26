@@ -2,6 +2,52 @@
 
 ## 1.1.2
 
+### The editor
+
+- How long a clip may be is a setting, in seconds, and starts at six. Six is
+  where the game stops playing one, so it is the useful answer for anybody
+  building for it, and anything longer only makes sense for a game that reads
+  them differently. Clips already cut are left alone.
+- Fitting the timeline is the Fit button. It was also on the F key and on a
+  double click, and a double click is easy to make by accident while placing
+  clips, which threw the view away in the middle of an edit.
+- Showing captions while editing is the button in the editor and nothing else.
+  The same choice was also in Settings, saying the same thing twice.
+
+### Around the app
+
+- Help fades out at the foot of a page that carries on, so it is clear there is
+  more to read. Each page has a scrollbar of its own inside the window, which is
+  easy to miss.
+- Questions no longer scroll. A long one grew past the bottom of the screen and
+  took its buttons with it, so the thing being asked was visible and the way to
+  answer it was not. Long addresses and folder paths wrap rather than pushing
+  the edges out.
+- The donate button has a heart on it.
+- A repository created for publishing describes itself as holding packs for the
+  Content Manager rather than for the game.
+
+### Notifications
+
+- They go away on their own again, and how long one stays depends on what it
+  is: an error explaining why something failed lingers, an acknowledgement does
+  not. Reaching one with the pointer stops the clock, so nothing disappears
+  mid-sentence, and each still carries a cross for putting it away sooner.
+- The same message arriving several times over shows once with a count beside
+  it, rather than as a stack of identical notes burying everything else.
+
+### The directory
+
+- An author who renames their GitHub account is followed. Their listings, the
+  address their packs download from and the picture beside their name all move
+  to the new one within a few hours. GitHub keeps the old links working, so
+  nothing broke, but every listing carried on crediting a name that no longer
+  existed.
+- Settings says whether the signed-in account can moderate, and what GitHub
+  answered if it cannot. An invitation that has been sent but not accepted
+  counts as no access, which is worth being told rather than left to guess at
+  from a tab that is not there.
+
 ### Exporting
 
 - There is no longer a limit on how many lines a pack can have. Every take was

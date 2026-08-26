@@ -2347,8 +2347,12 @@ async function showInstalled() {
     <article class="installed-row${p.hasUpdate ? ' has-update' : ''}" data-id="${escapeHtml(p.id)}">
       <span class="mod-icon" data-icon>${typeIcon(p.type)}</span>
       <div class="installed-what">
-        <h3>${escapeHtml(p.title)}</h3>
-        <p class="muted small">by ${escapeHtml(p.author || 'unknown')} ·
+        <h3>${escapeHtml((p.record && p.record.title) || p.title)}</h3>
+        <!-- The listing wins over what was written down at install time.
+             An author who renames their account, or retitles a pack, would
+             otherwise be shown here under whatever they were called on the
+             day it was installed, for as long as it stays installed. -->
+        <p class="muted small">by ${escapeHtml((p.record && p.record.author) || p.author || 'unknown')} ·
           installed ${escapeHtml(formatWhen(p.installedAt))}</p>
       </div>
       <span class="installed-state">${installedStateHtml(p)}</span>

@@ -3838,7 +3838,15 @@ function registerModsIpc() {
       const result = validateIndex(JSON.parse(text));
       if (!result.ok) return { ok: false, error: result.error };
       if (result.rejected.length) {
-        console.warn(`Directory: dropped ${result.rejected.length} record(s) that did not validate`);
+        // Which ones, and why. A count on its own says something is wrong
+        // with the directory and gives nobody a way to find out what: the
+        // reasons were being worked out and then thrown away. Every one of
+        // these is a pack that somebody published and cannot see listed.
+        console.warn(`Directory: dropped ${result.rejected.length} record(s) that did not validate:`);
+        for (const bad of result.rejected) {
+          const why = (bad.problems || []).map((p) => `${p.field}: ${p.message}`).join('; ');
+          console.warn(`  ${bad.id || '(no id)'} - ${why || 'no reason given'}`);
+        }
       }
       return {
         ok: true,

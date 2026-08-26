@@ -1152,6 +1152,37 @@ async function runScreenshots(win) {
   const OUT = path.join(__dirname, '..', '..', 'docs', 'images');
   fs.mkdirSync(OUT, { recursive: true });
 
+  /**
+   * Which pack each picture should be taken of, if somebody has said.
+   *
+   * Set by `npm run shots -- --pick`, which asks in the terminal and writes
+   * the answers down. Without it these fall back to choosing for themselves,
+   * which is fine for a first run and wrong as soon as anybody has an opinion:
+   * the editor picked whichever pack had the most lines, and the pack with the
+   * most lines is not necessarily the one worth showing.
+   */
+  let wanted = {};
+  try {
+    wanted = JSON.parse(process.env.CVE_SHOT_PACKS || '{}');
+  } catch {
+    wanted = {};
+  }
+
+  // Finds a tile by the name somebody asked for, falling back to the rule the
+  // shot used to apply on its own. Injected into each script rather than
+  // imported, because these run in the page.
+  const PICKER = `
+    const pickTile = (selector, want, fallback) => {
+      const tiles = [...document.querySelectorAll(selector)];
+      if (!tiles.length) return null;
+      if (want) {
+        const named = tiles.find((t) => (t.textContent || '').trim().startsWith(want));
+        if (named) return named;
+      }
+      return fallback ? fallback(tiles) : tiles[0];
+    };
+  `;
+
   const SHOTS = [
     {
       name: 'library',
@@ -1162,7 +1193,8 @@ async function runScreenshots(win) {
         const voice = document.querySelector('#content-types button');
         if (voice) voice.click();
         await wait(600);
-        const tile = document.querySelector('.pack-tile');
+        ${PICKER}
+        const tile = pickTile('.pack-tile', ${JSON.stringify(wanted.library || '')});
         if (!tile) return 'no packs installed';
         tile.click();
         await wait(600);
@@ -1178,13 +1210,17 @@ async function runScreenshots(win) {
         if (voice) voice.click();
         await wait(500);
 
-        // The pack with the most lines makes the best picture of a timeline.
-        const tiles = [...document.querySelectorAll('.pack-tile')];
-        const best = tiles
-          .map((t) => ({ t, n: parseInt((t.textContent.match(/(\\d+)\\s+lines/) || [0, 0])[1], 10) }))
-          .sort((a, b) => b.n - a.n)[0];
-        if (!best || !best.n) return 'no dub pack with lines';
-        best.t.click();
+        ${PICKER}
+        // Whichever pack was asked for. Failing that, the one with the most
+        // lines, which makes the fullest picture of a timeline.
+        const tile = pickTile('.pack-tile', ${JSON.stringify(wanted.editor || '')}, (tiles) => {
+          const best = tiles
+            .map((t) => ({ t, n: parseInt((t.textContent.match(/(\\d+)\\s+lines/) || [0, 0])[1], 10) }))
+            .sort((a, b) => b.n - a.n)[0];
+          return best && best.n ? best.t : null;
+        });
+        if (!tile) return 'no dub pack with lines';
+        tile.click();
         await wait(600);
 
         const edit = document.querySelector('#btn-detail-edit');
@@ -1210,10 +1246,10 @@ async function runScreenshots(win) {
       js: `
         document.querySelector('[data-tab="export"]').click();
         await wait(700);
-        const cards = [...document.querySelectorAll('.pack-card')];
-        if (!cards.length) return 'no packs';
-
-        const withTakes = cards.find((c) => !/no dubs/i.test(c.textContent)) || cards[0];
+        ${PICKER}
+        const withTakes = pickTile('.pack-card', ${JSON.stringify(wanted.export || '')},
+          (cards) => cards.find((c) => !/no dubs/i.test(c.textContent)) || cards[0]);
+        if (!withTakes) return 'no packs';
         withTakes.click();
 
         const overlay = document.getElementById('loading-overlay');
@@ -4913,6 +4949,14 @@ if (!app.requestSingleInstanceLock()) {
   // interrupted run would quietly turn every later run green.
   if (SMOKE) {
     console.log('SMOKE_CRASH another instance is already running, so this run did nothing');
+    app.exit(1);
+  }
+  // Taking pictures needs the window to itself, and quietly doing nothing is
+  // the worst way to say so: the command finishes, reports nothing, and every
+  // picture on disk is the one from last time.
+  if (SHOTS) {
+    console.log('\nThe app is already open, so no pictures were taken.');
+    console.log('Close it (including anything started with npm run dev) and try again.\n');
     app.exit(1);
   }
   app.quit();

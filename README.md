@@ -4,13 +4,13 @@
 
 # Choicer Voicer Content Manager
 
-[!\[Download](https://img.shields.io/badge/Download-latest%20release-5ecdf5?style=for-the-badge)](https://github.com/jojozagjos/Choicer-Voicer-Content-Manager/releases/latest)
+[![Download](https://img.shields.io/badge/Download-latest%20release-5ecdf5?style=for-the-badge)](https://github.com/jojozagjos/Choicer-Voicer-Content-Manager/releases/latest)
 
 An unofficial fan tool for [The Choicer Voicer](https://yeahmaybe.itch.io/the-choicer-voicer).
 
 </div>
 
-\---
+---
 
 The Choicer Voicer records your dub takes and then leaves them sitting there as loose `.wav` files, with no
 way to get them out. This app finds them, lays each one back over the pack's video and backing track
@@ -24,11 +24,11 @@ quietly ignores it.
 
 |||
 |-|-|
-|!\[The dub timeline editor](docs/images/editor.png)|!\[Exporting a finished dub](docs/images/export.png)|
+|![The dub timeline editor](docs/images/editor.png)|![Exporting a finished dub](docs/images/export.png)|
 |**The dub editor.**|**Exporting.**|
-|!\[The content library](docs/images/library.png)|!\[The help screen](docs/images/help.png)|
+|![The content library](docs/images/library.png)|![The help screen](docs/images/help.png)|
 |**Your library.**|**Built-in help.**|
-|!\[Packs other people have shared](docs/images/mods.png)|!\[One pack's page, before installing it](docs/images/mods-pack.png)|
+|![Packs other people have shared](docs/images/mods.png)|![One pack's page, before installing it](docs/images/mods-pack.png)|
 |**Packs.** Packs other people have shared.|**Before you install.**|
 
 ## Getting it
@@ -38,8 +38,8 @@ and unzip the folder.
 2. Run **Choicer Voicer Content Manager.exe**.
 3. Point it at your game folder when it asks.
 
-> \*\*Windows will show a blue "Windows protected your PC" box.\*\* Click \*\*More info\*\*, then
-> \*\*Run anyway\*\*. This happens because the app is not signed with a paid certificate, and because
+> **Windows will show a blue "Windows protected your PC" box.** Click **More info**, then
+> **Run anyway**. This happens because the app is not signed with a paid certificate, and because
 > it reads and writes files it was not explicitly handed, which is the entire job: the packs and
 > recordings belong to the game. Nothing leaves your computer, feel free to look through the open-source code.
 
@@ -54,25 +54,23 @@ Per line you can:
 
 Each character also has their own volume, in Settings next to their color. You can change the volume of individual characters.
 
-
-
 You can export in `.mp4`, `.mkv`, `.mov`, or `.webm` with or without captions burnt in. You can also export a separate `.srt` file for the subtitles if you want them for some reason.
 
-If a single line is way funnier than other ones, you're able to also export just that line. 
+If a single line is way funnier than other ones, you're able to also export just that line.
 
 ## Building packs
 
-Timeline Editor
+### Timeline Editor
 
 The normal method of creating a pack is to cut audio in a separate program, then name each audio clip with its timestamp by
-hand, then type those timestamps back into the game. 
+hand, then type those timestamps back into the game.
 
 Here you can just watch the video back, easily mark ranges, adding subtitles and character names if you want, and that's it.
 
 You can:
 
 * **Cut clips from the video**
-* **Move and retime** **clips**
+* **Move and retime clips**
 * **Caption over the video as it plays**
 * **Trim the video**
 
@@ -90,21 +88,15 @@ a Vulkan-capable graphics card.
 
 **Silence** removes the backing track completely, it is cleaner but it can sound like the audio dropped out when clips end.
 
-
-
 How well any of these work depends on how the scene was mixed, but AI separation usually provides the best quality backing track.
 
 It does take longer than the lightweight modes, especially on its first run.
 
-
-
-Every other pack type
+### Every other pack type
 
 Players, hosts, judges, studios, menus and chatter each have their own editors in the app.
 
-
-
-In-app File Conversion
+### In-app File Conversion
 
 You can in an `.mp4` where the game wants `.ogv`, or an `.m4a` where it wants `.wav`, and the app auto-converts
 and renames it.
@@ -132,7 +124,7 @@ last updated. **Preview pack** on that page plays it before you install it on yo
 **Installed** lists everything you have downloaded from the community and tells you
 which of them the author may have updated since. Packs are never replaced without being asked.
 
-Upload your packs
+### Upload your packs
 
 Open a pack in **Content** and press **Upload**. This gives you a `.zip` folder which contains the pack.
 
@@ -153,7 +145,7 @@ whether other people may reuse it
 Every pack and publisher has a report button.
 
 Packs can be marked as containing strong language, graphic violence, drug or
-alcohol references, or flashing images. 
+alcohol references, or flashing images.
 
 Sexual content and nudity are not allowed to be listed at all.
 
@@ -161,17 +153,18 @@ Sexual content and nudity are not allowed to be listed at all.
 
 |OS|Path|
 |-|-|
-|Windows|`%APPDATA%\\YeahMaybe\\ChoicerVoicer\\game`|
+|Windows|`%APPDATA%\YeahMaybe\ChoicerVoicer\game`|
 
 If your game folder is somewhere else, (a portable install or a copied save folder) direct the app to it in **Settings**.
 Your settings, preview cache and undo bin live in your own user profile, not in the app folder, so
-updating the manager keeps them. This is stored in `%APPDATA%\\Choicer Voicer Content Manager`. Both the preview cache and the undo bin are kept to a
+updating the manager keeps them. This is stored in `%APPDATA%\Choicer Voicer Content Manager`. Both the preview cache and the undo bin are kept to a
 size limit on their own.
 
 ## If something goes wrong
 
-|**No packs listed**|Check **Settings** to see if the manager is finding the game folder.|
+|||
 |-|-|
+|**No packs listed**|Check **Settings** to see if the manager is finding the game folder.|
 |**A pack says "no dubs yet"**|You have not recorded dubs yet. Do that in the game first.|
 |**A pack will not open**|It is still converting.|
 |**The preview is black**|Leave the preview and go back in. If it continues, use **Report Bug/Suggestions** in the app.|
